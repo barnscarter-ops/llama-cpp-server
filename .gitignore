@@ -1,0 +1,12 @@
+## Model files — too large for git
+models/*.gguf
+models/*.bin
+models/.cache/
+
+## Logs
+*.log
+*.log.err
+
+## Temp/cache
+tmp/
+__pycache__/
