@@ -3,10 +3,37 @@ models/*.gguf
 models/*.bin
 models/.cache/
 
+## llama.cpp binaries — download from releases, don't version these
+*.dll
+*.exe
+
 ## Logs
 *.log
 *.log.err
 
+## Benchmark results (large JSONL, regenerable)
+*.jsonl
+
+## Backup files
+*.bak
+*.bak-*
+
+## Finetune data/adapters
+finetunes/
+
 ## Temp/cache
 tmp/
 __pycache__/
+
+## Claude session state
+.claude/
+
+## Hermes/Hermen agent files — retired
+hermes-worker-bridge.mjs
+hermes-worker-bridge.log
+run-hermen-managed.ps1
+run-hermes64-test.ps1
+start-hermes-worker-bridge.ps1
+start-qwen36-hermes64.ps1
+start-qwen36-hermes64-TEST.ps1
+hermes64-test.log
