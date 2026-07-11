@@ -10,7 +10,7 @@
 //   - Context: 128k (tiny hidden dim on MoE means KV cache is small)
 //   - KV Cache: Q4_0 (fits with model + 128K ctx on 16GB)
 //   - Flash attention: OFF (4x speed hit on consumer GPUs)
-//   - MTP: draft-mtp with draft-n-max 2 (1.5x speedup)
+//   - MTP: draft-mtp depth is benchmarked before each deployment
 //   - Continuous batching: on
 //
 // NOTE: This config registers qwen3-llama as STOPPED by default.
@@ -47,7 +47,7 @@ module.exports = {
         "--ubatch-size", "512",
         "--cont-batching",
         "--spec-type",   "draft-mtp",
-        "--spec-draft-n-max", "2",
+        "--spec-draft-n-max", "3", // Proven: 130.1 tok/s median with stable output
         "--reasoning",   "off",
       ],
 
@@ -56,6 +56,15 @@ module.exports = {
       autorestart: true,                 // Restart if it crashes (but starts STOPPED)
       watch: false,
       max_memory_restart: "45G",          // Restart if it leaks past 45GB RAM
+
+      // Crash-loop protection. Without these, a stuck orphan on port 8081
+      // (e.g. leftover from a hard kill mid-CUDA-init) would cause PM2 to
+      // respawn indefinitely as the guardian's enforcer kept killing the
+      // new-but-can't-bind instance.
+      min_uptime: "30s",
+      max_restarts: 5,
+      restart_delay: 3000,
+      kill_timeout: 20000,               // llama-server needs time to unwind CUDA on shutdown
 
       // Log output
       log_date_format: "YYYY-MM-DD HH:mm:ss",

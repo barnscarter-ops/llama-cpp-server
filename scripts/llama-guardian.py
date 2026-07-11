@@ -34,6 +34,7 @@ Python 3.10+, aiohttp.  (Both already installed on this system.)
 """
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -196,6 +197,85 @@ def _pm2_cmd(action: str) -> list[str]:
     return ["pm2", action, PM2_APP]
 
 
+def _pm2_exe_path() -> str:
+    """Resolved pm2 executable path (uses same cache as _pm2_cmd)."""
+    if sys.platform == "win32":
+        if not hasattr(_pm2_cmd, "_pm2_exe"):
+            import shutil
+            pm2_path = shutil.which("pm2") or shutil.which("pm2.cmd")
+            if not pm2_path:
+                raise FileNotFoundError("pm2 not found on PATH")
+            _pm2_cmd._pm2_exe = pm2_path
+        return _pm2_cmd._pm2_exe
+    return "pm2"
+
+
+def _pm2_get_llama_pid() -> tuple[str, int]:
+    """Query PM2 for qwen3-llama's status and PID.
+
+    Source of truth for the single-llama enforcer. Returns (status, pid):
+      - status: 'online' | 'stopped' | 'errored' | 'unknown'
+      - pid: PM2-tracked PID, or 0 if not online
+    """
+    import subprocess
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        result = subprocess.run(
+            [_pm2_exe_path(), "jlist"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=creationflags,
+        )
+        data = json.loads(result.stdout)
+        for app in data:
+            if app.get("name") == PM2_APP:
+                env = app.get("pm2_env") or {}
+                status = env.get("status", "unknown")
+                pid = int(app.get("pid") or 0)
+                return status, pid
+        return "unknown", 0
+    except Exception as e:
+        log.warning(f"pm2 jlist failed: {e}")
+        return "unknown", 0
+
+
+def _llama_pids() -> list[int]:
+    """Return every running llama-server PID without relying on PM2 state."""
+    import subprocess
+
+    result = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq llama-server.exe", "/FO", "CSV", "/NH"],
+        capture_output=True, text=True, timeout=10,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    pids = []
+    for line in result.stdout.strip().split("\n"):
+        parts = line.replace('"', '').split(",")
+        if len(parts) >= 2 and parts[1].strip().isdigit():
+            pids.append(int(parts[1].strip()))
+    return pids
+
+
+def _llama_listener_pid() -> int | None:
+    """Return the PID listening on llama's internal port, if there is one."""
+    import subprocess
+
+    result = subprocess.run(
+        ["netstat", "-ano", "-p", "tcp"],
+        capture_output=True, text=True, timeout=10,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if (
+            len(fields) >= 5
+            and fields[3].upper() == "LISTENING"
+            and fields[1].endswith(f":{LLAMA_PORT}")
+            and fields[4].isdigit()
+        ):
+            return int(fields[4])
+    return None
+
+
 async def ensure_llama_started(reason: str) -> bool:
     """Start llama if it's down. Dedups concurrent starts via a lock.
 
@@ -213,8 +293,16 @@ async def ensure_llama_started(reason: str) -> bool:
             log.info(f"llama already up ({reason}) — started by concurrent caller")
             return True
 
-        log.info(f"starting llama ({reason})...")
-        await pm2("start")
+        pm2_status, pm2_pid = _pm2_get_llama_pid()
+        if pm2_status == "online" and pm2_pid > 0:
+            # PM2 has already launched llama, but the model has not finished
+            # loading yet. `pm2 start` would restart that in-flight load.
+            log.info(
+                f"llama is already loading ({reason}; pm2 pid={pm2_pid}) — waiting"
+            )
+        else:
+            log.info(f"starting llama ({reason})...")
+            await pm2("start")
 
         # Wait for llama to finish loading the model (the slow part).
         if await guardian.wait_until_llama_up():
@@ -415,75 +503,117 @@ async def slot_activity_poller(app: web.Application) -> None:
 async def enforce_single_llama(app: web.Application) -> None:
     """Ensure only ONE llama-server process exists at any time.
 
-    Runs on startup to kill strays, then polls periodically. If someone
-    launches llama manually (not via PM2), or if PM2 somehow spawns a
-    duplicate, the extra process gets killed.
+    Runs on startup to kill strays, then polls periodically. PM2 is the
+    source of truth for which llama-server.exe is authoritative:
+      - PM2 online → keep the PM2-tracked PID, kill every other
+      - PM2 stopped → every running llama-server.exe is an orphan
+      - PM2 unknown/errored → make no destructive change until PM2 is observable
 
-    We keep the process that's listening on the expected port (8081).
-    If multiple are on 8081 (shouldn't happen), keep the oldest.
+    Why: an orphan llama-server holding port 8081 will refuse PM2's fresh
+    spawns' bind attempts. The old logic "keep whoever holds :8081" made
+    the orphan authoritative and killed the healthy PM2 process, which
+    PM2 then autorestarted — 30 s later the enforcer killed it again. The
+    crash-loop stopped only on manual intervention. PM2 as source of
+    truth breaks that feedback loop.
     """
     import subprocess
 
     # Run once at startup immediately, then poll every 30s.
     FIRST_RUN = True
     POLL_S = 30
-    LLAMA_EXE = "llama-server.exe"
-
     log.info("single-llama enforcer started")
 
     async def _enforce():
         nonlocal FIRST_RUN
         try:
-            # Get all llama-server PIDs via tasklist (fast, no WMI overhead).
-            result = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {LLAMA_EXE}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=10,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            pids = []
-            for line in result.stdout.strip().split("\n"):
-                parts = line.replace('"', '').split(",")
-                if len(parts) >= 2 and parts[1].strip().isdigit():
-                    pids.append(int(parts[1].strip()))
+            pids = _llama_pids()
 
-            if len(pids) <= 1 and not FIRST_RUN:
-                return  # all good, nothing to do
-
-            if FIRST_RUN and len(pids) == 0:
-                log.info("enforcer: no llama processes found on startup")
+            if not pids:
+                if FIRST_RUN:
+                    log.info("enforcer: no llama processes found on startup")
                 FIRST_RUN = False
                 return
 
-            if len(pids) > 1:
-                # Find which one holds port 8081 — that's the PM2-managed one.
-                keep_pid = None
-                for pid in pids:
-                    port_result = subprocess.run(
-                        ["netstat", "-ano"],
-                        capture_output=True, text=True, timeout=10,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                    for line in port_result.stdout.split("\n"):
-                        if f":8081" in line and "LISTENING" in line and str(pid) in line:
-                            keep_pid = pid
-                            break
-                    if keep_pid:
-                        break
-                # If none hold 8081 yet (both loading?), keep oldest.
-                if keep_pid is None:
-                    keep_pid = min(pids)
+            pm2_status, pm2_pid = _pm2_get_llama_pid()
 
-                for pid in pids:
-                    if pid != keep_pid:
-                        log.warning(f"enforcer: killing duplicate llama PID {pid} (keeping {keep_pid})")
+            if pm2_status == "online" and pm2_pid > 0:
+                if pm2_pid in pids:
+                    keep_pid = pm2_pid
+                else:
+                    # Transient race: PM2 says online but its PID isn't in the
+                    # tasklist snapshot yet. Skip this tick — resolves on the next.
+                    log.info(
+                        f"enforcer: pm2 pid {pm2_pid} not in tasklist yet, skipping"
+                    )
+                    FIRST_RUN = False
+                    return
+            elif pm2_status == "stopped":
+                keep_pid = None  # every running llama-server.exe is an orphan
+            else:
+                # A failed PM2 query must never make the enforcer kill a
+                # possibly healthy server. Wait for PM2 to become observable.
+                log.warning(
+                    f"enforcer: PM2 state is {pm2_status}; leaving llama PIDs alone"
+                )
+                FIRST_RUN = False
+                return
+
+            listener_pid = _llama_listener_pid()
+            if (
+                pm2_status == "online"
+                and keep_pid is not None
+                and listener_pid is not None
+                and listener_pid != keep_pid
+            ):
+                # A stale process owns :8081 while PM2 is trying to replace it.
+                # Killing one PID every poll only makes PM2 retry into the same
+                # port collision. Stop/reap/start as a single transaction.
+                log.warning(
+                    f"enforcer: port {LLAMA_PORT} is owned by stale PID {listener_pid}; "
+                    f"recovering PM2 PID {keep_pid}"
+                )
+                async with guardian.start_lock:
+                    await pm2("stop")
+                    for stale_pid in _llama_pids():
                         subprocess.run(
-                            ["taskkill", "/F", "/PID", str(pid)],
+                            ["taskkill", "/F", "/PID", str(stale_pid)],
                             capture_output=True, timeout=10,
                             creationflags=subprocess.CREATE_NO_WINDOW,
                         )
-            elif FIRST_RUN and len(pids) == 1:
-                log.info(f"enforcer: 1 llama process found (PID {pids[0]})")
+                    for _ in range(20):
+                        if not _llama_pids():
+                            break
+                        await asyncio.sleep(1)
+                    if _llama_pids():
+                        log.error("enforcer: stale llama process survived recovery; not restarting")
+                        FIRST_RUN = False
+                        return
+                    await pm2("start")
+                FIRST_RUN = False
+                return
 
+            killed = 0
+            for pid in pids:
+                if pid != keep_pid:
+                    log.warning(
+                        f"enforcer: killing orphan llama PID {pid} "
+                        f"(pm2 status={pm2_status}, pm2 pid={pm2_pid}, keep={keep_pid})"
+                    )
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True, timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    killed += 1
+
+            if FIRST_RUN:
+                if keep_pid and killed == 0:
+                    log.info(
+                        f"enforcer: 1 llama process found (PID {keep_pid}, "
+                        f"pm2 status={pm2_status})"
+                    )
+                elif killed:
+                    log.info(f"enforcer: reaped {killed} orphan(s) on startup")
             FIRST_RUN = False
         except Exception as e:
             log.warning(f"enforcer check failed: {e}")
