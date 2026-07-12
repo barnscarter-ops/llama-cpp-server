@@ -3233,6 +3233,53 @@ git commit -m "feat(acp): wire read-only tools into bounded agent loop"
 
 ---
 
+# Session 4b — Task 11b (corrective; do before Session 5)
+
+**Status:** Session 4 green on `check`/`test`/`build`/`--health`/`--smoke`, but orchestrator found a **write-path bug**. Do not start Session 5 until this is fixed and re-verified.
+
+## Bug (verified by reading source)
+
+Happy path is broken:
+
+1. `src/agent/loop.ts` → `handleApplyPatch` obtains ACP `session/request_permission` approval.
+2. On allow, it calls `executeTool("apply_patch", ...)`.
+3. `src/tools/registry.ts` Gate 2 requires `writeApprovalStore.getApproval(path, newContent)?.approved`.
+4. **Nothing ever calls `writeApprovalStore.set(...)` after the editor allows**, so Gate 2 always rejects post-approval.
+5. Additionally, `apply_patch` tool `execute()` itself writes with **no gates**; safety is only in `executeTool` / loop. Prefer defense-in-depth: gates inside apply path too, or only write via a gated helper after store is populated.
+
+## Task 11b — Fix apply_patch approval wiring + integration test
+
+### Blueprint (you write the code)
+
+1. After editor approval for the exact path+content (or exact diff hash), **record approval in `writeApprovalStore`** before any write.
+2. Ensure `executeTool` / write only succeeds when **both** `ACP_ALLOW_WRITES` and matching store approval are present.
+3. On successful write, clear or consume that approval so it cannot be replayed for a different hash.
+4. Hash mismatch still rejects (already tested at store level).
+5. Add an **integration test** that simulates: allowWrites=true → record approval for content A → `executeTool(apply_patch, content A)` writes file → `executeTool(apply_patch, content B)` without new approval does not write (or rejects). File contents on disk must prove this.
+6. Keep reject-without-allowWrites and reject-without-approval tests green.
+7. Do not change PM2/guardian/ecosystem. Do not start Session 5 docs/editor work.
+
+### Verify
+
+```powershell
+Set-Location C:\Workspace\Infrastructure\llama-cpp-server\scripts\acp-qwen-agent
+npm run check
+npm test
+npm run build
+$env:ACP_QWEN_BASE_URL = 'http://127.0.0.1:8080/v1'
+$env:ACP_QWEN_MODEL = 'qwen3.6-35b'
+npm run start -- --health
+$env:ACP_WORKSPACE = 'C:\Temp\acp-qwen-smoke'
+$env:ACP_ALLOW_WRITES = 'false'
+npm run start -- --smoke
+```
+
+### Commit
+
+`fix(acp): wire editor approval into apply_patch write gate`
+
+---
+
 # Session 5 — Tasks 12–13 (outline)
 
 ## Task 12: Full test suite + final checklist
