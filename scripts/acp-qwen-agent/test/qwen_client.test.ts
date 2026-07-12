@@ -11,7 +11,18 @@ const baseConfig: AppConfig = {
 };
 
 function fakeOpenAi(
-  impl: () => Promise<{ choices: Array<{ message: { content: string | null } }> }>,
+  impl: () => Promise<{
+    choices: Array<{
+      message: {
+        content?: string | null;
+        tool_calls?: Array<{
+          id: string;
+          type: "function";
+          function: { name: string; arguments: string };
+        }>;
+      };
+    }>;
+  }>,
 ): OpenAI {
   return {
     chat: {
@@ -28,10 +39,11 @@ describe("createQwenChatClient", () => {
       choices: [{ message: { content: "hello from qwen" } }],
     }));
     const client = createQwenChatClient(baseConfig, openai);
-    const text = await client.completeChat({
+    const res = await client.completeChat({
       messages: [{ role: "user", content: "hi" }],
     });
-    expect(text).toBe("hello from qwen");
+    expect(res.content).toBe("hello from qwen");
+    expect(res.toolCalls).toEqual([]);
   });
 
   it("maps empty content to an error", async () => {
@@ -42,6 +54,44 @@ describe("createQwenChatClient", () => {
     await expect(
       client.completeChat({ messages: [{ role: "user", content: "hi" }] }),
     ).rejects.toThrow(/empty content/i);
+  });
+
+  it("returns tool calls", async () => {
+    const openai = fakeOpenAi(async () => ({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: {
+                  name: "list_files",
+                  arguments: "{\"path\":\".\"}",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    }));
+    const client = createQwenChatClient(baseConfig, openai);
+    const res = await client.completeChat({
+      messages: [{ role: "user", content: "list" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "list_files",
+            description: "list",
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ],
+    });
+    expect(res.toolCalls).toHaveLength(1);
+    expect(res.toolCalls[0]?.name).toBe("list_files");
   });
 
   it("maps connection failures with guardian context", async () => {

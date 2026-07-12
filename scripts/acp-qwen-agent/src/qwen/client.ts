@@ -1,21 +1,49 @@
 import OpenAI from "openai";
 import type { AppConfig } from "../config.js";
 
-export type ChatMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
+export type ChatMessage =
+  | {
+      role: "system" | "user" | "assistant";
+      content: string;
+      tool_calls?: OpenAI.Chat.ChatCompletionMessageToolCall[];
+    }
+  | {
+      role: "tool";
+      content: string;
+      tool_call_id: string;
+    };
+
+export type ToolSpec = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
+export type ToolCallRequest = {
+  id: string;
+  name: string;
+  arguments: string;
 };
 
 export type CompleteChatParams = {
   messages: ChatMessage[];
+  tools?: ToolSpec[];
   signal?: AbortSignal;
+};
+
+export type CompleteChatResult = {
+  content: string | null;
+  toolCalls: ToolCallRequest[];
 };
 
 /**
  * Minimal surface used by the agent so tests can inject a fake.
  */
 export type QwenChatClient = {
-  completeChat(params: CompleteChatParams): Promise<string>;
+  completeChat(params: CompleteChatParams): Promise<CompleteChatResult>;
 };
 
 function mapOpenAiError(err: unknown, baseUrl: string): Error {
@@ -29,7 +57,6 @@ function mapOpenAiError(err: unknown, baseUrl: string): Error {
     status?: number;
     code?: string;
     message?: string;
-    cause?: unknown;
   };
 
   const status = anyErr?.status;
@@ -69,22 +96,38 @@ export function createQwenChatClient(
   openai: OpenAI = createOpenAiClient(config),
 ): QwenChatClient {
   return {
-    async completeChat(params: CompleteChatParams): Promise<string> {
+    async completeChat(params: CompleteChatParams): Promise<CompleteChatResult> {
       try {
         const res = await openai.chat.completions.create(
           {
             model: config.model,
-            messages: params.messages,
+            messages: params.messages as OpenAI.Chat.ChatCompletionMessageParam[],
             stream: false,
+            tools: params.tools as OpenAI.Chat.ChatCompletionTool[] | undefined,
+            tool_choice: params.tools?.length ? "auto" : undefined,
           },
           { signal: params.signal },
         );
 
-        const content = res.choices[0]?.message?.content;
-        if (typeof content !== "string" || content.trim().length === 0) {
-          throw new Error("Model returned empty content");
+        const msg = res.choices[0]?.message;
+        const toolCalls: ToolCallRequest[] = (msg?.tool_calls ?? [])
+          .filter((tc) => tc.type === "function")
+          .map((tc) => ({
+            id: tc.id,
+            name: tc.function.name,
+            arguments: tc.function.arguments ?? "{}",
+          }));
+
+        const content =
+          typeof msg?.content === "string" && msg.content.trim().length > 0
+            ? msg.content
+            : null;
+
+        if (!content && toolCalls.length === 0) {
+          throw new Error("Model returned empty content and no tool calls");
         }
-        return content;
+
+        return { content, toolCalls };
       } catch (err) {
         throw mapOpenAiError(err, config.baseUrl);
       }

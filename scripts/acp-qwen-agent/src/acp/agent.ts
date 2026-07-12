@@ -3,11 +3,8 @@ import type { AppConfig } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 import type { QwenChatClient } from "../qwen/client.js";
 import { SessionStore } from "./session.js";
-
-const SYSTEM_PROMPT =
-  "You are qwen-acp-agent, a helpful local coding assistant. " +
-  "Answer clearly in Markdown. You do not have tools in this version; " +
-  "do not invent tool results. Keep answers concise.";
+import { AuditLog } from "../agent/audit.js";
+import { runAgentLoop } from "../agent/loop.js";
 
 const PACKAGE_VERSION = "0.1.0";
 
@@ -15,6 +12,7 @@ export type QwenAcpAgentDeps = {
   config: AppConfig;
   qwen: QwenChatClient;
   sessions?: SessionStore;
+  audit?: AuditLog;
 };
 
 export function extractUserText(
@@ -31,6 +29,7 @@ export function extractUserText(
 
 export function createQwenAcpAgent(deps: QwenAcpAgentDeps) {
   const sessions = deps.sessions ?? new SessionStore();
+  const audit = deps.audit ?? new AuditLog();
 
   async function initialize(
     params: acp.InitializeRequest,
@@ -109,31 +108,26 @@ export function createQwenAcpAgent(deps: QwenAcpAgentDeps) {
       logInfo("acp session/prompt", {
         sessionId: params.sessionId,
         userChars: userText.length,
+        workspace: deps.config.workspace ?? "",
       });
 
-      const answer = await deps.qwen.completeChat({
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userText },
-        ],
-        signal,
-      });
-
-      if (signal.aborted) {
-        return { stopReason: "cancelled" };
-      }
-
-      await client.notify(acp.methods.client.session.update, {
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: {
-            type: "text",
-            text: answer,
-          },
+      const stop = await runAgentLoop(
+        {
+          config: deps.config,
+          qwen: deps.qwen,
+          audit,
+          workspaceRoot: deps.config.workspace ?? "",
+          sessionId: params.sessionId,
+          client,
+          signal,
         },
-      });
+        userText,
+      );
 
+      if (stop === "cancelled") return { stopReason: "cancelled" };
+      if (stop === "max_turn_requests") {
+        return { stopReason: "max_turn_requests" };
+      }
       return { stopReason: "end_turn" };
     } catch (err) {
       if (signal.aborted) {
@@ -147,7 +141,7 @@ export function createQwenAcpAgent(deps: QwenAcpAgentDeps) {
           sessionUpdate: "agent_message_chunk",
           content: {
             type: "text",
-            text: `**Error talking to local Qwen:** ${message}`,
+            text: `**Error:** ${message}`,
           },
         },
       });
@@ -190,6 +184,7 @@ export function createQwenAcpAgent(deps: QwenAcpAgentDeps) {
     cancel,
     buildApp,
     sessions,
+    audit,
   };
 }
 
@@ -203,6 +198,7 @@ export async function runAcpStdio(deps: QwenAcpAgentDeps): Promise<void> {
   logInfo("acp stdio connected", {
     baseUrl: deps.config.baseUrl,
     model: deps.config.model,
+    workspace: deps.config.workspace ?? "",
   });
   await connection.closed;
 }
