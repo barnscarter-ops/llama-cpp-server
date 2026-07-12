@@ -6,11 +6,14 @@
  *
  * stdout = ACP protocol only. All logs use stderr.
  */
-import { loadConfig } from "./config.js";
+import { loadConfig, requireWorkspace } from "./config.js";
 import { logError, logInfo } from "./logger.js";
 import { runHealthCheck } from "./qwen/health.js";
 import { createQwenChatClient } from "./qwen/client.js";
 import { runAcpStdio } from "./acp/agent.js";
+import { setAllowWrites } from "./tools/registry.js";
+import fs from "node:fs";
+import pathModule from "node:path";
 
 async function main(argv: string[]): Promise<number> {
   const args = argv.slice(2);
@@ -35,6 +38,7 @@ Environment:
   let config;
   try {
     config = loadConfig();
+    setAllowWrites(config.allowWrites);
   } catch (err) {
     logError(err instanceof Error ? err.message : String(err));
     return 1;
@@ -45,8 +49,7 @@ Environment:
   }
 
   if (args.includes("--smoke")) {
-    logError("--smoke is implemented in a later session; use --health for now");
-    return 2;
+    return runSmoke(config);
   }
 
   if (process.stdin.isTTY) {
@@ -66,6 +69,59 @@ Environment:
     return 0;
   } catch (err) {
     logError(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+}
+
+async function runSmoke(config: ReturnType<typeof loadConfig>): Promise<number> {
+  try {
+    const ws = requireWorkspace(config);
+    logInfo("--smoke start", { workspace: ws });
+
+    // Write a fixture file (workspace is writable for smoke, writes off for safety)
+    const smokeDir = pathModule.join(ws, "smoke");
+    try {
+      fs.mkdirSync(smokeDir, { recursive: true });
+    } catch {
+      // already exists
+    }
+    const fixturePath = pathModule.join(smokeDir, "fixture.txt");
+    if (!fs.existsSync(fixturePath)) {
+      fs.writeFileSync(fixturePath, "smoke-ok", "utf8");
+    }
+
+    // list_files on the smoke dir
+    const { executeTool } = await import("./tools/registry.js");
+
+    const listRes = await executeTool("list_files", { path: "smoke" }, {
+      workspaceRoot: ws,
+    });
+    logInfo("--smoke list_files", { ok: listRes.ok });
+    if (!listRes.ok) {
+      logError("--smoke list_files failed", { output: listRes.output });
+      return 1;
+    }
+
+    const readRes = await executeTool("read_file", { path: "smoke/fixture.txt" }, {
+      workspaceRoot: ws,
+    });
+    logInfo("--smoke read_file", { ok: readRes.ok });
+    if (!readRes.ok) {
+      logError("--smoke read_file failed", { output: readRes.output });
+      return 1;
+    }
+
+    if (!readRes.output.includes("smoke-ok")) {
+      logError("--smoke read_file did not contain expected content");
+      return 1;
+    }
+
+    logInfo("--smoke ok", { listFiles: true, readFile: true });
+    return 0;
+  } catch (err) {
+    logError("--smoke failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
     return 1;
   }
 }

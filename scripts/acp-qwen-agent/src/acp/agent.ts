@@ -120,6 +120,7 @@ export function createQwenAcpAgent(deps: QwenAcpAgentDeps) {
           sessionId: params.sessionId,
           client,
           signal,
+          allowWrites: deps.config.allowWrites,
         },
         userText,
       );

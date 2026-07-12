@@ -9,14 +9,17 @@ import type {
 import { executeTool, getOpenAiToolSpecs } from "../tools/registry.js";
 import { AuditLog } from "./audit.js";
 import { logError, logInfo } from "../logger.js";
+import type { ToolResult } from "../tools/types.js";
+import { computeDiffHash } from "../tools/apply_patch.js";
 
 export const MAX_TURNS = 6;
 
 const SYSTEM_PROMPT =
   "You are qwen-acp-agent, a helpful local coding assistant with read-only workspace tools. " +
   "Use tools when you need file contents or search results. " +
-  "Only one tool call at a time. Prefer list_files/read_file/search_text. " +
-  "You cannot write files in this version. Keep final answers concise Markdown.";
+  "Only one tool call at a time. Prefer list_files/read_file/search_text/propose_patch. " +
+  "Write files only via propose_patch (diff only). " +
+  "Keep final answers concise Markdown.";
 
 export type LoopDeps = {
   config: AppConfig;
@@ -26,7 +29,11 @@ export type LoopDeps = {
   sessionId: string;
   client: AgentContext;
   signal: AbortSignal;
+  allowWrites?: boolean;
+  timeoutMs?: number;
 };
+
+export type AgentStopReason = "end_turn" | "cancelled" | "max_turn_requests";
 
 async function emitText(
   client: AgentContext,
@@ -98,13 +105,107 @@ function parseToolArgs(raw: string): unknown {
   }
 }
 
+function emitStructuredError(
+  client: AgentContext,
+  sessionId: string,
+  toolName: string,
+  message: string,
+): Promise<void> {
+  return client.notify(acp.methods.client.session.update, {
+    sessionId,
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: `**Tool error (${toolName}):** ${message}` },
+    },
+  });
+}
+
+/**
+ * Handle apply_patch with dual gate (write gate + diff hash approval).
+ * If ACP_ALLOW_WRITES is off, reject immediately.
+ * If on, request permission from the client via session/request_permission.
+ */
+async function handleApplyPatch(
+  deps: LoopDeps,
+  toolCall: ToolCallRequest,
+  args: unknown,
+  toolStarted: number,
+): Promise<ToolResult> {
+  // Gate 1: ACP_ALLOW_WRITES
+  if (!deps.allowWrites) {
+    return { ok: false, output: "apply_patch is disabled. Set ACP_ALLOW_WRITES=true to enable writes." };
+  }
+
+  let parsed: { path?: string; newContent?: string } | null = null;
+  try {
+    if (typeof args === "string") {
+      parsed = JSON.parse(args);
+    } else if (typeof args === "object") {
+      parsed = args as { path?: string; newContent?: string };
+    }
+  } catch {
+    // will reject below
+  }
+
+  if (!parsed || typeof parsed.path !== "string") {
+    return { ok: false, output: "apply_patch requires 'path' and 'newContent' fields" };
+  }
+
+  const newContent = parsed.newContent ?? "";
+
+  // Gate 2: request permission from client
+  const diffHash = computeDiffHash(parsed.path, newContent);
+  logInfo("apply_patch permission request", {
+    sessionId: deps.sessionId,
+    diffHash: diffHash.slice(0, 16),
+  });
+
+  try {
+    const permission = await deps.client.request(
+      acp.methods.client.session.requestPermission,
+      {
+        sessionId: deps.sessionId,
+        toolCall: {
+          title: `apply_patch: ${parsed.path}`,
+          kind: "write",
+          status: "pending",
+          toolCallId: toolCall.id,
+          content: [
+            {
+              type: "text",
+              text: `Apply write to ${parsed.path} (hash: ${diffHash.slice(0, 16)}...)`,
+            },
+          ],
+        },
+        options: [
+          { kind: "allow_once", name: "Allow this write", optionId: "allow" },
+        ],
+      },
+    ) as { outcome?: { outcome?: string; optionId?: string } };
+
+    if (
+      permission?.outcome?.outcome !== "selected" ||
+      permission?.outcome?.optionId !== "allow"
+    ) {
+      return { ok: false, output: `apply_patch rejected by editor (hash: ${diffHash.slice(0, 16)}...)` };
+    }
+
+    // Permission granted — execute the write
+    return await executeTool(toolCall.name, args, { workspaceRoot: deps.workspaceRoot });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (deps.signal.aborted) throw new Error(`apply_patch aborted: ${message}`);
+    return { ok: false, output: `apply_patch permission error: ${message}` };
+  }
+}
+
 /**
  * Bounded model↔tool loop. Max 6 turns. At most one tool call per model response.
  */
 export async function runAgentLoop(
   deps: LoopDeps,
   userText: string,
-): Promise<"end_turn" | "cancelled" | "max_turn_requests"> {
+): Promise<AgentStopReason> {
   if (!deps.workspaceRoot) {
     await emitText(
       deps.client,
@@ -173,13 +274,18 @@ export async function runAgentLoop(
 
       await emitToolCall(deps.client, deps.sessionId, toolCall, "pending");
       const args = parseToolArgs(toolCall.arguments);
-      const toolStarted = Date.now();
       let toolResult;
+
       if (args === null) {
-        toolResult = {
-          ok: false,
-          output: "invalid tool arguments JSON",
-        };
+        await emitStructuredError(
+          deps.client,
+          deps.sessionId,
+          toolCall.name,
+          "invalid tool arguments JSON",
+        );
+        toolResult = { ok: false, output: "invalid tool arguments JSON" };
+      } else if (toolCall.name === "apply_patch") {
+        toolResult = await handleApplyPatch(deps, toolCall, args, Date.now());
       } else {
         toolResult = await executeTool(toolCall.name, args, {
           workspaceRoot: deps.workspaceRoot,
@@ -190,7 +296,7 @@ export async function runAgentLoop(
         kind: "tool",
         ok: toolResult.ok,
         tool: toolCall.name,
-        durationMs: Date.now() - toolStarted,
+        durationMs: 0,
         detail: toolResult.ok ? "ok" : "err",
         sessionId: deps.sessionId,
       });
