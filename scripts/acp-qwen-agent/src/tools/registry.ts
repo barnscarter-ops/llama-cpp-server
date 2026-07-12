@@ -1,11 +1,17 @@
 import { listFilesTool } from "./list_files.js";
 import { readFileTool } from "./read_file.js";
 import { searchTextTool } from "./search_text.js";
+import { proposePatchTool } from "./propose_patch.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
 import { PathGuardError } from "./path_guard.js";
 import { truncateOutput } from "./types.js";
 
-const tools: ToolDefinition[] = [listFilesTool, readFileTool, searchTextTool];
+const tools: ToolDefinition[] = [
+  listFilesTool,
+  readFileTool,
+  searchTextTool,
+  proposePatchTool,
+];
 
 export function getToolDefinitions(): ToolDefinition[] {
   return tools;

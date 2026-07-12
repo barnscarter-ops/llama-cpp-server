@@ -21,10 +21,12 @@ afterEach(() => {
 });
 
 describe("read-only tools", () => {
-  it("registers exactly three tools", () => {
-    expect(getToolDefinitions().map((t) => t.name).sort()).toEqual(
-      ["list_files", "read_file", "search_text"].sort(),
-    );
+  it("registers read-only + propose_patch tools", () => {
+    const names = getToolDefinitions().map((t) => t.name).sort();
+    expect(names).toContain("list_files");
+    expect(names).toContain("read_file");
+    expect(names).toContain("search_text");
+    expect(names).toContain("propose_patch");
   });
 
   it("list_files skips node_modules", async () => {
@@ -64,6 +66,17 @@ describe("read-only tools", () => {
     );
     expect(res.ok).toBe(false);
     expect(res.output).toMatch(/binary/i);
+  });
+
+  it("propose_patch generates a unified diff", async () => {
+    const res = await executeTool(
+      "propose_patch",
+      { path: "readme.md", newContent: "# Hello\nnew line\n" },
+      { workspaceRoot: root },
+    );
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatch(/--- .*readme\.md/);
+    expect(res.output).toMatch(/new line/);
   });
 
   it("search_text finds a literal (requires rg on PATH)", async () => {
