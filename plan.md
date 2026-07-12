@@ -753,45 +753,685 @@ git commit -m "feat(acp): add typed config, health check, and stdio entry stub"
 
 ---
 
-# Session 2 — Tasks 4–5 (do not execute in Session 1)
+# Session 2 — Tasks 4–5
+
+**Status:** Session 1 verified (2026-07-12). Executor may run Tasks 4–5 only.
+
+**Goal:** Non-streaming Qwen completion client + real ACP initialize/session/prompt over stdio (no filesystem tools yet).
+
+---
 
 ## Task 4: Qwen OpenAI-compatible completion client
 
-Create `src/qwen/client.ts`:
+### Steps
 
-- Use official `openai` package with `baseURL: config.baseUrl`, `apiKey: process.env.ACP_QWEN_API_KEY ?? "not-needed"`, `timeout: config.timeoutMs`.
-- Export `completeChat({ messages, tools? })` non-streaming first.
-- Map network/timeout errors to clear Error messages mentioning guardian cold-start.
-- Unit-test with a mock `fetch` or injected client; do not require live model in unit tests.
-- Live optional: only via `--health` already done.
+1. Ensure you are in the wrapper folder:
 
-**Commit:** `feat(acp): add local llama.cpp completion client`
+```powershell
+Set-Location C:\Workspace\Infrastructure\llama-cpp-server\scripts\acp-qwen-agent
+```
+
+2. Write **`src/qwen/client.ts`** exactly:
+
+```ts
+import OpenAI from "openai";
+import type { AppConfig } from "../config.js";
+
+export type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+export type CompleteChatParams = {
+  messages: ChatMessage[];
+  signal?: AbortSignal;
+};
+
+/**
+ * Minimal surface used by the agent so tests can inject a fake.
+ */
+export type QwenChatClient = {
+  completeChat(params: CompleteChatParams): Promise<string>;
+};
+
+function mapOpenAiError(err: unknown, baseUrl: string): Error {
+  if (err instanceof Error && err.name === "AbortError") {
+    return new Error(
+      `Qwen request aborted or timed out talking to ${baseUrl} (guardian may be cold-starting or busy)`,
+    );
+  }
+
+  const anyErr = err as {
+    status?: number;
+    code?: string;
+    message?: string;
+    cause?: unknown;
+  };
+
+  const status = anyErr?.status;
+  const code = anyErr?.code;
+  const message =
+    err instanceof Error ? err.message : String(err ?? "unknown error");
+
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ENOTFOUND" ||
+    /ECONNREFUSED|fetch failed|network/i.test(message)
+  ) {
+    return new Error(
+      `Cannot reach llama-guardian at ${baseUrl}: ${message}. Is the guardian up on :8080?`,
+    );
+  }
+
+  if (status === 502 || status === 503 || status === 504) {
+    return new Error(
+      `Guardian at ${baseUrl} returned HTTP ${status} (model may be cold-starting): ${message}`,
+    );
+  }
+
+  return new Error(`Qwen completion failed (${baseUrl}): ${message}`);
+}
+
+export function createOpenAiClient(config: AppConfig): OpenAI {
+  return new OpenAI({
+    baseURL: config.baseUrl,
+    apiKey: process.env.ACP_QWEN_API_KEY ?? "not-needed",
+    timeout: config.timeoutMs,
+  });
+}
+
+export function createQwenChatClient(
+  config: AppConfig,
+  openai: OpenAI = createOpenAiClient(config),
+): QwenChatClient {
+  return {
+    async completeChat(params: CompleteChatParams): Promise<string> {
+      try {
+        const res = await openai.chat.completions.create(
+          {
+            model: config.model,
+            messages: params.messages,
+            stream: false,
+          },
+          { signal: params.signal },
+        );
+
+        const content = res.choices[0]?.message?.content;
+        if (typeof content !== "string" || content.trim().length === 0) {
+          throw new Error("Model returned empty content");
+        }
+        return content;
+      } catch (err) {
+        throw mapOpenAiError(err, config.baseUrl);
+      }
+    },
+  };
+}
+```
+
+3. Write **`test/qwen_client.test.ts`** exactly:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+import type OpenAI from "openai";
+import { createQwenChatClient } from "../src/qwen/client.js";
+import type { AppConfig } from "../src/config.js";
+
+const baseConfig: AppConfig = {
+  baseUrl: "http://127.0.0.1:8080/v1",
+  model: "qwen3.6-35b",
+  timeoutMs: 5_000,
+  allowWrites: false,
+};
+
+function fakeOpenAi(
+  impl: () => Promise<{ choices: Array<{ message: { content: string | null } }> }>,
+): OpenAI {
+  return {
+    chat: {
+      completions: {
+        create: vi.fn(impl),
+      },
+    },
+  } as unknown as OpenAI;
+}
+
+describe("createQwenChatClient", () => {
+  it("returns assistant text from a non-streaming completion", async () => {
+    const openai = fakeOpenAi(async () => ({
+      choices: [{ message: { content: "hello from qwen" } }],
+    }));
+    const client = createQwenChatClient(baseConfig, openai);
+    const text = await client.completeChat({
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(text).toBe("hello from qwen");
+  });
+
+  it("maps empty content to an error", async () => {
+    const openai = fakeOpenAi(async () => ({
+      choices: [{ message: { content: "   " } }],
+    }));
+    const client = createQwenChatClient(baseConfig, openai);
+    await expect(
+      client.completeChat({ messages: [{ role: "user", content: "hi" }] }),
+    ).rejects.toThrow(/empty content/i);
+  });
+
+  it("maps connection failures with guardian context", async () => {
+    const err = Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" });
+    const openai = fakeOpenAi(async () => {
+      throw err;
+    });
+    const client = createQwenChatClient(baseConfig, openai);
+    await expect(
+      client.completeChat({ messages: [{ role: "user", content: "hi" }] }),
+    ).rejects.toThrow(/llama-guardian|Cannot reach/i);
+  });
+});
+```
+
+4. Verify:
+
+```powershell
+npm run check
+npm test
+```
+
+**Expected:** TypeScript clean; all previous tests + 3 new `qwen_client` tests pass.
+
+### Commit
+
+```powershell
+Set-Location C:\Workspace\Infrastructure\llama-cpp-server
+git add scripts/acp-qwen-agent/src/qwen/client.ts scripts/acp-qwen-agent/test/qwen_client.test.ts
+git commit -m "feat(acp): add local llama.cpp completion client"
+```
+
+---
 
 ## Task 5: ACP initialize + session + prompt (no tools)
 
-Create:
+### Steps
 
-- `src/acp/session.ts` — Map of sessionId → `{ pendingPrompt: AbortController | null }`
-- `src/acp/agent.ts` — handlers matching official SDK example patterns
-- Wire in `src/index.ts` default path: `ndJsonStream` + `acp.agent({ name: "qwen-acp-agent" }).onRequest(...).connect(stream)`
+1. Write **`src/acp/session.ts`** exactly:
 
-Behavior for `session/prompt` in this task:
+```ts
+export type AgentSession = {
+  pendingPrompt: AbortController | null;
+};
 
-1. Extract user text from prompt content blocks.
-2. Call Qwen with a short system prompt: you are a helpful coding assistant; no tools yet.
-3. Stream/reply with one or more `agent_message_chunk` updates.
-4. Return `{ stopReason: "end_turn" }` (or `cancelled` on cancel).
+export class SessionStore {
+  private readonly sessions = new Map<string, AgentSession>();
 
-Tests:
+  create(): string {
+    const sessionId = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    this.sessions.set(sessionId, { pendingPrompt: null });
+    return sessionId;
+  }
 
-- `test/acp_init.test.ts` — fake stream or direct handler unit tests for initialize + newSession.
-- `test/fixtures/initialize_session_prompt.jsonl` — sample transcript of successful handshake for documentation/debug.
+  get(sessionId: string): AgentSession | undefined {
+    return this.sessions.get(sessionId);
+  }
 
-**Commit:** `feat(acp): implement initialize and prompt session flow`
+  cancel(sessionId: string): void {
+    this.sessions.get(sessionId)?.pendingPrompt?.abort();
+  }
+}
+```
 
-**Stop/Go:** Do not add filesystem tools until initialize + plain model answer works.
+2. Write **`src/acp/agent.ts`** exactly:
+
+```ts
+import * as acp from "@agentclientprotocol/sdk";
+import type { AppConfig } from "../config.js";
+import { logError, logInfo } from "../logger.js";
+import type { QwenChatClient } from "../qwen/client.js";
+import { SessionStore } from "./session.js";
+
+const SYSTEM_PROMPT =
+  "You are qwen-acp-agent, a helpful local coding assistant. " +
+  "Answer clearly in Markdown. You do not have tools in this version; " +
+  "do not invent tool results. Keep answers concise.";
+
+const PACKAGE_VERSION = "0.1.0";
+
+export type QwenAcpAgentDeps = {
+  config: AppConfig;
+  qwen: QwenChatClient;
+  sessions?: SessionStore;
+};
+
+export function extractUserText(
+  prompt: Array<{ type: string; text?: string }>,
+): string {
+  const parts: string[] = [];
+  for (const block of prompt) {
+    if (block.type === "text" && typeof block.text === "string") {
+      parts.push(block.text);
+    }
+  }
+  return parts.join("\n").trim();
+}
+
+export function createQwenAcpAgent(deps: QwenAcpAgentDeps) {
+  const sessions = deps.sessions ?? new SessionStore();
+
+  async function initialize(
+    params: acp.InitializeRequest,
+  ): Promise<acp.InitializeResponse> {
+    logInfo("acp initialize", {
+      clientProtocol: params.protocolVersion,
+      agentProtocol: acp.PROTOCOL_VERSION,
+    });
+    return {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: {
+        loadSession: false,
+        promptCapabilities: {
+          image: false,
+          audio: false,
+          embeddedContext: false,
+        },
+      },
+      agentInfo: {
+        name: "qwen-acp-agent",
+        version: PACKAGE_VERSION,
+      },
+      authMethods: [],
+    };
+  }
+
+  async function newSession(
+    _params: acp.NewSessionRequest,
+  ): Promise<acp.NewSessionResponse> {
+    const sessionId = sessions.create();
+    logInfo("acp session/new", { sessionId });
+    return { sessionId };
+  }
+
+  async function authenticate(
+    _params: acp.AuthenticateRequest,
+  ): Promise<acp.AuthenticateResponse | void> {
+    return {};
+  }
+
+  async function setSessionMode(
+    _params: acp.SetSessionModeRequest,
+  ): Promise<acp.SetSessionModeResponse> {
+    return {};
+  }
+
+  async function prompt(
+    params: acp.PromptRequest,
+    client: acp.AgentContext,
+  ): Promise<acp.PromptResponse> {
+    const session = sessions.get(params.sessionId);
+    if (!session) {
+      throw new Error(`Session ${params.sessionId} not found`);
+    }
+
+    session.pendingPrompt?.abort();
+    session.pendingPrompt = new AbortController();
+    const signal = session.pendingPrompt.signal;
+
+    try {
+      const userText = extractUserText(params.prompt);
+      if (!userText) {
+        await client.notify(acp.methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "I did not receive any text in your prompt.",
+            },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      logInfo("acp session/prompt", {
+        sessionId: params.sessionId,
+        userChars: userText.length,
+      });
+
+      const answer = await deps.qwen.completeChat({
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userText },
+        ],
+        signal,
+      });
+
+      if (signal.aborted) {
+        return { stopReason: "cancelled" };
+      }
+
+      await client.notify(acp.methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: answer,
+          },
+        },
+      });
+
+      return { stopReason: "end_turn" };
+    } catch (err) {
+      if (signal.aborted) {
+        return { stopReason: "cancelled" };
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      logError("acp prompt failed", { message, sessionId: params.sessionId });
+      await client.notify(acp.methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: `**Error talking to local Qwen:** ${message}`,
+          },
+        },
+      });
+      return { stopReason: "end_turn" };
+    } finally {
+      session.pendingPrompt = null;
+    }
+  }
+
+  async function cancel(params: acp.CancelNotification): Promise<void> {
+    logInfo("acp session/cancel", { sessionId: params.sessionId });
+    sessions.cancel(params.sessionId);
+  }
+
+  function buildApp(): acp.AgentApp {
+    return acp
+      .agent({ name: "qwen-acp-agent" })
+      .onRequest(acp.methods.agent.initialize, (ctx) => initialize(ctx.params))
+      .onRequest(acp.methods.agent.session.new, (ctx) => newSession(ctx.params))
+      .onRequest(acp.methods.agent.authenticate, (ctx) =>
+        authenticate(ctx.params),
+      )
+      .onRequest(acp.methods.agent.session.setMode, (ctx) =>
+        setSessionMode(ctx.params),
+      )
+      .onRequest(acp.methods.agent.session.prompt, (ctx) =>
+        prompt(ctx.params, ctx.client),
+      )
+      .onNotification(acp.methods.agent.session.cancel, (ctx) =>
+        cancel(ctx.params),
+      );
+  }
+
+  return {
+    initialize,
+    newSession,
+    authenticate,
+    setSessionMode,
+    prompt,
+    cancel,
+    buildApp,
+    sessions,
+  };
+}
+
+export async function runAcpStdio(deps: QwenAcpAgentDeps): Promise<void> {
+  const { Readable, Writable } = await import("node:stream");
+  const input = Writable.toWeb(process.stdout);
+  const output = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
+  const stream = acp.ndJsonStream(input, output);
+  const agent = createQwenAcpAgent(deps);
+  const connection = agent.buildApp().connect(stream);
+  logInfo("acp stdio connected", {
+    baseUrl: deps.config.baseUrl,
+    model: deps.config.model,
+  });
+  await connection.closed;
+}
+```
+
+3. **Replace** **`src/index.ts`** entirely with:
+
+```ts
+#!/usr/bin/env node
+/**
+ * Entry point.
+ * - `--health`: probe guardian /v1/models and exit
+ * - default: ACP JSON-RPC on stdio (stdout = protocol only)
+ */
+import { loadConfig } from "./config.js";
+import { logError, logInfo } from "./logger.js";
+import { runHealthCheck } from "./qwen/health.js";
+import { createQwenChatClient } from "./qwen/client.js";
+import { runAcpStdio } from "./acp/agent.js";
+
+async function main(argv: string[]): Promise<number> {
+  const args = argv.slice(2);
+
+  if (args.includes("--help") || args.includes("-h")) {
+    console.error(`acp-qwen-agent
+
+Usage:
+  acp-qwen-agent --health   Probe llama-guardian /v1/models
+  acp-qwen-agent            Run ACP agent on stdio (editor-launched)
+
+Environment:
+  ACP_QWEN_BASE_URL   default http://127.0.0.1:8080/v1
+  ACP_QWEN_MODEL      default qwen3.6-35b
+  ACP_WORKSPACE       absolute workspace path (tools; later sessions)
+  ACP_QWEN_TIMEOUT_MS default 120000
+  ACP_ALLOW_WRITES    default false
+`);
+    return 0;
+  }
+
+  let config;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    logError(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+
+  if (args.includes("--health")) {
+    return runHealthCheck(config);
+  }
+
+  if (args.includes("--smoke")) {
+    logError("--smoke is implemented in a later session; use --health for now");
+    return 2;
+  }
+
+  if (process.stdin.isTTY) {
+    logError(
+      "ACP stdio mode expected (no TTY). Launch via an ACP client, or pass --health.",
+    );
+    return 2;
+  }
+
+  try {
+    const qwen = createQwenChatClient(config);
+    logInfo("starting acp stdio agent", {
+      baseUrl: config.baseUrl,
+      model: config.model,
+    });
+    await runAcpStdio({ config, qwen });
+    return 0;
+  } catch (err) {
+    logError(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+}
+
+main(process.argv)
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((err) => {
+    logError(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  });
+```
+
+4. Write **`test/acp_init.test.ts`** exactly:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+import * as acp from "@agentclientprotocol/sdk";
+import { createQwenAcpAgent, extractUserText } from "../src/acp/agent.js";
+import type { AppConfig } from "../src/config.js";
+import type { QwenChatClient } from "../src/qwen/client.js";
+
+const config: AppConfig = {
+  baseUrl: "http://127.0.0.1:8080/v1",
+  model: "qwen3.6-35b",
+  timeoutMs: 5_000,
+  allowWrites: false,
+};
+
+describe("extractUserText", () => {
+  it("joins text blocks and ignores others", () => {
+    expect(
+      extractUserText([
+        { type: "text", text: "hello" },
+        { type: "image" },
+        { type: "text", text: "world" },
+      ]),
+    ).toBe("hello\nworld");
+  });
+});
+
+describe("createQwenAcpAgent", () => {
+  it("initialize advertises protocol + agentInfo", async () => {
+    const qwen: QwenChatClient = {
+      completeChat: vi.fn(),
+    };
+    const agent = createQwenAcpAgent({ config, qwen });
+    const res = await agent.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    expect(res.protocolVersion).toBe(acp.PROTOCOL_VERSION);
+    expect(res.agentCapabilities?.loadSession).toBe(false);
+    expect(res.agentInfo?.name).toBe("qwen-acp-agent");
+    expect(res.agentInfo?.version).toBe("0.1.0");
+  });
+
+  it("newSession returns a hex session id", async () => {
+    const qwen: QwenChatClient = { completeChat: vi.fn() };
+    const agent = createQwenAcpAgent({ config, qwen });
+    const res = await agent.newSession({
+      cwd: "C:\\Temp",
+      mcpServers: [],
+    });
+    expect(res.sessionId).toMatch(/^[0-9a-f]{32}$/);
+    expect(agent.sessions.get(res.sessionId)).toBeDefined();
+  });
+
+  it("in-process initialize → session/new → prompt returns model text", async () => {
+    const chunks: string[] = [];
+    const qwen: QwenChatClient = {
+      completeChat: vi.fn(async () => "pong from mock qwen"),
+    };
+    const agentApp = createQwenAcpAgent({ config, qwen }).buildApp();
+
+    const result = await acp
+      .client({ name: "test-client" })
+      .onNotification(acp.methods.client.session.update, (ctx) => {
+        const update = ctx.params.update;
+        if (
+          update.sessionUpdate === "agent_message_chunk" &&
+          update.content.type === "text"
+        ) {
+          chunks.push(update.content.text);
+        }
+      })
+      .connectWith(agentApp, async (agentCx) => {
+        const init = await agentCx.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const session = await agentCx.request(acp.methods.agent.session.new, {
+          cwd: "C:\\Temp\\acp-test",
+          mcpServers: [],
+        });
+        const prompt = await agentCx.request(acp.methods.agent.session.prompt, {
+          sessionId: session.sessionId,
+          prompt: [{ type: "text", text: "ping" }],
+        });
+        return { init, session, prompt };
+      });
+
+    expect(result.init.protocolVersion).toBe(acp.PROTOCOL_VERSION);
+    expect(result.session.sessionId).toMatch(/^[0-9a-f]{32}$/);
+    expect(result.prompt.stopReason).toBe("end_turn");
+    expect(chunks.join("")).toBe("pong from mock qwen");
+    expect(qwen.completeChat).toHaveBeenCalledOnce();
+  });
+});
+```
+
+5. Write **`test/fixtures/initialize_session_prompt.jsonl`** exactly (documentation fixture; not auto-run):
+
+```jsonl
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false},"agentInfo":{"name":"qwen-acp-agent","version":"0.1.0"},"authMethods":[]}}
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"C:\\Temp\\acp-test","mcpServers":[]}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"0123456789abcdef0123456789abcdef"}}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"0123456789abcdef0123456789abcdef","prompt":[{"type":"text","text":"ping"}]}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"0123456789abcdef0123456789abcdef","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"pong"}}}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
+```
+
+6. Verify:
+
+```powershell
+Set-Location C:\Workspace\Infrastructure\llama-cpp-server\scripts\acp-qwen-agent
+npm run check
+npm test
+npm run build
+npm run start -- --health
+```
+
+**Expected:**
+- `check` / `test` / `build` all exit 0
+- tests include config + qwen_client + acp_init (in-process handshake)
+- `--health` still prints `health ok` with `modelPresent=true` and exit 0
+
+7. Optional live stdio smoke (do **not** fail the session if Qwen is slow; report output). PowerShell:
+
+```powershell
+$psi = @{
+  FilePath = "node"
+  ArgumentList = "dist/index.js"
+  RedirectStandardInput = $true
+  RedirectStandardOutput = $true
+  RedirectStandardError = $true
+  UseShellExecute = $false
+  WorkingDirectory = (Get-Location).Path
+}
+# Prefer the in-process vitest coverage above. Live pipe tests are optional.
+```
+
+Do **not** add filesystem tools in this session.
+
+### Commit
+
+```powershell
+Set-Location C:\Workspace\Infrastructure\llama-cpp-server
+git add scripts/acp-qwen-agent/src/acp scripts/acp-qwen-agent/src/index.ts scripts/acp-qwen-agent/test/acp_init.test.ts scripts/acp-qwen-agent/test/fixtures
+git commit -m "feat(acp): implement initialize and prompt session flow"
+```
+
+**Stop/Go:** Do not start Session 3 (filesystem tools) until orchestrator verifies Session 2.
 
 ---
+
 
 # Session 3 — Tasks 6–8 (outline; full code supplied when Session 2 verifies)
 
