@@ -2,13 +2,15 @@
 /**
  * Entry point.
  * - `--health`: probe guardian /v1/models and exit
- * - (default): ACP stdio agent — Session 2 wires real handlers; Session 1 exits with guidance if stdin is a TTY
+ * - default: ACP JSON-RPC on stdio (stdout = protocol only)
  *
  * stdout = ACP protocol only. All logs use stderr.
  */
 import { loadConfig } from "./config.js";
 import { logError, logInfo } from "./logger.js";
 import { runHealthCheck } from "./qwen/health.js";
+import { createQwenChatClient } from "./qwen/client.js";
+import { runAcpStdio } from "./acp/agent.js";
 
 async function main(argv: string[]): Promise<number> {
   const args = argv.slice(2);
@@ -23,7 +25,7 @@ Usage:
 Environment:
   ACP_QWEN_BASE_URL   default http://127.0.0.1:8080/v1
   ACP_QWEN_MODEL      default qwen3.6-35b
-  ACP_WORKSPACE       absolute workspace path (tools)
+  ACP_WORKSPACE       absolute workspace path (tools; later sessions)
   ACP_QWEN_TIMEOUT_MS default 120000
   ACP_ALLOW_WRITES    default false
 `);
@@ -47,7 +49,6 @@ Environment:
     return 2;
   }
 
-  // Session 1: ACP loop not wired yet. Refuse interactive TTY misuse clearly.
   if (process.stdin.isTTY) {
     logError(
       "ACP stdio mode expected (no TTY). Launch via an ACP client, or pass --health.",
@@ -55,11 +56,18 @@ Environment:
     return 2;
   }
 
-  logInfo("ACP stdio mode not implemented yet (Session 2). Exiting.", {
-    baseUrl: config.baseUrl,
-    model: config.model,
-  });
-  return 2;
+  try {
+    const qwen = createQwenChatClient(config);
+    logInfo("starting acp stdio agent", {
+      baseUrl: config.baseUrl,
+      model: config.model,
+    });
+    await runAcpStdio({ config, qwen });
+    return 0;
+  } catch (err) {
+    logError(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
 }
 
 main(process.argv)
