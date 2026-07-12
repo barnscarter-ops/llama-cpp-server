@@ -124,6 +124,21 @@ export class WriteApprovalStore {
     sha.update(payload);
     return sha.digest("hex");
   }
+
+  /**
+   * Remove the approval for the given path+content (consumes it after use).
+   */
+  clear(path: string, newContent: string): void {
+    const hash = this.computeHash(path, newContent);
+    this.approvals.delete(hash);
+  }
+
+  /**
+   * Clear all approvals (for test cleanup).
+   */
+  clearAll(): void {
+    this.approvals.clear();
+  }
 }
 
 // Module-level approval store for the agent instance

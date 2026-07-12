@@ -7,10 +7,10 @@ import type {
   ToolCallRequest,
 } from "../qwen/client.js";
 import { executeTool, getOpenAiToolSpecs } from "../tools/registry.js";
+import { computeDiffHash, writeApprovalStore } from "../tools/apply_patch.js";
 import { AuditLog } from "./audit.js";
 import { logError, logInfo } from "../logger.js";
 import type { ToolResult } from "../tools/types.js";
-import { computeDiffHash } from "../tools/apply_patch.js";
 
 export const MAX_TURNS = 6;
 
@@ -190,8 +190,13 @@ async function handleApplyPatch(
       return { ok: false, output: `apply_patch rejected by editor (hash: ${diffHash.slice(0, 16)}...)` };
     }
 
-    // Permission granted — execute the write
-    return await executeTool(toolCall.name, args, { workspaceRoot: deps.workspaceRoot });
+    // Permission granted — record approval then execute the write.
+    writeApprovalStore.set(parsed.path, newContent, true);
+    try {
+      return await executeTool(toolCall.name, args, { workspaceRoot: deps.workspaceRoot });
+    } finally {
+      writeApprovalStore.clear(parsed.path, newContent);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (deps.signal.aborted) throw new Error(`apply_patch aborted: ${message}`);

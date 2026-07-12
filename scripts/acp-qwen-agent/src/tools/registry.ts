@@ -108,8 +108,31 @@ export async function executeTool(
     }
   }
 
+  // Track whether we passed the approval check for consume-on-success
+  let approvalPath: string | undefined;
+  let approvalContent: string | undefined;
+  if (name === "apply_patch") {
+    try {
+      const raw = typeof args === "string" ? JSON.parse(args) : args;
+      if (raw && typeof raw === "object") {
+        const p = raw.path;
+        const c = raw.newContent ?? "";
+        if (writeApprovalStore.getApproval(p, c)) {
+          approvalPath = p;
+          approvalContent = c;
+        }
+      }
+    } catch {
+      // not JSON — won't have approval anyway
+    }
+  }
+
   try {
     const result = await tool.execute(args, ctx);
+    // Consume approval on successful write
+    if (result.ok && approvalPath && approvalContent) {
+      writeApprovalStore.clear(approvalPath, approvalContent);
+    }
     return {
       ok: result.ok,
       output: truncateOutput(result.output),
