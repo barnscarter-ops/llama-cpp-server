@@ -7,11 +7,13 @@ This proxy owns port 8080 (where MCC and maverickforge point their local-LLM
 requests). It forwards everything to llama-server, which listens on the
 internal port 8081 (loopback only, not exposed).
 
-Three jobs:
+Four jobs:
   1. STREAMING PROXY — port 8080 → 8081, preserving SSE token streams.
   2. PRE-WARM       — when MCC (3000) or maverickforge (3012) comes online,
                       start llama so it's hot before the first real request.
   3. IDLE REAPER    — stop llama after IDLE_TIMEOUT_MIN of no activity.
+  4. QWEN QUEUE     — ask Hermes whether a bounded coding task should enter
+                      a durable, single-worker local Qwen queue.
 
 WHY A PROXY (not a process watcher)
 ===================================
@@ -34,6 +36,7 @@ Python 3.10+, aiohttp.  (Both already installed on this system.)
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -41,9 +44,12 @@ import socket
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import aiohttp
 from aiohttp import ClientError, ClientTimeout, web
+
+from guardian_queue import HermesDecider, HermesDecisionError, JobStore, QueueJob
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONFIG — tune here. All times in seconds unless noted.
@@ -71,6 +77,18 @@ HEALTH_TIMEOUT_S = 60             # max wait for llama to come up (model load)
 HEALTH_POLL_S = 1                 # how often to poll while waiting
 
 PM2_APP = "qwen3-llama"           # PM2 process name for llama-server
+
+# Hermes-decided durable job queue.  It is intentionally loopback-only by
+# default because the guardian also listens on Tailscale-facing interfaces.
+QUEUE_DB_PATH = os.environ.get(
+    "GUARDIAN_QUEUE_DB", str(Path(__file__).resolve().parent.parent / "logs" / "guardian-queue.sqlite3")
+)
+QUEUE_MAX_REQUEST_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
+QUEUE_MAX_RESULT_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_RESULT_BYTES", str(2 * 1024 * 1024)))
+QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "qwen3.6-35b")
+QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
+QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
+QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  LOGGING
@@ -106,9 +124,17 @@ class Guardian:
         # cold, only ONE pm2 start fires; the others wait on this lock.
         self.start_lock = asyncio.Lock()
 
+        # llama.cpp is configured with --parallel 1. This lock serializes both
+        # normal proxied generations and Hermes-approved queued work.
+        self.generation_lock = asyncio.Lock()
+
         # Cached "is llama up" state. Avoids hammering the health endpoint
         # on every single proxied request.
         self._llama_up = False
+
+        self.job_store = JobStore(QUEUE_DB_PATH)
+        self.hermes_decider = HermesDecider()
+        self.queue_event = asyncio.Event()
 
     @property
     def llama_target(self) -> str:
@@ -336,6 +362,125 @@ HOP_BY_HOP = frozenset(
     )
 )
 
+def _queue_authorized(request: web.Request) -> bool:
+    """Queue control is local-only unless an explicit token is configured."""
+    remote = request.remote or ""
+    if remote in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}:
+        return True
+    if not QUEUE_ALLOW_REMOTE or not QUEUE_AUTH_TOKEN:
+        return False
+    authorization = request.headers.get("Authorization", "")
+    supplied = authorization.removeprefix("Bearer ").strip()
+    return bool(supplied) and hmac.compare_digest(supplied, QUEUE_AUTH_TOKEN)
+
+
+def _queue_forbidden() -> web.Response:
+    return web.json_response(
+        {"error": {"message": "Queue endpoints require loopback or a configured bearer token.", "code": "queue_forbidden"}},
+        status=403,
+    )
+
+
+async def _validate_queue_submission(request: web.Request) -> tuple[str, str, dict, dict]:
+    """Validate and normalize a safe, non-streaming queued completion."""
+    if request.content_length and request.content_length > QUEUE_MAX_REQUEST_BYTES:
+        raise ValueError(f"Queue request exceeds {QUEUE_MAX_REQUEST_BYTES} bytes.")
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("Queue request body must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Queue request body must be a JSON object.")
+
+    source = payload.get("source", "unknown")
+    if not isinstance(source, str) or not source.strip() or len(source) > 80:
+        raise ValueError("source must be a non-empty string of at most 80 characters.")
+    idempotency_key = payload.get("idempotency_key") or request.headers.get("Idempotency-Key")
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 160:
+        raise ValueError("idempotency_key is required and must be at most 160 characters.")
+
+    decision_context = payload.get("decision_context")
+    if not isinstance(decision_context, dict):
+        raise ValueError("decision_context must be an object for Hermes to classify.")
+    summary = decision_context.get("summary")
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 12000:
+        raise ValueError("decision_context.summary is required and must be at most 12000 characters.")
+
+    completion = payload.get("request")
+    if not isinstance(completion, dict) or not isinstance(completion.get("messages"), list) or not completion["messages"]:
+        raise ValueError("request.messages must be a non-empty OpenAI-compatible message array.")
+    if completion.get("stream") is True:
+        raise ValueError("Queued jobs must use stream=false so their result can be durable and pollable.")
+    if completion.get("tools") or completion.get("tool_choice"):
+        raise ValueError("Queued jobs return a patch/result; model tools are not permitted.")
+    if len(json.dumps(completion, separators=(",", ":")).encode("utf-8")) > QUEUE_MAX_REQUEST_BYTES:
+        raise ValueError(f"Queued completion exceeds {QUEUE_MAX_REQUEST_BYTES} bytes.")
+
+    # Do not let a caller silently route a queue job to an arbitrary model.
+    completion = json.loads(json.dumps(completion))
+    completion["model"] = QUEUE_MODEL_ALIAS
+    completion["stream"] = False
+    return idempotency_key.strip(), source.strip(), decision_context, completion
+
+
+async def queue_submit(request: web.Request) -> web.Response:
+    """Ask Hermes to route a candidate task, then enqueue Qwen work if approved."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    try:
+        idempotency_key, source, context, completion = await _validate_queue_submission(request)
+    except ValueError as exc:
+        return web.json_response({"error": {"message": str(exc), "code": "invalid_queue_job"}}, status=400)
+
+    existing = guardian.job_store.get_by_idempotency_key(idempotency_key)
+    if existing:
+        return web.json_response({"idempotent": True, **existing.as_api()})
+
+    try:
+        decision = await guardian.hermes_decider.decide(context, guardian.job_store.summary())
+    except HermesDecisionError as exc:
+        log.warning(f"Hermes declined to decide queue routing: {exc}")
+        return web.json_response(
+            {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}}, status=503
+        )
+
+    if decision["route"] != "queue_qwen":
+        return web.json_response({"status": "not_queued", "decision": decision})
+
+    job, created = guardian.job_store.submit(
+        idempotency_key=idempotency_key,
+        source=source,
+        priority=decision["priority"],
+        request=completion,
+        decision=decision,
+    )
+    guardian.queue_event.set()
+    log.info(f"queue accepted {job.job_id} from {source} at priority {job.priority}")
+    return web.json_response(job.as_api(), status=202 if created else 200)
+
+
+async def queue_status(request: web.Request) -> web.Response:
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    job = guardian.job_store.get(request.match_info["job_id"])
+    if not job:
+        return web.json_response({"error": {"message": "Queue job not found.", "code": "queue_job_not_found"}}, status=404)
+    return web.json_response(job.as_api())
+
+
+async def queue_cancel(request: web.Request) -> web.Response:
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    job = guardian.job_store.get(request.match_info["job_id"])
+    if not job:
+        return web.json_response({"error": {"message": "Queue job not found.", "code": "queue_job_not_found"}}, status=404)
+    if job.status != "queued":
+        return web.json_response(
+            {"error": {"message": f"Only queued jobs can be cancelled (currently {job.status}).", "code": "queue_not_cancellable"}},
+            status=409,
+        )
+    return web.json_response(guardian.job_store.cancel(job.job_id).as_api())
+
 
 async def proxy_handler(request: web.Request) -> web.StreamResponse:
     """Forward a single request to llama, streaming the response back.
@@ -379,37 +524,165 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         and ("/chat/completions" in request.path or "/completions" in request.path)
     )
 
-    guardian.active_requests += 1
-    if is_real_work:
-        guardian.last_request_time = time.time()
-    try:
-        # Long timeout — llama generation can take minutes for long outputs.
-        timeout = ClientTimeout(total=None, sock_connect=10, sock_read=600)
-        async with guardian._client.request(
-            request.method, upstream_url, headers=fwd_headers, data=body, timeout=timeout
-        ) as upstream_resp:
-            # Stream the response back chunk-by-chunk.
-            resp = web.StreamResponse(
-                status=upstream_resp.status,
-                reason=upstream_resp.reason,
-            )
-            for k, v in upstream_resp.headers.items():
-                if k.lower() not in HOP_BY_HOP:
-                    resp.headers[k] = v
-            await resp.prepare(request)
-
-            async for chunk in upstream_resp.content.iter_any():
-                await resp.write(chunk)
-            await resp.write_eof()
-            return resp
-    except (ClientError, asyncio.TimeoutError) as e:
-        guardian._llama_up = False
-        log.warning(f"upstream error: {e}")
-        return web.json_response({"error": f"upstream error: {e}"}, status=502)
-    finally:
-        guardian.active_requests -= 1
+    async def forward() -> web.StreamResponse:
+        guardian.active_requests += 1
         if is_real_work:
             guardian.last_request_time = time.time()
+        try:
+            # Long timeout — llama generation can take minutes for long outputs.
+            timeout = ClientTimeout(total=None, sock_connect=10, sock_read=600)
+            async with guardian._client.request(
+                request.method, upstream_url, headers=fwd_headers, data=body, timeout=timeout
+            ) as upstream_resp:
+                # Stream the response back chunk-by-chunk.
+                resp = web.StreamResponse(
+                    status=upstream_resp.status,
+                    reason=upstream_resp.reason,
+                )
+                for k, v in upstream_resp.headers.items():
+                    if k.lower() not in HOP_BY_HOP:
+                        resp.headers[k] = v
+                await resp.prepare(request)
+
+                async for chunk in upstream_resp.content.iter_any():
+                    await resp.write(chunk)
+                await resp.write_eof()
+                return resp
+        except (ClientError, asyncio.TimeoutError) as e:
+            guardian._llama_up = False
+            log.warning(f"upstream error: {e}")
+            return web.json_response({"error": f"upstream error: {e}"}, status=502)
+        finally:
+            guardian.active_requests -= 1
+            if is_real_work:
+                guardian.last_request_time = time.time()
+
+    if is_real_work:
+        # A direct generation cannot bypass the one-slot queue and evict its
+        # context. It waits here rather than competing with queued work.
+        async with guardian.generation_lock:
+            return await forward()
+    return await forward()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HERMES-DECIDED QWEN QUEUE
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def run_queued_job(job: QueueJob) -> None:
+    """Run one durable job while holding the same one-slot generation lock."""
+    log.info(f"queue running {job.job_id} from {job.source}")
+    try:
+        async with guardian.generation_lock:
+            if not await ensure_llama_started(reason=f"queue:{job.job_id}"):
+                guardian.job_store.fail(job.job_id, "Qwen did not become healthy before the queue timeout.")
+                return
+
+            guardian.active_requests += 1
+            guardian.last_request_time = time.time()
+            try:
+                timeout = ClientTimeout(
+                    total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S
+                )
+                async with guardian._client.post(
+                    f"{guardian.llama_target}/v1/chat/completions", json=job.request, timeout=timeout
+                ) as upstream_resp:
+                    body = await upstream_resp.read()
+                    if len(body) > QUEUE_MAX_RESULT_BYTES:
+                        guardian.job_store.fail(
+                            job.job_id,
+                            f"Qwen result exceeded durable queue limit of {QUEUE_MAX_RESULT_BYTES} bytes.",
+                        )
+                        return
+                    text = body.decode(errors="replace")
+                    if upstream_resp.status >= 400:
+                        guardian.job_store.fail(job.job_id, f"Qwen returned HTTP {upstream_resp.status}: {text[:1200]}")
+                        return
+                    try:
+                        result = json.loads(text)
+                    except json.JSONDecodeError:
+                        result = {"text": text}
+                    guardian.job_store.finish(
+                        job.job_id,
+                        {"upstream_status": upstream_resp.status, "response": result},
+                    )
+                    log.info(f"queue succeeded {job.job_id}")
+            except (ClientError, asyncio.TimeoutError) as exc:
+                guardian._llama_up = False
+                guardian.job_store.fail(job.job_id, f"Qwen request failed: {exc}")
+                log.warning(f"queue failed {job.job_id}: {exc}")
+            finally:
+                guardian.active_requests -= 1
+                guardian.last_request_time = time.time()
+    except Exception as exc:
+        # Never leave a claimed job in running state due to a guardian bug.
+        guardian.job_store.fail(job.job_id, f"Guardian queue worker failed: {exc}")
+        log.exception(f"queue worker crashed while running {job.job_id}")
+
+
+async def queue_worker(app: web.Application) -> None:
+    """Claim queued work in priority/FIFO order and retain it across restarts."""
+    recovered = guardian.job_store.recover_interrupted()
+    if recovered:
+        log.warning(f"queue requeued {recovered} interrupted job(s) after guardian restart")
+    log.info("Hermes-decided Qwen queue worker started")
+    try:
+        while True:
+            job = guardian.job_store.claim_next()
+            if job:
+                await run_queued_job(job)
+                continue
+
+            guardian.queue_event.clear()
+            # Prevent a submit between claim_next() and clear() from being
+            # missed and waiting for the next polling timeout.
+            if guardian.job_store.has_queued_work():
+                continue
+            try:
+                await asyncio.wait_for(guardian.queue_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
+    except asyncio.CancelledError:
+        log.info("Hermes-decided Qwen queue worker cancelled")
+        raise
+
+
+async def guardian_sleep(request: web.Request) -> web.Response:
+    """Stop an idle Qwen cleanly after a verification run or manual drain."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    summary = guardian.job_store.summary()
+    if guardian.active_requests or summary["queued"] or summary["running"]:
+        return web.json_response(
+            {
+                "error": {
+                    "message": "Qwen cannot sleep while a generation or queue job is active.",
+                    "code": "queue_not_idle",
+                }
+            },
+            status=409,
+        )
+
+    async with guardian.generation_lock:
+        async with guardian.start_lock:
+            if guardian.active_requests:
+                return web.json_response(
+                    {"error": {"message": "Qwen became active while draining.", "code": "queue_not_idle"}},
+                    status=409,
+                )
+            if not await guardian.is_llama_up():
+                return web.json_response({"status": "already_asleep", "llama_up": False})
+            stopped, detail = await pm2("stop")
+            if not stopped:
+                return web.json_response(
+                    {"error": {"message": f"PM2 could not stop Qwen: {detail[:600]}", "code": "pm2_stop_failed"}},
+                    status=502,
+                )
+            guardian._llama_up = False
+            guardian.last_request_time = time.time()
+            log.info("Qwen put to sleep by local guardian control request")
+            return web.json_response({"status": "asleep", "llama_up": False})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -688,6 +961,7 @@ async def guardian_health(request: web.Request) -> web.Response:
             "status": "ok",
             "llama_up": llama_up,
             "active_requests": guardian.active_requests,
+            "queue": guardian.job_store.summary(),
             "idle_seconds": int(time.time() - guardian.last_request_time),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -707,6 +981,7 @@ async def on_startup(app: web.Application) -> None:
     app["slot_poller_task"] = asyncio.create_task(slot_activity_poller(app))
     app["enforcer_task"] = asyncio.create_task(enforce_single_llama(app))
     app["reaper_task"] = asyncio.create_task(idle_reaper(app))
+    app["queue_worker_task"] = asyncio.create_task(queue_worker(app))
     log.info(
         f"guardian up on {PROXY_HOST}:{PROXY_PORT} → {LLAMA_HOST}:{LLAMA_PORT} "
         f"(idle timeout {IDLE_TIMEOUT_MIN} min, prewarm ports {PREWARM_PORTS})"
@@ -715,13 +990,14 @@ async def on_startup(app: web.Application) -> None:
 
 async def on_cleanup(app: web.Application) -> None:
     """Clean shutdown — cancel background tasks, close client."""
-    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task"):
+    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "queue_worker_task"):
         app[t].cancel()
     await asyncio.gather(
-        app["prewarm_task"], app["slot_poller_task"], app["enforcer_task"], app["reaper_task"],
+        app["prewarm_task"], app["slot_poller_task"], app["enforcer_task"], app["reaper_task"], app["queue_worker_task"],
         return_exceptions=True,
     )
     await guardian._client.close()
+    guardian.job_store.close()
     log.info("guardian shut down")
 
 
@@ -729,6 +1005,10 @@ def make_app() -> web.Application:
     app = web.Application(client_max_size=1024 * 1024 * 100)  # 100MB max request
     # Guardian's own health endpoint. Everything else proxies to llama.
     app.router.add_get("/__guardian/health", guardian_health)
+    app.router.add_post("/__guardian/jobs", queue_submit)
+    app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
+    app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
+    app.router.add_post("/__guardian/sleep", guardian_sleep)
     # Catch-all proxy: any method, any path → llama.
     app.router.add_route("*", "/{tail:.*}", proxy_handler)
     app.on_startup.append(on_startup)

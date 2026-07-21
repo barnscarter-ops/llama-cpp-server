@@ -10,6 +10,9 @@ models/.cache/
 ## Logs
 *.log
 *.log.err
+logs/*.sqlite3
+logs/*.sqlite3-shm
+logs/*.sqlite3-wal
 
 ## Benchmark results (large JSONL, regenerable)
 *.jsonl
