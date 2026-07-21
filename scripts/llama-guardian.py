@@ -362,6 +362,30 @@ HOP_BY_HOP = frozenset(
     )
 )
 
+
+WARMING_MSG = (
+    "Qwen is getting dressed — model is loading onto the GPU. "
+    "Wait ~20–40 seconds and send your request again."
+)
+
+
+def warming_response(extra=None) -> web.Response:
+    """Friendly 503 for cold-start — not a scary error code dump."""
+    msg = WARMING_MSG if not extra else f"{WARMING_MSG} ({extra})"
+    return web.json_response(
+        {
+            "error": {
+                "message": msg,
+                "type": "llama_warming",
+                "code": "llama_warming",
+            },
+            "message": msg,
+        },
+        status=503,
+        headers={"Retry-After": "30"},
+    )
+
+
 def _queue_authorized(request: web.Request) -> bool:
     """Queue control is local-only unless an explicit token is configured."""
     remote = request.remote or ""
@@ -489,20 +513,42 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
       1. SSE streaming — llama emits tokens as they're generated. We must
          stream chunks back to the client immediately, not buffer the whole
          response. (aiohttp's StreamResponse + async iteration handles this.)
-      2. Cold start — if llama is down, we start it and wait. The client's
-         HTTP connection stays open the whole time; from MCC's perspective
-         the request just takes longer.
+      2. Cold start — ONLY for real generation (POST .../chat/completions or
+         .../completions). Metadata probes (/v1/models, /metrics) never start
+         llama — MCC dashboard polls those every ~15s and must not wake GPU.
       3. Active-request accounting — we bump a counter so the idle reaper
          knows not to kill llama mid-generation.
     """
-    # If llama is down, start it (deduped) and wait for health.
+    # Real work = POST that actually generates tokens. Everything else is
+    # metadata (status panel, metrics scrapes, health).
+    is_real_work = (
+        request.method == "POST"
+        and ("/chat/completions" in request.path or "/completions" in request.path)
+    )
+
+    # If llama is down: only generation may cold-start it. Probes get a clean
+    # offline response so the dashboard shows offline without loading the GGUF.
     if not await guardian.is_llama_up():
-        started = await ensure_llama_started(reason="request")
-        if not started:
+        if not is_real_work:
+            # 503 so MCC getLlamaStatus → state offline (empty 200 list would look "online").
             return web.json_response(
-                {"error": "llama-server unavailable"},
+                {
+                    "error": {
+                        "message": "Local Qwen is asleep (idle). Send a chat to wake it.",
+                        "type": "llama_offline",
+                        "code": "llama_offline",
+                    },
+                    "message": "Local Qwen is asleep (idle). Send a chat to wake it.",
+                },
                 status=503,
             )
+        # Real work while cold: kick the load, return a friendly 503 immediately.
+        # Holding the HTTP request for 30–60s of GGUF load usually just produces
+        # client timeouts / ugly status codes. Agents/orchestrator/MCC retry once
+        # (or the human resends) — by then Qwen is dressed.
+        log.info("cold generation request — dressing Qwen (async start + friendly 503)")
+        asyncio.create_task(ensure_llama_started(reason="request"))
+        return warming_response()
 
     # Build the upstream request.
     upstream_url = f"{guardian.llama_target}{request.path_qs}"
@@ -511,18 +557,6 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }
     body = await request.read()
-
-    # Only count ACTUAL generation requests toward idle timeout, not health
-    # checks. MCC's dashboard polls /v1/models and /metrics every few seconds
-    # — those are "is llama alive?" probes, not real work. If we counted them,
-    # llama would never idle out while the dashboard is open.
-    #
-    # Real work = POST to /v1/chat/completions or /v1/completions (the only
-    # endpoints that actually generate tokens). Everything else is metadata.
-    is_real_work = (
-        request.method == "POST"
-        and ("/chat/completions" in request.path or "/completions" in request.path)
-    )
 
     async def forward() -> web.StreamResponse:
         guardian.active_requests += 1
@@ -551,7 +585,21 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         except (ClientError, asyncio.TimeoutError) as e:
             guardian._llama_up = False
             log.warning(f"upstream error: {e}")
-            return web.json_response({"error": f"upstream error: {e}"}, status=502)
+            # During cold start the port can flap / refuse briefly — sound human.
+            err = str(e).lower()
+            if any(x in err for x in ("connect", "refused", "closing", "reset", "timeout", "unreachable")):
+                return warming_response(str(e)[:80])
+            return web.json_response(
+                {
+                    "error": {
+                        "message": f"Local Qwen hiccup: {e}",
+                        "type": "upstream_error",
+                        "code": "upstream_error",
+                    },
+                    "message": f"Local Qwen hiccup: {e}",
+                },
+                status=502,
+            )
         finally:
             guardian.active_requests -= 1
             if is_real_work:
