@@ -306,6 +306,10 @@ async def ensure_llama_started(reason: str) -> bool:
 
         # Wait for llama to finish loading the model (the slow part).
         if await guardian.wait_until_llama_up():
+            # A guardian may have been alive while llama was idle for hours.
+            # Treat a completed cold start (including a pre-warm) as activity
+            # so the idle reaper grants the fresh server its full window.
+            guardian.last_request_time = time.time()
             log.info(f"llama is up ({reason})")
             return True
         log.error(f"llama failed to come up within {HEALTH_TIMEOUT_S}s ({reason})")
