@@ -6,7 +6,7 @@ import type {
   QwenChatClient,
   ToolCallRequest,
 } from "../qwen/client.js";
-import { executeTool, getOpenAiToolSpecs } from "../tools/registry.js";
+import { executeTool } from "../tools/registry.js";
 import { computeDiffHash, writeApprovalStore } from "../tools/apply_patch.js";
 import { AuditLog } from "./audit.js";
 import { logError, logInfo } from "../logger.js";
@@ -15,11 +15,10 @@ import type { ToolResult } from "../tools/types.js";
 export const MAX_TURNS = 6;
 
 const SYSTEM_PROMPT =
-  "You are qwen-acp-agent, a helpful local coding assistant with read-only workspace tools. " +
-  "Use tools when you need file contents or search results. " +
-  "Only one tool call at a time. Prefer list_files/read_file/search_text/propose_patch. " +
-  "Write files only via propose_patch (diff only). " +
-  "Keep final answers concise Markdown.";
+  "You are qwen-acp-agent, a queued local coding executor. " +
+  "Return a unified diff and a concise explanation; never apply changes. " +
+  "Do not request tools or shell access. If the prompt lacks the file context needed " +
+  "for a correct diff, state exactly which files or excerpts are required.";
 
 export type LoopDeps = {
   config: AppConfig;
@@ -224,7 +223,10 @@ export async function runAgentLoop(
     { role: "user", content: userText },
   ];
 
-  const tools = deps.workspaceRoot ? getOpenAiToolSpecs() : undefined;
+  // Guardian queue jobs deliberately forbid model tools so their request and
+  // result are durable, reviewable, and safe to replay. ACP keeps its editor
+  // protocol surface, but the routed model is a diff-only executor.
+  const tools = undefined;
 
   for (let turn = 1; turn <= MAX_TURNS; turn += 1) {
     if (deps.signal.aborted) return "cancelled";
