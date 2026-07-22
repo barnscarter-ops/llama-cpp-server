@@ -40,7 +40,6 @@ import hmac
 import json
 import logging
 import os
-import socket
 import sys
 import time
 from datetime import datetime, timezone
@@ -142,15 +141,27 @@ class Guardian:
         return f"http://{LLAMA_HOST}:{LLAMA_PORT}"
 
     async def is_llama_up(self) -> bool:
-        """Quick health probe of the backing llama-server."""
+        """Inference-ready probe of the backing llama-server.
+
+        A plain TCP connect is NOT sufficient: llama-server opens its listening
+        socket before the GGUF finishes mmap-loading into VRAM, and answers
+        503 ("Loading model") to any completion sent in that window. Hitting
+        /v1/health (the canonical llama-server load-status endpoint) and
+        requiring HTTP 200 ensures we only treat the server as up once it can
+        actually serve generations. This is what makes the queue's cold-start
+        path reliable. See llama.cpp docs: /v1/health returns 503 while
+        `loading`/`downloading`, 200 {"status":"ok"} when `ready`.
+        """
+        client = getattr(self, "_client", None)
+        if client is None:
+            # Defensive: should never happen post-startup, but never block.
+            return False
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(LLAMA_HOST, LLAMA_PORT), timeout=1.0
-            )
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (OSError, asyncio.TimeoutError):
+            async with client.get(
+                f"{self.llama_target}/v1/health", timeout=ClientTimeout(total=2.0)
+            ) as resp:
+                return resp.status == 200
+        except (ClientError, asyncio.TimeoutError, OSError):
             return False
 
     async def wait_until_llama_up(self, timeout: float = HEALTH_TIMEOUT_S) -> bool:
