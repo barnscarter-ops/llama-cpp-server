@@ -10,6 +10,9 @@ models/.cache/
 ## Logs
 *.log
 *.log.err
+logs/*.sqlite3
+logs/*.sqlite3-shm
+logs/*.sqlite3-wal
 
 ## Benchmark results (large JSONL, regenerable)
 *.jsonl
@@ -24,6 +27,9 @@ finetunes/
 ## Temp/cache
 tmp/
 __pycache__/
+
+## External clone + venv (qwen-queue tooling) — not part of this repo
+qwen-queue/code-review-graph/
 
 ## Claude session state
 .claude/

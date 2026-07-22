@@ -1,12 +1,13 @@
 # acp-qwen-agent
 
-Local ACP agent that an editor launches over stdio. It talks to the local Qwen model through llama-guardian at `http://127.0.0.1:8080/v1`.
+Local ACP agent that an editor launches over stdio. It submits bounded coding
+requests to the loopback-only guardian queue; Hermes decides whether Qwen
+should run them. The agent never calls raw Qwen or `llama-server :8081`.
 
 ## Requirements
 
 - Node.js 18+
 - llama-guardian reachable on port 8080 (do not call llama-server :8081 directly)
-- ripgrep (`rg`) available on PATH (for `search_text` tool; gracefully degrades with error message if missing)
 
 ## Setup
 
@@ -14,7 +15,7 @@ Local ACP agent that an editor launches over stdio. It talks to the local Qwen m
 Set-Location C:\Workspace\Infrastructure\llama-cpp-server\scripts\acp-qwen-agent
 npm ci
 copy .env.example .env
-# edit .env: set ACP_WORKSPACE to an absolute disposable path
+# ACP_QUEUE_BASE_URL must remain loopback unless guardian remote auth is configured.
 npm run check
 npm test
 npm run build
@@ -29,7 +30,7 @@ $env:ACP_QWEN_BASE_URL = 'http://127.0.0.1:8080/v1'
 $env:ACP_QWEN_MODEL = 'qwen3.6-35b'
 npm run start -- --health
 
-# Smoke test: list + read a fixture file in ACP_WORKSPACE (requires ACP_WORKSPACE)
+# Smoke test: validates the retained workspace safety helpers only.
 $env:ACP_WORKSPACE = 'C:\Temp\acp-qwen-smoke'
 $env:ACP_ALLOW_WRITES = 'false'
 npm run start -- --smoke
@@ -44,30 +45,27 @@ npm run start -- --smoke
 |---|---|---|
 | `ACP_QWEN_BASE_URL` | `http://127.0.0.1:8080/v1` | OpenAI-compatible base URL |
 | `ACP_QWEN_MODEL` | `qwen3.6-35b` | Model id from `GET /v1/models` |
-| `ACP_WORKSPACE` | (none) | Absolute workspace root for tools (required for tools, `--smoke`) |
+| `ACP_QUEUE_BASE_URL` | base URL derived from `ACP_QWEN_BASE_URL` | Guardian queue origin, normally `http://127.0.0.1:8080` |
+| `ACP_QUEUE_POLL_MS` | `750` | Job-status polling interval |
+| `ACP_QUEUE_SOURCE` | `acp-qwen-agent` | Durable queue/audit source label |
+| `ACP_WORKSPACE` | (none) | Used only by the local `--smoke` safety-helper check |
 | `ACP_QWEN_TIMEOUT_MS` | `120000` | HTTP timeout (ms) |
-| `ACP_ALLOW_WRITES` | `false` | Master write gate (see Safety below) |
-| `ACP_QWEN_API_KEY` | `not-needed` | Guardian does not require a real API key |
+| `ACP_ALLOW_WRITES` | `false` | Kept false; queued ACP mode never writes files |
 
 ## Safety Model
 
-### Dual write gate
+### Queue boundary
 
-`apply_patch` (writing files) requires **both** conditions:
+- Each editor prompt becomes a non-streaming queue job with a unique idempotency key.
+- Hermes may queue it, bypass it as too small, or decline it for cloud fallback.
+- A queued job returns text/diff only. It has no model tools, shell, network, or file-write capability.
+- Cancelling the editor request best-effort cancels a queued (not already running) job.
 
-1. **`ACP_ALLOW_WRITES=true`** — the environment variable must be explicitly set.
-2. **Editor approval for the exact diff hash** — the editor must approve via `session/request_permission` for the specific `{path}:{newContent}` SHA-256 hash.
+### No automatic writes
 
-If the content changes even slightly, the hash changes and a prior approval is invalid. Each approval is consumed (used once) and cannot be replayed for a different hash.
-
-### Tool safety
-
-All tools enforce workspace path guards:
-- `resolveInsideWorkspace` resolves the full path and verifies it is inside `ACP_WORKSPACE`.
-- Symlink escapes, `..` traversal, and absolute paths outside the workspace are rejected.
-- Files are read in UTF-8 only; binary files are rejected.
-- Output is capped at 24 000 characters; reads at 256 000 bytes.
-- `list_files` skips `.git`, `node_modules`, models, logs, secrets, `.pem`, `.key`.
+Queued ACP mode never applies a model response. Review and apply a returned diff
+in the calling editor or harness. The old workspace tool helpers remain covered
+by tests and `--smoke`, but are intentionally not exposed to a queued model.
 
 ### Audit trail
 
@@ -76,28 +74,19 @@ All tool and model calls are logged as metadata-only audit events (no prompts, n
 ## Safety (general)
 
 - Stdout is ACP protocol only. Logs go to stderr (`console.error`).
-- v1 tools stay inside `ACP_WORKSPACE` only.
-- Max 6 model↔tool turns per prompt; stops with `max_turn_requests`.
+- Guardian is the sole route to Qwen; the ACP client never targets `:8081`.
+- Queue jobs are non-streaming and pollable, with a finite timeout.
 
 ## Non-goals (v1)
 
-No arbitrary shell, no network tools, no git commit/push/delete, no agent-os dependency, no streaming completions.
-
-## Tools
-
-| Tool | Description |
-|---|---|
-| `list_files` | List files/dirs in workspace (depth-capped, skips node_modules/.git etc.) |
-| `read_file` | Read a UTF-8 text file (rejects binary, oversized files) |
-| `search_text` | Fixed-string search via ripgrep (gracefully degrades if `rg` missing) |
-| `propose_patch` | In-memory unified diff only; no disk write |
-| `apply_patch` | Write a file (requires dual write gate — see Safety above) |
+No arbitrary shell, model tools, network tools, git commit/push/delete, agent-os dependency, streaming completions, or automatic writes.
 
 ## Recovery
 
 If the agent hangs or Qwen becomes unresponsive:
 - The agent loop has a finite timeout (`ACP_QWEN_TIMEOUT_MS`; default 120s).
 - Ctrl+C (or process termination) is respected via `AbortController`.
+- If a queue job is not accepted, its Hermes decision reason is returned to the editor; use the harness's current provider or rescope the task.
 - If `--health` fails (guardian unreachable), verify llama-guardian is running on port 8080 (do not restart PM2 as part of this agent).
 
 ## Editor Integration (untested template)
@@ -115,8 +104,8 @@ node C:\Workspace\Infrastructure\llama-cpp-server\scripts\acp-qwen-agent\dist\in
 ```powershell
 $env:ACP_QWEN_BASE_URL = 'http://127.0.0.1:8080/v1'
 $env:ACP_QWEN_MODEL = 'qwen3.6-35b'
-$env:ACP_WORKSPACE = 'C:\Path\To\Your\Workspace'
-$env:ACP_ALLOW_WRITES = 'false'  # or 'true' if you want write capability
+$env:ACP_QUEUE_BASE_URL = 'http://127.0.0.1:8080'
+$env:ACP_ALLOW_WRITES = 'false'
 ```
 
 ### ACP client configuration

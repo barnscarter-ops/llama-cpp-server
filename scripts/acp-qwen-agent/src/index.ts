@@ -28,7 +28,10 @@ Usage:
 Environment:
   ACP_QWEN_BASE_URL   default http://127.0.0.1:8080/v1
   ACP_QWEN_MODEL      default qwen3.6-35b
-  ACP_WORKSPACE       absolute workspace path (tools; later sessions)
+  ACP_QUEUE_BASE_URL  default base URL derived from ACP_QWEN_BASE_URL
+  ACP_QUEUE_POLL_MS   default 750
+  ACP_QUEUE_SOURCE    default acp-qwen-agent
+  ACP_WORKSPACE       optional workspace path for ACP protocol compatibility
   ACP_QWEN_TIMEOUT_MS default 120000
   ACP_ALLOW_WRITES    default false
 `);
@@ -63,6 +66,7 @@ Environment:
     const qwen = createQwenChatClient(config);
     logInfo("starting acp stdio agent", {
       baseUrl: config.baseUrl,
+      queueBaseUrl: config.queueBaseUrl,
       model: config.model,
     });
     await runAcpStdio({ config, qwen });

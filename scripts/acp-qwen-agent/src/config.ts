@@ -7,6 +7,9 @@ const ConfigSchema = z.object({
     .url()
     .default("http://127.0.0.1:8080/v1"),
   model: z.string().min(1).default("qwen3.6-35b"),
+  queueBaseUrl: z.string().url(),
+  queuePollMs: z.coerce.number().int().min(100).max(10_000).default(750),
+  queueSource: z.string().min(1).max(80).default("acp-qwen-agent"),
   workspace: z
     .string()
     .optional()
@@ -28,9 +31,15 @@ export type AppConfig = z.infer<typeof ConfigSchema> & {
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const baseUrl = env.ACP_QWEN_BASE_URL?.trim() || "http://127.0.0.1:8080/v1";
+  const queueBaseUrl =
+    env.ACP_QUEUE_BASE_URL?.trim() || baseUrl.replace(/\/v1\/?$/, "");
   const parsed = ConfigSchema.safeParse({
-    baseUrl: env.ACP_QWEN_BASE_URL,
+    baseUrl,
     model: env.ACP_QWEN_MODEL,
+    queueBaseUrl,
+    queuePollMs: env.ACP_QUEUE_POLL_MS,
+    queueSource: env.ACP_QUEUE_SOURCE,
     workspace: env.ACP_WORKSPACE,
     timeoutMs: env.ACP_QWEN_TIMEOUT_MS,
     allowWrites: env.ACP_ALLOW_WRITES,

@@ -37,12 +37,12 @@ if ((Test-Command "pm2") -and (Test-Path $ECO)) {
         --host 127.0.0.1 --port 8081 `
         --alias qwen3.6-35b `
         --gpu-layers 99 `
-        --ctx-size 65536 `
+        --ctx-size 131072 `
         --parallel 1 `
         --cache-type-k q4_0 --cache-type-v q4_0 `
         --jinja `
         --batch-size 2048 --ubatch-size 512 `
         --cont-batching `
-        --spec-type draft-mtp --spec-draft-n-max 2 `
+        --spec-type draft-mtp --spec-draft-n-max 3 `
         --reasoning off
 }

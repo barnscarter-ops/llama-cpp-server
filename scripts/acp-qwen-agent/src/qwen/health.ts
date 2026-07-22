@@ -7,31 +7,52 @@ export type ModelsListResponse = {
 
 export async function fetchModels(config: AppConfig): Promise<ModelsListResponse> {
   const url = `${config.baseUrl.replace(/\/$/, "")}/models`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      headers: { accept: "application/json" },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(
-        `GET ${url} failed: HTTP ${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`,
-      );
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        // 503 = guardian cold-start, retryable
+        if (res.status === 503 && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
+        throw new Error(
+          `GET ${url} failed: HTTP ${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`,
+        );
+      }
+      return (await res.json()) as ModelsListResponse;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error(
+          `GET ${url} timed out after ${config.timeoutMs}ms (guardian may be cold-starting or down)`,
+        );
+      }
+      // HTTP errors from !res.ok (non-503) — not retryable
+      if (err instanceof Error && err.message.startsWith("GET ")) {
+        throw err;
+      }
+      // connection error (fetch throws before response) — retryable
+      if (attempt < 2) {
+        lastError = err;
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return (await res.json()) as ModelsListResponse;
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(
-        `GET ${url} timed out after ${config.timeoutMs}ms (guardian may be cold-starting or down)`,
-      );
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
   }
+
+  throw lastError;
 }
 
 export async function runHealthCheck(config: AppConfig): Promise<number> {
