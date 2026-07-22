@@ -87,7 +87,7 @@ module.exports = {
       name: "llama-guardian",
 
       // Run the guardian with the system Python (has aiohttp installed).
-      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\scripts\\llama-guardian.py",
+      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\llama-guardian.py",
       interpreter: "python",
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
 

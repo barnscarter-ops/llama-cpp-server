@@ -28,6 +28,9 @@ finetunes/
 tmp/
 __pycache__/
 
+## External clone + venv (qwen-queue tooling) — not part of this repo
+qwen-queue/code-review-graph/
+
 ## Claude session state
 .claude/
 
