@@ -103,6 +103,50 @@ async function responseJson(response: Response): Promise<QueueJob> {
   return body;
 }
 
+type PollResult = {
+  job: QueueJob;
+  retries: number;
+};
+
+async function pollJobStatus(
+  fetchFn: QueueFetch,
+  url: string,
+  signal: AbortSignal,
+): Promise<PollResult> {
+  const backoffs = [500, 1000, 2000];
+  let retries = 0;
+
+  for (let attempt = 0; attempt <= backoffs.length; attempt++) {
+    let res: Response;
+    try {
+      res = await fetchFn(url, {
+        method: "GET",
+        signal,
+        headers: { accept: "application/json" },
+      });
+    } catch (err) {
+      // network error — retryable
+      if (attempt < backoffs.length) {
+        await waitForPoll(backoffs[attempt], signal);
+        retries++;
+        continue;
+      }
+      throw err;
+    }
+
+    // HTTP 5xx (guardian overload / cold-start) — retryable; 4xx is not
+    if (res.status >= 500 && attempt < backoffs.length) {
+      await waitForPoll(backoffs[attempt], signal);
+      retries++;
+      continue;
+    }
+
+    return { job: await responseJson(res), retries };
+  }
+
+  throw new Error("unreachable");
+}
+
 function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -183,13 +227,17 @@ export function createQwenChatClient(
           throw new Error("Guardian queue response did not include a job_id");
         }
 
+        let pollRetries = 0;
+
         while (job.status === "queued" || job.status === "running") {
           await waitForPoll(config.queuePollMs, controller.signal);
-          const status = await fetchFn(
+          const result = await pollJobStatus(
+            fetchFn,
             queueUrl(config, `jobs/${encodeURIComponent(jobId)}`),
-            { method: "GET", signal: controller.signal, headers: { accept: "application/json" } },
+            controller.signal,
           );
-          job = await responseJson(status);
+          pollRetries += result.retries;
+          job = result.job;
         }
 
         if (job.status !== "succeeded") {
