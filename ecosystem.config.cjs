@@ -5,13 +5,14 @@
 // Stop:           pm2 stop qwen3-llama                   (stop without removing)
 // Remove:         pm2 delete qwen3-llama                 (remove from PM2 entirely)
 //
-// TUNED SETTINGS (2026-07-07):
-//   - Model: Qwen3.6-35B-A3B IQ2_XXS MTP (MoE 35B/3B active, 127 tok/s)
+// TUNED SETTINGS:
+//   - Model: Qwen3.6-35B-A3B IQ2_XXS MTP (MoE 35B/3B active)
 //   - Context: 128k (tiny hidden dim on MoE means KV cache is small)
 //   - KV Cache: Q4_0 (fits with model + 128K ctx on 16GB)
-//   - Flash attention: OFF (4x speed hit on consumer GPUs)
-//   - MTP: draft-mtp depth is benchmarked before each deployment
+//   - Flash attention: off (user-tuned — best for this hardware)
+//   - MTP: draft-mtp n-max=3 (best acceptance — n4 slightly faster but worse acceptance)
 //   - Continuous batching: on
+//   - Quality bench: benchmarks/bench-qwen36-35b-baseline.json (10/10 HE, 3/3 tools)
 //
 // NOTE: This config registers qwen3-llama as STOPPED by default.
 //       llama-guardian starts it on demand via port 8080 proxy.
@@ -29,8 +30,7 @@ module.exports = {
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
 
       // Arguments passed to llama-server — tuned for 16GB VRAM RTX 4060 Ti
-      // Benchmarked 2026-07-07: ~127 tok/s with MTP at 64K ctx
-      // Updated 2026-07-08: ~122 tok/s at 128K ctx (ctx sweep confirms zero perf hit)
+      // User-tuned config: flash-attn off, ctx 128K, MTP n-max=3 (best acceptance)
       // Port 8081 loopback only — llama-guardian owns 8080 and proxies to here.
       args: [
         "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ2_XXS.gguf",
@@ -46,8 +46,9 @@ module.exports = {
         "--batch-size",  "2048",
         "--ubatch-size", "512",
         "--cont-batching",
+        // "--flash-attn",  "auto",  // off — user-tuned, best for this hardware
         "--spec-type",   "draft-mtp",
-        "--spec-draft-n-max", "3", // Proven: 130.1 tok/s median with stable output
+        "--spec-draft-n-max", "3", // Best acceptance — n4 slightly faster but worse
         "--reasoning",   "off",
       ],
 
