@@ -3,25 +3,25 @@ llama-guardian — on-demand lifecycle manager for llama-server.
 
 ARCHITECTURE
 ============
-This proxy owns port 8080 (where MCC and maverickforge point their local-LLM
-requests). It forwards everything to llama-server, which listens on the
+This proxy owns port 8080 (where MCC points its local-LLM requests).
+It forwards everything to llama-server, which listens on the
 internal port 8081 (loopback only, not exposed).
 
 Four jobs:
   1. STREAMING PROXY — port 8080 → 8081, preserving SSE token streams.
-  2. PRE-WARM       — when MCC (3000) or maverickforge (3012) comes online,
-                      start llama so it's hot before the first real request.
+  2. PRE-WARM       — when MCC (3000) comes online, start llama so it's
+                      hot before the first real request.
   3. IDLE REAPER    — stop llama after IDLE_TIMEOUT_MIN of no activity.
   4. QWEN QUEUE     — ask Hermes whether a bounded coding task should enter
                       a durable, single-worker local Qwen queue.
 
 WHY A PROXY (not a process watcher)
 ===================================
-MCC and maverickforge connect directly to port 8080. If llama is stopped and
-a request arrives, the connection is refused instantly — no chance to start
-llama. The proxy intercepts at the port level so it can cold-start on demand.
+MCC connects directly to port 8080. If llama is stopped and a request
+arrives, the connection is refused instantly — no chance to start llama.
+The proxy intercepts at the port level so it can cold-start on demand.
 
-MCC/maverickforge need ZERO changes — they keep hitting localhost:8080.
+MCC needs ZERO changes — it keeps hitting localhost:8080.
 
 PM2 LIFECYCLE
 =============
@@ -57,12 +57,12 @@ from guardian_queue import HermesDecider, HermesDecisionError, JobStore, QueueJo
 LLAMA_HOST = "127.0.0.1"          # llama-server binds loopback only (internal)
 LLAMA_PORT = 8081                 # llama-server internal port
 PROXY_HOST = "0.0.0.0"            # guardian listens on all interfaces (Tailscale)
-PROXY_PORT = 8080                 # where MCC/maverickforge connect (unchanged)
+PROXY_PORT = 8080                 # where MCC connects (unchanged)
 
 # Services whose startup should trigger a llama pre-warm.
 # When one of these ports transitions down→up, we start llama in the
 # background so it's hot by the time a real request arrives.
-PREWARM_PORTS = [3000, 3012]      # 3000 = MCC, 3012 = maverickforge
+PREWARM_PORTS = [3000]            # 3000 = MCC. 3012 (customer-chat/maverickforge) migrated to AIWA — cloud DeepSeek via hermes gateway, no longer local.
 PREWARM_POLL_S = 5                # how often to check prewarm ports
 
 IDLE_TIMEOUT_MIN = 30             # stop llama after this many idle minutes
@@ -130,6 +130,11 @@ class Guardian:
         # Cached "is llama up" state. Avoids hammering the health endpoint
         # on every single proxied request.
         self._llama_up = False
+
+        # Timestamp of the last enforcer stale-PID recovery. Prevents the
+        # enforcer from entering a kill loop when transient PID mismatches
+        # occur during model load (child processes, MTP draft contexts, etc.).
+        self.last_enforcer_recovery = 0.0
 
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.hermes_decider = HermesDecider()
@@ -763,14 +768,14 @@ async def _port_open(host: str, port: int) -> bool:
 
 
 async def prewarm_watcher(app: web.Application) -> None:
-    """Watch MCC/maverickforge ports. On down→up transition, pre-warm llama.
+    """Watch the MCC port. On down→up transition, pre-warm llama.
 
-    Why this matters: at boot, PM2 resurrects guardian + MCC + maverickforge
-    at roughly the same time. By the time MCC/maverickforge are listening,
-    the guardian sees it and starts llama. So llama is hot ~20s after boot,
-    BEFORE any real request arrives — no cold-start latency for users.
+    Why this matters: at boot, PM2 resurrects guardian + MCC at roughly
+    the same time. By the time MCC is listening, the guardian sees it and
+    starts llama. So llama is hot ~20s after boot, BEFORE any real request
+    arrives — no cold-start latency for users.
 
-    Same logic applies if MCC/maverickforge are manually restarted later.
+    Same logic applies if MCC is manually restarted later.
     """
     # Track the last-seen state of each watched port so we only fire on
     # the down→up EDGE, not every poll while it stays up.
@@ -857,6 +862,7 @@ async def enforce_single_llama(app: web.Application) -> None:
     # Run once at startup immediately, then poll every 30s.
     FIRST_RUN = True
     POLL_S = 30
+    RECOVERY_COOLDOWN_S = 300  # 5 min — prevent enforcer kill loops
     log.info("single-llama enforcer started")
 
     async def _enforce():
@@ -902,11 +908,47 @@ async def enforce_single_llama(app: web.Application) -> None:
                 and listener_pid != keep_pid
             ):
                 # A stale process owns :8081 while PM2 is trying to replace it.
-                # Killing one PID every poll only makes PM2 retry into the same
-                # port collision. Stop/reap/start as a single transaction.
+                # BUT: transient PID mismatches during model load (child
+                # processes, MTP draft contexts) are normal and must NOT
+                # trigger recovery. Only recover if the model is actually
+                # broken AND we haven't recovered recently.
+                elapsed = time.time() - guardian.last_enforcer_recovery
+                if elapsed < RECOVERY_COOLDOWN_S:
+                    log.info(
+                        f"enforcer: port {LLAMA_PORT} PID mismatch "
+                        f"(listener={listener_pid}, pm2={keep_pid}) "
+                        f"but recovery cooldown active ({elapsed:.0f}s ago); skipping"
+                    )
+                    FIRST_RUN = False
+                    return
+
+                # Check if the model is actually serving. If it responds to
+                # health checks, the PID mismatch is cosmetic — don't kill a
+                # working server over a pidof artifact.
+                listener_alive = False
+                import aiohttp as _ah
+                try:
+                    async with guardian._client.get(
+                        f"http://127.0.0.1:{LLAMA_PORT}/v1/health",
+                        timeout=_ah.ClientTimeout(total=2.0),
+                    ) as _resp:
+                        listener_alive = _resp.status == 200
+                except Exception:
+                    pass
+
+                if listener_alive:
+                    log.info(
+                        f"enforcer: port {LLAMA_PORT} PID mismatch "
+                        f"(listener={listener_pid}, pm2={keep_pid}) "
+                        f"but /v1/health is 200 — model is serving; skipping recovery"
+                    )
+                    FIRST_RUN = False
+                    return
+
+                # Model is NOT responding AND there's a stale PID. Recover.
                 log.warning(
-                    f"enforcer: port {LLAMA_PORT} is owned by stale PID {listener_pid}; "
-                    f"recovering PM2 PID {keep_pid}"
+                    f"enforcer: port {LLAMA_PORT} is owned by stale PID {listener_pid} "
+                    f"and /v1/health is NOT 200; recovering PM2 PID {keep_pid}"
                 )
                 async with guardian.start_lock:
                     await pm2("stop")
@@ -925,6 +967,7 @@ async def enforce_single_llama(app: web.Application) -> None:
                         FIRST_RUN = False
                         return
                     await pm2("start")
+                guardian.last_enforcer_recovery = time.time()
                 FIRST_RUN = False
                 return
 

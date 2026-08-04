@@ -6,13 +6,13 @@
 // Remove:         pm2 delete qwen3-llama                 (remove from PM2 entirely)
 //
 // TUNED SETTINGS:
-//   - Model: Qwen3.6-35B-A3B IQ2_XXS MTP (MoE 35B/3B active)
-//   - Context: 128k (tiny hidden dim on MoE means KV cache is small)
-//   - KV Cache: Q4_0 (fits with model + 128K ctx on 16GB)
-//   - Flash attention: off (user-tuned — best for this hardware)
-//   - MTP: draft-mtp n-max=3 (best acceptance — n4 slightly faster but worse acceptance)
+//   - Model: DeepSeek-R1-Distill-Qwen-14B-Q6_K (100% GPU offload)
+//   - Context: 32k
+//   - KV Cache: Q4_0
+//   - Flash attention: auto (on)
+//   - MTP: not supported by model
 //   - Continuous batching: on
-//   - Quality bench: benchmarks/bench-qwen36-35b-baseline.json (10/10 HE, 3/3 tools)
+//   - Quality bench: benchmarks/bench-deepseek-r1-14b.json
 //
 // NOTE: This config registers qwen3-llama as STOPPED by default.
 //       llama-guardian starts it on demand via port 8080 proxy.
@@ -30,26 +30,23 @@ module.exports = {
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
 
       // Arguments passed to llama-server — tuned for 16GB VRAM RTX 4060 Ti
-      // User-tuned config: flash-attn off, ctx 128K, MTP n-max=3 (best acceptance)
+      // User-tuned config: flash-attn ON, ctx 32K, NO MTP
       // Port 8081 loopback only — llama-guardian owns 8080 and proxies to here.
       args: [
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ2_XXS.gguf",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
-        "--alias",      "qwen3.6-35b",
+        "--alias",      "deepseek-r1-14b",
         "--gpu-layers", "99",
-        "--ctx-size",   "131072",
-        "--parallel",   "1",            // MTP requires parallel = 1
+        "--ctx-size",   "32768",
+        "--parallel",   "1",
         "--cache-type-k", "q4_0",
         "--cache-type-v", "q4_0",
         "--jinja",
         "--batch-size",  "2048",
         "--ubatch-size", "512",
         "--cont-batching",
-        // "--flash-attn",  "auto",  // off — user-tuned, best for this hardware
-        "--spec-type",   "draft-mtp",
-        "--spec-draft-n-max", "3", // Best acceptance — n4 slightly faster but worse
-        "--reasoning",   "off",
+        "--flash-attn",  "auto",
       ],
 
       // PM2 process management
@@ -76,8 +73,8 @@ module.exports = {
     // ─────────────────────────────────────────────────────────────────────
     //  llama-guardian — on-demand lifecycle proxy for llama-server.
     //
-    //  Owns port 8080 (where MCC/maverickforge connect). Proxies to llama on
-    //  internal port 8081. Pre-warms llama when MCC/maverickforge boot, and
+    //  Owns port 8080 (where MCC connects). Proxies to llama on
+    //  internal port 8081. Pre-warms llama when MCC boots, and
     //  stops llama after 30 min idle. See llama-guardian.py for full docs.
     //
     //  This app ALWAYS auto-starts (~40MB RAM). It controls qwen3-llama's
