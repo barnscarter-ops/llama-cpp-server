@@ -65,6 +65,13 @@ PROXY_PORT = 8080                 # where MCC connects (unchanged)
 PREWARM_PORTS = [3000]            # 3000 = MCC. 3012 (customer-chat/maverickforge) migrated to AIWA — cloud DeepSeek via hermes gateway, no longer local.
 PREWARM_POLL_S = 5                # how often to check prewarm ports
 
+# Qwen3.6 reasoning loops never self-terminate: a stuck trajectory burns the
+# whole token budget and returns finish_reason=length (verified 2026-08-04 —
+# tripling the cap reproduced the identical failures). A nudged seed takes a
+# different trajectory and almost always completes. Applies only to
+# non-streaming chat completions; streams can't be retried mid-flight.
+LENGTH_RETRY_MAX = 2              # extra attempts after a finish_reason=length
+
 IDLE_TIMEOUT_MIN = 30             # stop llama after this many idle minutes
 # Allow override for testing (e.g. IDLE_TIMEOUT_MIN=1 to test the reaper fast)
 if os.environ.get("IDLE_TIMEOUT_MIN"):
@@ -574,6 +581,85 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
     }
     body = await request.read()
 
+    # Length-retry applies only to non-streaming chat completions we can parse.
+    req_json = None
+    if is_real_work and "/chat/completions" in request.path:
+        try:
+            parsed = json.loads(body) if body else None
+            if isinstance(parsed, dict) and parsed.get("stream") is not True:
+                req_json = parsed
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+    async def forward_with_length_retry() -> web.StreamResponse:
+        """Buffered (non-streaming) forward that retries reasoning-loop deaths.
+
+        finish_reason=length on this model means the trajectory looped and
+        will never finish — more tokens don't help, a different seed does.
+        """
+        guardian.active_requests += 1
+        guardian.last_request_time = time.time()
+        # aiohttp recomputes Content-Length from data; the original header
+        # would be wrong for a reseeded (different-length) retry body.
+        retry_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
+        try:
+            timeout = ClientTimeout(total=None, sock_connect=10, sock_read=600)
+            attempt_body = body
+            status = 502
+            raw = b""
+            up_headers: dict = {}
+            for attempt in range(1 + LENGTH_RETRY_MAX):
+                async with guardian._client.request(
+                    request.method, upstream_url, headers=retry_headers,
+                    data=attempt_body, timeout=timeout,
+                ) as up:
+                    status = up.status
+                    up_headers = dict(up.headers)
+                    raw = await up.read()
+                guardian.last_request_time = time.time()
+                if status != 200 or attempt >= LENGTH_RETRY_MAX:
+                    break
+                try:
+                    result = json.loads(raw)
+                    finish = result["choices"][0].get("finish_reason")
+                except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                    break
+                if finish != "length":
+                    break
+                nudged = dict(req_json)
+                base_seed = nudged.get("seed") if isinstance(nudged.get("seed"), int) else 42
+                nudged["seed"] = base_seed + 1000003 * (attempt + 1)
+                attempt_body = json.dumps(nudged).encode()
+                log.warning(
+                    f"finish_reason=length (reasoning loop?) — "
+                    f"retry {attempt + 1}/{LENGTH_RETRY_MAX} with seed {nudged['seed']}"
+                )
+            resp_headers = {
+                k: v for k, v in up_headers.items()
+                if k.lower() not in HOP_BY_HOP and k.lower() != "content-length"
+            }
+            return web.Response(status=status, body=raw, headers=resp_headers)
+        except (ClientError, asyncio.TimeoutError) as e:
+            guardian._llama_up = False
+            log.warning(f"upstream error: {e}")
+            err = str(e).lower()
+            if any(x in err for x in ("connect", "refused", "closing", "reset", "timeout", "unreachable")):
+                return warming_response(str(e)[:80])
+            return web.json_response(
+                {
+                    "error": {
+                        "message": f"Local Qwen hiccup: {e}",
+                        "type": "upstream_error",
+                        "code": "upstream_error",
+                    },
+                    "message": f"Local Qwen hiccup: {e}",
+                },
+                status=502,
+            )
+        finally:
+            guardian.active_requests -= 1
+            guardian.last_request_time = time.time()
+
     async def forward() -> web.StreamResponse:
         guardian.active_requests += 1
         if is_real_work:
@@ -625,6 +711,8 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         # A direct generation cannot bypass the one-slot queue and evict its
         # context. It waits here rather than competing with queued work.
         async with guardian.generation_lock:
+            if req_json is not None:
+                return await forward_with_length_retry()
             return await forward()
     return await forward()
 

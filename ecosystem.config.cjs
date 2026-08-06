@@ -6,17 +6,24 @@
 // Remove:         pm2 delete qwen3-llama                 (remove from PM2 entirely)
 //
 // TUNED SETTINGS:
-//   - Model: DeepSeek-R1-Distill-Qwen-14B-Q6_K (100% GPU offload)
-//   - Context: 32k
-//   - KV Cache: Q4_0
-//   - Flash attention: auto (on)
-//   - MTP: not supported by model
+//   - Model: Qwen3.6-35B-A3B-UD-IQ3_XXS (100% GPU offload; MoE, 3B active)
+//   - Context: 64k (15.26 GB peak VRAM at filled ctx — tuned sweep 2026-08-04)
+//   - KV Cache: F16 (faster AND higher quality than q4_0 on this model; KV is
+//     tiny thanks to GQA, so f16 fits even at 64k)
+//   - Flash attention: auto (on) — REQUIRED: off costs ~20% tg and +1.3 GB VRAM
+//   - ubatch 1024: +24% prefill vs 512 (2.3k t/s at 32k ctx)
+//   - Speculative/MTP: none — model has no MTP tensors; ngram spec tested at
+//     8% acceptance (net slower). Do not enable.
 //   - Continuous batching: on
-//   - Quality bench: benchmarks/bench-deepseek-r1-14b.json
+//   - Native tool calling: yes (3/3 on bench; prior DeepSeek model had none)
+//   - Quality bench: benchmarks/bench-qwen36-iq3.json + bench-qwen36-iq3-tuned.json
+//     (humaneval is seed-noisy ±2 on this model; fail mode is reasoning loops
+//     that never terminate — the guardian auto-retries non-streaming
+//     finish_reason=length responses with a nudged seed, see llama-guardian.py)
 //
 // NOTE: This config registers qwen3-llama as STOPPED by default.
 //       llama-guardian starts it on demand via port 8080 proxy.
-//       Parallel > 1 NOT supported with MTP — single slot only.
+//       Parallel kept at 1 — single slot, matches bench config.
 
 module.exports = {
   apps: [
@@ -30,21 +37,21 @@ module.exports = {
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
 
       // Arguments passed to llama-server — tuned for 16GB VRAM RTX 4060 Ti
-      // User-tuned config: flash-attn ON, ctx 32K, NO MTP
+      // Flags from the 2026-08-04 tuning sweep (see BENCH-RESULTS.md addendum)
       // Port 8081 loopback only — llama-guardian owns 8080 and proxies to here.
       args: [
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
-        "--alias",      "deepseek-r1-14b",
+        "--alias",      "qwen3.6-35b-iq3",
         "--gpu-layers", "99",
-        "--ctx-size",   "32768",
+        "--ctx-size",   "65536",
         "--parallel",   "1",
-        "--cache-type-k", "q4_0",
-        "--cache-type-v", "q4_0",
+        // KV cache: f16 (default — no --cache-type flags). q4_0 KV measured
+        // SLOWER at filled ctx (60.4 vs 64.6 t/s) and lower precision.
         "--jinja",
         "--batch-size",  "2048",
-        "--ubatch-size", "512",
+        "--ubatch-size", "1024",
         "--cont-batching",
         "--flash-attn",  "auto",
       ],
@@ -68,6 +75,70 @@ module.exports = {
       log_date_format: "YYYY-MM-DD HH:mm:ss",
       error_file: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\logs\\qwen3-llama-error.log",
       out_file:    "C:\\Workspace\\Infrastructure\\llama-cpp-server\\logs\\qwen3-llama-out.log",
+    },
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  qwen3-llama-vulkan — Vulkan-backend twin of qwen3-llama.
+    //
+    //  Staged 2026-08-04 for the Radeon AI PRO R9700 (32GB) install. Uses the
+    //  llama.cpp b10275 Vulkan build in ..\llama-cpp-server-vulkan\ (production
+    //  above is the CUDA b9550 build, left untouched for rollback).
+    //
+    //  Binds the SAME port 8081, so exactly one of the two may run at a time:
+    //      pm2 stop qwen3-llama && pm2 start qwen3-llama-vulkan
+    //  Rollback is the reverse. The guardian on 8080 is agnostic to which.
+    //
+    //  BEFORE FIRST START, see R9700-INSTALL.md. Two things must be set:
+    //    1. GGML_VK_VISIBLE_DEVICES below — pin to the R9700. With both cards
+    //       installed, Vulkan enumerates BOTH, and splitting a model across an
+    //       AMD and an NVIDIA GPU over Vulkan performs badly. Confirm the index
+    //       with `llama-bench.exe --list-devices`; do NOT assume the R9700 is 0.
+    //    2. --model / --ctx-size — the args below are copied from the CUDA
+    //       config and are sized for a 16GB card (IQ3_XXS was forced by VRAM).
+    //       On 32GB, requantize to Q4_K_M/Q5_K_M first; that is the real win.
+    //
+    //  The tuning flags below (ubatch 1024, flash-attn auto, f16 KV) were tuned
+    //  for CUDA on a 4060 Ti. Treat them as UNVALIDATED on Vulkan — re-run the
+    //  sweep in benchmarks/ before trusting them.
+    // ─────────────────────────────────────────────────────────────────────
+    {
+      name: "qwen3-llama-vulkan",
+      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\llama-server.exe",
+      cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan",
+
+      env: {
+        // TODO: set to the R9700's Vulkan index before first start.
+        GGML_VK_VISIBLE_DEVICES: "0",
+      },
+
+      args: [
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+        "--host",       "127.0.0.1",
+        "--port",       "8081",
+        "--alias",      "qwen3.6-35b-iq3",
+        "--gpu-layers", "99",
+        "--ctx-size",   "65536",
+        "--parallel",   "1",
+        "--jinja",
+        "--batch-size",  "2048",
+        "--ubatch-size", "1024",
+        "--cont-batching",
+        "--flash-attn",  "auto",
+      ],
+
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "45G",
+
+      min_uptime: "30s",
+      max_restarts: 5,
+      restart_delay: 3000,
+      kill_timeout: 20000,
+
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\qwen3-llama-vulkan-error.log",
+      out_file:   "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\qwen3-llama-vulkan-out.log",
     },
 
     // ─────────────────────────────────────────────────────────────────────
