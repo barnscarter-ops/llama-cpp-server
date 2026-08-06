@@ -8,11 +8,37 @@ session picks up next (laptop, or the PC after it comes back).
 Read `R9700-INSTALL.md` in this repo for the full rationale. This file is the
 operational checklist and the measured baseline.
 
+## PLAN CHANGE, 2026-08-06 — single card
+
+**The 4060 Ti does not physically fit in slot 2.** It fouls the roof of the PSU
+basement. Discovered with the case already open.
+
+The machine is therefore **single-card: R9700 in slot 1, 4060 Ti removed** and
+bagged on the shelf. The 4060 Ti's two jobs in the original plan were CUDA
+rollback and a known-good display during the AMD driver install; the iGPU covers
+the second, and the first survives as a card reinstall rather than a PM2 command.
+
+Consequences, all of them reflected in the phases below:
+
+- Display runs off the **motherboard** HDMI/DP (i5-13600K → UHD Graphics 770).
+- **No NVIDIA GPU in the box.** The boot "smoke test" described under *Already
+  done before shutdown* is void — see the strikethrough there.
+- Vulkan will enumerate the **iGPU as a device too**, so the R9700 is even less
+  likely to be index 0 than before.
+
+Not pursued, recorded so it is not re-litigated: removing the basement shroud
+(may be non-removable on this case), a riser/vertical mount (needs a purchase,
+and puts a 300W card on chipset x4), and reversing the slots (R9700 is the longer
+card — it fouls the same shroud, and would land the 300W card on x4).
+
 ## Rollback
 
 - Repo rollback ref: **`4065d57`** ("chore: pre-R9700-swap baseline").
 - Runtime rollback: point PM2 back at `llama-cpp-server\llama-server.exe`
   (`pm2 start qwen3-llama`). The CUDA b9550 build is untouched throughout.
+- **Single-card caveat:** that PM2 rollback now requires physically reinstalling
+  the 4060 Ti in slot 1 first — call it 15 minutes, not 30 seconds. Nothing on
+  disk is lost either way; the CUDA build and `4065d57` are both intact.
 
 ## Pre-swap baseline (measured, 2026-08-05)
 
@@ -44,9 +70,13 @@ it as a prediction for the R9700, where Vulkan is the fast path.
 - `4065d57` committed, working tree clean.
 - `pm2 stop qwen3-llama llama-guardian` — both `stopped`, other ten online.
 - **`pm2 save` deliberately NOT run.** The saved dump still lists them as
-  `online`, so they resurrect on boot. That is intentional: `qwen3-llama`
+  `online`, so they resurrect on boot. ~~That is intentional: `qwen3-llama`
   starting on the CUDA build is a free smoke test that the 4060 Ti survived the
-  move to slot 2. Stop them again before benchmarking.
+  move to slot 2.~~ **Void under the single-card plan** — there is no NVIDIA GPU
+  for it to find. Expect `qwen3-llama` to fail outright on boot, or to fall back
+  to CPU and start eating into the 64GB. Run
+  `pm2 stop qwen3-llama llama-guardian` promptly after login, before anything
+  else.
 - Driver downloaded: **AMD Software: Adrenalin Edition 26.7.1 (WHQL
   Recommended)**, 849 MB, 2026-07-28. There is no PRO Edition offered for
   Windows 11 on the R9700 download page — Adrenalin is the only real option.
@@ -55,42 +85,54 @@ it as a prediction for the R9700, where Vulkan is the fast path.
 
 1. Full shutdown, **PSU switch off**, hold case power button ~5s to discharge.
 2. Ground on bare chassis.
-3. 4060 Ti out of slot 1 → into **slot 2** (PCIe 4.0 x4, chipset-attached —
-   fine, weights load once then traffic is negligible).
+3. **4060 Ti out, and out of the machine** — it does not fit slot 2. Antistatic
+   bag, on the shelf. It is the rollback path, not scrap.
 4. **R9700 into slot 1** (PCIe 5.0 x16, CPU-attached). Clip clicks. Screw both
    brackets down — a 300W card hanging on its power connector causes
    intermittent faults later.
-5. **Separate PSU cables to each card.** Do not daisy-chain one cable's second
-   connector to the other card. R9700 connector is either 2x8-pin or a single
+5. **Its own PSU cables.** Do not daisy-chain a single cable's two connectors
+   into both of the card's inputs. R9700 connector is either 2x8-pin or a single
    16-pin 12V-2x6 depending on the partner board.
-6. Display cable onto the **4060 Ti**. Its driver is known-good, so a bad AMD
-   install still leaves a picture on screen.
+6. Display cable onto the **motherboard** HDMI/DP, not the R9700. The iGPU is
+   the known-good path, so a bad AMD install still leaves a picture on screen.
 7. Check for loose screws, unplugged fans, cables in blades. Close up, PSU on.
+
+## Phase 2b — BIOS, before Windows
+
+Z690 `Primary Display` defaults to `Auto`, which prefers the discrete card when
+one is present — so the motherboard port can look dead while the iGPU is
+perfectly fine. Under Advanced → System Agent (SA) Configuration → Graphics
+Configuration:
+
+- **`iGPU Multi-Monitor` → Enabled** (required — this is what keeps the iGPU
+  alive alongside the R9700).
+- `Primary Display` → `CPU Graphics` if you want POST on the motherboard port
+  too.
+
+If the motherboard port is dark at first power-on, move the cable to the R9700
+just long enough to change these, then move it back.
 
 ## Phase 3 — first boot, BEFORE any driver
 
 The R9700 will show as an unknown / basic display device. **That is expected.**
 
-```bash
-nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
-```
-
-Expect the 4060 Ti reporting normally. If this fails, it is a seating or power
-problem, not a driver one — fix it now, before an AMD install muddies the
-picture.
-
-Confirm the R9700 appears in Device Manager under Display adapters, even as
-unknown. **If it does not appear at all, power down and reseat.** Do not install
-a driver for a card Windows cannot see.
+`nvidia-smi` is now expected to **fail** — the card is out of the machine. That
+is not a fault to chase. Instead, confirm the R9700 appears in Device Manager
+under Display adapters, even as unknown, and that the UHD 770 is there beside
+it. **If the R9700 does not appear at all, power down and reseat** — that is a
+seating or power problem, and it is far easier to diagnose now than after an AMD
+install muddies the picture. Do not install a driver for a card Windows cannot
+see.
 
 ## Phase 4 — AMD driver
 
 Run the Adrenalin 26.7.1 installer.
 
 - **Do NOT check "Factory Reset" / "Clean install".** It wipes existing display
-  driver state and you will be reinstalling the NVIDIA driver at midnight.
-- **Do NOT DDU the NVIDIA driver.** The 4060 Ti is staying; both vendor stacks
-  coexist fine.
+  driver state — including the Intel driver now carrying your only picture.
+- **Do NOT DDU the NVIDIA driver.** Pointless work: the card is out, and its
+  leftover driver state is harmless. The 4060 Ti is the rollback path, so leaving
+  the stack installed makes reinstalling it a card swap and nothing more.
 - Decline optional extras (overlay, recording, bundleware). You want the driver
   and its Vulkan ICD, nothing that hooks the desktop.
 
@@ -102,17 +144,23 @@ Reboot when it asks.
 reg query "HKLM\SOFTWARE\Khronos\Vulkan\Drivers"
 ```
 
-Expect an **AMD entry alongside** the NVIDIA `nv-vk64.json` one — 2 values now,
-where the baseline had 1. If AMD's installer failed to add it, register it
-manually the same way §1 of `R9700-INSTALL.md` registered NVIDIA's.
+Expect an **AMD entry**, most likely an **Intel** one for the UHD 770, and the
+baseline's NVIDIA `nv-vk64.json` still listed — that last one points at a driver
+for absent hardware and is harmless; ignore it rather than deleting it, it is
+part of the rollback path. If AMD's installer failed to add its entry, register
+it manually the same way §1 of `R9700-INSTALL.md` registered NVIDIA's.
 
 ```bash
 C:/Workspace/Infrastructure/llama-cpp-server-vulkan/llama-bench.exe --list-devices
 ```
 
-Expect **two devices, R9700 showing ~32GB**. Note its index.
+Expect the **R9700 showing ~32GB**, and probably the **UHD 770 alongside it** —
+the iGPU is a Vulkan device too. Note the R9700's index.
 **Do not assume it is 0** — `GGML_VK_VISIBLE_DEVICES` in
-`ecosystem.config.cjs:111` currently says `0`, which is the 4060 Ti today.
+`ecosystem.config.cjs:111` still says `0`, which was the 4060 Ti's index in the
+baseline. With the iGPU enumerating, `0` may well now be the UHD 770. A run that
+lands on the iGPU will look like a catastrophic performance regression rather
+than a misconfiguration, so confirm the index before reading any benchmark.
 
 ## Phase 6 — benchmark before changing anything
 

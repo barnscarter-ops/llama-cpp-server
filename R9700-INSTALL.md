@@ -4,6 +4,12 @@ Prepared 2026-08-04, before the card arrived. Target config: **Radeon AI PRO
 R9700 (32GB, gfx1201) in PCIe slot 1, RTX 4060 Ti (16GB) in slot 2, 850W PSU**,
 ASUS TUF Z690-Plus WiFi D4 / i5-13600K / 64GB.
 
+> **Superseded 2026-08-06:** the 4060 Ti does not fit slot 2 — it fouls the PSU
+> basement roof. Actual config is **single-card, R9700 in slot 1**, 4060 Ti
+> removed, display on the iGPU. Everything below about dual-card enumeration and
+> coexisting vendor stacks is now background, not instruction. See the *PLAN
+> CHANGE* section of `R9700-SWAP-HANDOFF.md`.
+
 ## Pre-staged (already done)
 
 - `llama-cpp-server-vulkan\` — llama.cpp **b10275 Vulkan** build, extracted and
