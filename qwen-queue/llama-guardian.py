@@ -72,11 +72,18 @@ PREWARM_POLL_S = 5                # how often to check prewarm ports
 # non-streaming chat completions; streams can't be retried mid-flight.
 LENGTH_RETRY_MAX = 2              # extra attempts after a finish_reason=length
 
-IDLE_TIMEOUT_MIN = 30             # stop llama after this many idle minutes
+IDLE_TIMEOUT_MIN = 60             # stop llama after this many idle minutes
 # Allow override for testing (e.g. IDLE_TIMEOUT_MIN=1 to test the reaper fast)
 if os.environ.get("IDLE_TIMEOUT_MIN"):
     IDLE_TIMEOUT_MIN = int(os.environ["IDLE_TIMEOUT_MIN"])
 IDLE_POLL_S = 60                  # how often the reaper checks
+
+# Minimum seconds between a llama stop and the next start. The R9700's Windows
+# driver TDR'd (bugcheck 0x116 in amdkmdag.sys, 2026-08-06) when a model load
+# began seconds after a ~26GB VRAM teardown. Give the driver time to finish
+# unwinding before we load again. Cold-start callers just see the friendly
+# 503 warming response a little longer — nothing breaks.
+STOP_START_COOLDOWN_S = int(os.environ.get("STOP_START_COOLDOWN_S", "45"))
 
 HEALTH_PATH = "/v1/models"        # llama endpoint we poll to confirm it's up
 HEALTH_TIMEOUT_S = 60             # max wait for llama to come up (model load)
@@ -142,6 +149,11 @@ class Guardian:
         # enforcer from entering a kill loop when transient PID mismatches
         # occur during model load (child processes, MTP draft contexts, etc.).
         self.last_enforcer_recovery = 0.0
+
+        # Epoch seconds of the last successful llama stop. Every start path
+        # waits out STOP_START_COOLDOWN_S from this mark (see _gpu_cooldown)
+        # so the AMD driver never sees a rapid VRAM unload→load cycle.
+        self.last_stop_time = 0.0
 
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.hermes_decider = HermesDecider()
@@ -216,6 +228,8 @@ async def pm2(action: str) -> tuple[bool, str]:
         out_bytes = await proc.communicate()
         stdout = out_bytes[0].decode(errors="replace").strip() if out_bytes[0] else ""
         success = proc.returncode == 0
+        if success and action == "stop":
+            guardian.last_stop_time = time.time()
         log.info(f"pm2 {action} {PM2_APP} -> rc={proc.returncode}")
         return success, stdout
     except Exception as e:
@@ -325,6 +339,19 @@ def _llama_listener_pid() -> int | None:
     return None
 
 
+async def _gpu_cooldown(reason: str) -> None:
+    """Wait out STOP_START_COOLDOWN_S since the last llama stop.
+
+    The R9700 Windows driver TDR'd on a fast VRAM unload→load cycle; every
+    start path funnels through here so that can't recur. No-op when the last
+    stop is old (the common case).
+    """
+    remaining = STOP_START_COOLDOWN_S - (time.time() - guardian.last_stop_time)
+    if remaining > 0:
+        log.info(f"GPU cooldown: waiting {remaining:.0f}s before start ({reason})")
+        await asyncio.sleep(remaining)
+
+
 async def ensure_llama_started(reason: str) -> bool:
     """Start llama if it's down. Dedups concurrent starts via a lock.
 
@@ -350,6 +377,7 @@ async def ensure_llama_started(reason: str) -> bool:
                 f"llama is already loading ({reason}; pm2 pid={pm2_pid}) — waiting"
             )
         else:
+            await _gpu_cooldown(reason)
             log.info(f"starting llama ({reason})...")
             await pm2("start")
 
@@ -1054,6 +1082,7 @@ async def enforce_single_llama(app: web.Application) -> None:
                         log.error("enforcer: stale llama process survived recovery; not restarting")
                         FIRST_RUN = False
                         return
+                    await _gpu_cooldown("enforcer recovery")
                     await pm2("start")
                 guardian.last_enforcer_recovery = time.time()
                 FIRST_RUN = False

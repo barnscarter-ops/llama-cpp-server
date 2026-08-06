@@ -374,11 +374,14 @@ WORKFLOW_TOOLS = [
 # ---------------------------------------------------------------------------
 # HTTP + extraction helpers
 # ---------------------------------------------------------------------------
-def call(url: str, model: str, messages: list, tools=None, max_tokens=4096, timeout=300) -> dict:
+MAX_TOKENS_DEFAULT = 4096  # overridable via --max-tokens (reasoning models need more)
+
+
+def call(url: str, model: str, messages: list, tools=None, max_tokens=None, timeout=300) -> dict:
     body = {
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
+        "max_tokens": max_tokens or MAX_TOKENS_DEFAULT,
         "temperature": 0.2,
         "seed": 42,
         "stream": False,
@@ -569,11 +572,16 @@ def bench_tool_calls(url: str, model: str) -> list[dict]:
 # Driver
 # ---------------------------------------------------------------------------
 def main():
+    global MAX_TOKENS_DEFAULT
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default=URL_DEFAULT)
     ap.add_argument("--model", required=True, help="model alias (e.g. ornith-9b, qwen3-14b)")
     ap.add_argument("--out",   required=True, help="output JSON path")
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help=f"per-request completion budget (default {MAX_TOKENS_DEFAULT}; raise for reasoning models)")
     args = ap.parse_args()
+    if args.max_tokens:
+        MAX_TOKENS_DEFAULT = args.max_tokens
 
     print(f"\n=== Ping {args.url} model={args.model} ===")
     try:
