@@ -116,13 +116,12 @@ module.exports = {
       },
 
       args: [
-        // Q4_K_M requant (2026-08-06): 32GB R9700 removed the 16GB ceiling that
-        // forced IQ3_XXS. ~21.1 GiB weights + ~2.7 GB KV/compute at 64k f16 KV
-        // ≈ 24.3 GB of ~31.7 GB usable. Q5_K_M (25.8 GB) also fits but leaves
-        // little headroom for the pending Vulkan tuning sweep.
+        // Q5_K_M requant (2026-08-06): 32GB R9700 removed the 16GB ceiling that
+        // forced IQ3_XXS. ~24.1 GiB weights + ~2.7 GB KV/compute at 64k f16 KV
+        // ≈ 27 GB of ~31.7 GB usable. Q6_K (~29 GB) does NOT fit at 64k ctx.
         // Alias set to the quant-neutral "qwen3.6-35b" — matches what the
         // guardian queue (GUARDIAN_QUEUE_MODEL) and qwen-submit.ps1 send.
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
         "--alias",      "qwen3.6-35b",
