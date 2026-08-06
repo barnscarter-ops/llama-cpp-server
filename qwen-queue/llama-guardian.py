@@ -82,7 +82,7 @@ HEALTH_PATH = "/v1/models"        # llama endpoint we poll to confirm it's up
 HEALTH_TIMEOUT_S = 60             # max wait for llama to come up (model load)
 HEALTH_POLL_S = 1                 # how often to poll while waiting
 
-PM2_APP = "qwen3-llama"           # PM2 process name for llama-server
+PM2_APP = "qwen3-llama-vulkan"    # PM2 process name for llama-server (R9700 Vulkan build)
 
 # Hermes-decided durable job queue.  It is intentionally loopback-only by
 # default because the guardian also listens on Tailscale-facing interfaces.

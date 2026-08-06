@@ -1,5 +1,34 @@
 # R9700 Swap — Live Handoff
 
+> **OUTCOME (2026-08-06) — swap complete, production cut over. Read this first.**
+>
+> - **Do NOT install Adrenalin.** Adrenalin 26.7.1 (driver 32.0.31035.1003) has
+>   an idle power-management bug on the R9700: ~15s after compute stops, VRAM is
+>   evicted and the first request after an idle window kills the device
+>   (`vk::Queue::submit: ErrorDeviceLost` → `LiveKernelEvent 141`/`1b0` → device
+>   Code 31). Reproduced on demand on **two different physical cards** — the
+>   "dead" first card was this bug, not hardware. Known upstream: llama.cpp
+>   discussion #23443, affects 32.0.31007.5012+. `--no-mmap` does NOT help.
+> - **Fix:** Windows Update base driver **32.0.22042.14002** (`oem56.inf`,
+>   `u0200492.inf_amd64_5a6529f4f1019be2`) + its ICD manifest
+>   (`amdvlk.inf_amd64_3565b89cd6e20b82\amd-vulkan64.json`). Adrenalin package
+>   `oem62.inf` was uninstalled from the device; decline AMD Software's driver
+>   update prompts until the DPM bug is fixed upstream.
+> - **Recovery without reboot** if the device ever drops to Code 31 again
+>   (elevated): `pnputil /restart-device "PCI\VEN_1002&DEV_7551&SUBSYS_98011EAE&REV_C0\6&271CB8A6&0&00000008"`
+>   (may need two invocations).
+> - **Device pinning:** `GGML_VK_VISIBLE_DEVICES=<index>` proved unreliable —
+>   Vulkan enumeration order (Intel iGPU vs R9700) differs between process
+>   contexts, and under the elevated PM2 daemon the server silently landed on
+>   the iGPU at 2.6 t/s. Production uses `VK_LOADER_DRIVERS_SELECT: "*amd*"`
+>   instead (only the AMD ICD loads; R9700 is always index 0).
+> - **Measured (WU driver, Vulkan, IQ3_XXS):** bench pp512 3094.8 / tg128 140.4
+>   (vs CUDA 4060 Ti 2422.6 / 81.5); under PM2 tg ~132-138 t/s, healthy after
+>   idle. Cutover done: `qwen3-llama` deleted, `qwen3-llama-vulkan` + guardian
+>   online, `pm2 save` run.
+> - 4060 Ti currently shows CM_PROB_PHANTOM (no NVIDIA card use); nvcontainer
+>   crash-loops — NVIDIA stack is a cleanup candidate.
+
 Written 2026-08-05, immediately before powering down for the physical install.
 Purpose: the Claude Code session that planned this swap runs **on the PC being
 opened**, so it dies at shutdown. This file carries the state to whatever

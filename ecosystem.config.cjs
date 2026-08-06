@@ -89,10 +89,9 @@ module.exports = {
     //  Rollback is the reverse. The guardian on 8080 is agnostic to which.
     //
     //  BEFORE FIRST START, see R9700-INSTALL.md. Two things must be set:
-    //    1. GGML_VK_VISIBLE_DEVICES below — pin to the R9700. With both cards
-    //       installed, Vulkan enumerates BOTH, and splitting a model across an
-    //       AMD and an NVIDIA GPU over Vulkan performs badly. Confirm the index
-    //       with `llama-bench.exe --list-devices`; do NOT assume the R9700 is 0.
+    //    1. VK_LOADER_DRIVERS_SELECT below — pin to the R9700 by only loading
+    //       the AMD ICD. Do not pin by index (GGML_VK_VISIBLE_DEVICES):
+    //       enumeration order is not stable across process contexts.
     //    2. --model / --ctx-size — the args below are copied from the CUDA
     //       config and are sized for a 16GB card (IQ3_XXS was forced by VRAM).
     //       On 32GB, requantize to Q4_K_M/Q5_K_M first; that is the real win.
@@ -107,8 +106,13 @@ module.exports = {
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan",
 
       env: {
-        // TODO: set to the R9700's Vulkan index before first start.
-        GGML_VK_VISIBLE_DEVICES: "0",
+        // Only load the AMD Vulkan ICD so the R9700 is always index 0.
+        // Do NOT use GGML_VK_VISIBLE_DEVICES with an index: enumeration order
+        // (Intel UHD 770 iGPU vs R9700) is not stable across process contexts —
+        // under the elevated PM2 daemon the child saw a different order and
+        // silently ran on the iGPU/CPU at ~2.6 t/s (2026-08-06). The loader
+        // filter is deterministic: the Intel ICD never loads at all.
+        VK_LOADER_DRIVERS_SELECT: "*amd*",
       },
 
       args: [
