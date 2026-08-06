@@ -19,6 +19,38 @@ e93d5f1..a4cae79 (this session's three commits).
   reasoning_content and returns empty content; use 16384 for quality runs.
 - Repo HEAD: `a4cae79` on main, tree clean. NOT yet pushed.
 
+## 2026-08-06 TDR investigation (crashes #1 8:33, #2 9:27) — READ FIRST
+
+Two 0x116 bugchecks on 2026-08-06 (reboots 8:34 and 9:28). Evidence-based
+timeline from event log + LiveKernelReports + prefetch:
+
+- 13 amdkmdag TDR events (WATCHDOG live-kernel reports) in ~10h across THREE
+  load profiles: prod serving (8/5 11:24-11:40 PM), guardian load/unload
+  churn (8/6 12:45-1:05 AM), and **idle** (9:27 AM crash — prod already
+  stopped, llama-bench never launched, sweep never started).
+- Crash #1 (8:33): llama-server.exe launched 8:33:07 during VRAM churn —
+  the documented "second server" incident.
+- Crash #2 (9:27): NO llama process. Minutes after a 28.7 GB working-set
+  unload — peak memory-manager reclaim activity. The sweep did not cause it.
+- Conclusion: not workload-specific. Driver memory-management path stalling
+  past the 2s TDR window during large RAM/VRAM transitions; failed recovery
+  = 0x116. Prime suspect: Windows memory compression x AMD driver (the
+  community fix listed below).
+- **Applied 2026-08-06 ~9:45 AM: `Disable-MMAgent -mc` (verified False) +
+  reboot.** Reversible via Enable-MMAgent -mc.
+- Verification protocol: watch C:\Windows\LiveKernelReports\WATCHDOG\ — any
+  new file = TDR recurred. Zero new files through a full load/unload cycle
+  = fix holds; only then re-attempt the Task 2 sweep.
+- Post-reboot 2026-08-06 ~10:25 AM: MMAgent still False; prod restored
+  (llama-server 8081 healthy, inference verified 148 tok in 1.3s; guardian
+  8080 → 200; pm2 save done). First Q5_K_M model load completed with ZERO
+  new WATCHDOG files. Still pending: an unload cycle (guardian 60min idle
+  stop) with zero TDRs before declaring the fix good and re-running the
+  sweep.
+- Held in reserve if TDRs recur: raise TdrDelay/TdrDdiDelay (registry, both
+  currently defaults); WinDbg analysis of the preserved minidumps
+  (C:\Windows\Minidump\080626-15046-01.dmp, 080626-15281-01.dmp).
+
 ## Hard rules (one violation = hard reboot, learned 2026-08-06)
 
 - **NEVER run two llama-server instances on the R9700.** Never hand-launch
