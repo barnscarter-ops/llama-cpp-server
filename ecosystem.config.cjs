@@ -96,9 +96,11 @@ module.exports = {
     //       config and are sized for a 16GB card (IQ3_XXS was forced by VRAM).
     //       On 32GB, requantize to Q4_K_M/Q5_K_M first; that is the real win.
     //
-    //  The tuning flags below (ubatch 1024, flash-attn auto, f16 KV) were tuned
-    //  for CUDA on a 4060 Ti. Treat them as UNVALIDATED on Vulkan — re-run the
-    //  sweep in benchmarks/ before trusting them.
+    //  Vulkan/R9700 Q5_K_M sweep 2026-08-06 (32k depth, 3 reps, 60s cool):
+    //  benchmarks/vulkan-tuning-sweep.md + tune-vulkan-q5km-*.log
+    //  Winner: ub512 / b2048 / flash-attn on / f16 KV — best prefill (2261 t/s),
+    //  tg within noise of ub1024 (111.9 vs 112.1). Larger ubatch/batch slower;
+    //  fa off tanks; q4/q8 KV hurts prefill hard for ~1 t/s tg.
     // ─────────────────────────────────────────────────────────────────────
     {
       name: "qwen3-llama-vulkan",
@@ -130,9 +132,9 @@ module.exports = {
         "--parallel",   "1",
         "--jinja",
         "--batch-size",  "2048",
-        "--ubatch-size", "1024",
+        "--ubatch-size", "512",
         "--cont-batching",
-        "--flash-attn",  "auto",
+        "--flash-attn",  "on",
       ],
 
       exec_mode: "fork",

@@ -15,6 +15,7 @@ param(
   [string] $Device,
   [int]    $Ctx   = 32768,   # sweep at a realistic working context, not 512
   [int]    $Reps  = 3,
+  [int]    $CooldownS = 60,  # HARD RULE: pause between model loads (TDR 0x116, 2026-08-06)
   [switch] $Quick
 )
 
@@ -25,21 +26,41 @@ if (-not (Test-Path $bench)) { throw "Vulkan llama-bench.exe not found at $bench
 
 if (-not [System.IO.Path]::IsPathRooted($Model)) { $Model = Join-Path $ROOT $Model }
 if (-not (Test-Path $Model)) { throw "Model not found: $Model" }
-if ($Device) { $env:GGML_VK_VISIBLE_DEVICES = $Device }
+
+# Pin to the AMD card by ICD filter, NOT by device index — enumeration order
+# (Intel iGPU vs R9700) is not stable across process contexts. See
+# ecosystem.config.cjs qwen3-llama-vulkan env block (2026-08-06 incident).
+$env:VK_LOADER_DRIVERS_SELECT = "*amd*"
+if ($Device) { $env:GGML_VK_VISIBLE_DEVICES = $Device }  # legacy override, avoid
+
+# Refuse to run while prod is serving — a second llama-server loading during
+# VRAM churn hard-crashed the box (amdkmdag.sys bugcheck 0x116, 2026-08-06).
+# NOTE: loopback 8080 is the Hermes qwen-worker SMS adapter, NOT the guardian
+# (guardian binds 0.0.0.0 and Windows routes loopback to Hermes). Probe the
+# guardian via the Tailscale IP; probe llama-server via loopback 8081.
+$guardianUp = Test-NetConnection -ComputerName 100.124.216.11 -Port 8080 -InformationLevel Quiet -WarningAction SilentlyContinue
+if ($guardianUp) { throw "llama-guardian is listening on 100.124.216.11:8080 — stop it via PM2 first. NEVER sweep alongside prod." }
+$llamaUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 8081 -InformationLevel Quiet -WarningAction SilentlyContinue
+if ($llamaUp) { throw "Port 8081 is listening — stop qwen3-llama-vulkan via PM2 first." }
+if (Get-Process llama-server -ErrorAction SilentlyContinue) {
+  throw "An llama-server.exe process is still running — kill/verify before sweeping."
+}
 
 # Each entry is one configuration to measure. Keep the list short — every row
 # is a full model load plus $Reps passes.
 $configs = @(
-  @{ name = "baseline (ub512, fa on, f16 kv)"; args = @("-ub","512","-fa","1") }
-  @{ name = "ub1024, fa on, f16 kv";           args = @("-ub","1024","-fa","1") }
-  @{ name = "ub2048, fa on, f16 kv";           args = @("-ub","2048","-fa","1") }
-  @{ name = "ub1024, fa OFF, f16 kv";          args = @("-ub","1024","-fa","0") }
+  @{ name = "baseline (ub512, b2048, fa on, f16 kv)"; args = @("-ub","512","-b","2048","-fa","1") }
+  @{ name = "ub1024, b2048, fa on, f16 kv (prod)";    args = @("-ub","1024","-b","2048","-fa","1") }
+  @{ name = "ub2048, b2048, fa on, f16 kv";           args = @("-ub","2048","-b","2048","-fa","1") }
+  @{ name = "ub1024, b4096, fa on, f16 kv";           args = @("-ub","1024","-b","4096","-fa","1") }
+  @{ name = "ub2048, b4096, fa on, f16 kv";           args = @("-ub","2048","-b","4096","-fa","1") }
+  @{ name = "ub1024, b2048, fa OFF, f16 kv";          args = @("-ub","1024","-b","2048","-fa","0") }
 )
 if (-not $Quick) {
   $configs += @(
-    @{ name = "ub1024, fa on, q8_0 kv"; args = @("-ub","1024","-fa","1","-ctk","q8_0","-ctv","q8_0") }
-    @{ name = "ub1024, fa on, q4_0 kv"; args = @("-ub","1024","-fa","1","-ctk","q4_0","-ctv","q4_0") }
-    @{ name = "ub2048, fa on, q8_0 kv"; args = @("-ub","2048","-fa","1","-ctk","q8_0","-ctv","q8_0") }
+    @{ name = "ub1024, b2048, fa on, q8_0 kv"; args = @("-ub","1024","-b","2048","-fa","1","-ctk","q8_0","-ctv","q8_0") }
+    @{ name = "ub1024, b2048, fa on, q4_0 kv"; args = @("-ub","1024","-b","2048","-fa","1","-ctk","q4_0","-ctv","q4_0") }
+    @{ name = "ub2048, b4096, fa on, q8_0 kv"; args = @("-ub","2048","-b","4096","-fa","1","-ctk","q8_0","-ctv","q8_0") }
   )
 }
 
@@ -49,7 +70,15 @@ Write-Host "Context: $Ctx  (prefill measured at this depth, not 512)" -Foregroun
 Write-Host "Configs: $($configs.Count)`n" -ForegroundColor Cyan
 
 $rows = @()
+$first = $true
 foreach ($c in $configs) {
+  if (-not $first) {
+    # HARD RULE: leave ~1 min between big model unload/load on the R9700 —
+    # fast VRAM churn TDR'd amdkmdag.sys (bugcheck 0x116) on 2026-08-06.
+    Write-Host "    cooling down ${CooldownS}s before next model load..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds $CooldownS
+  }
+  $first = $false
   Write-Host "==> $($c.name)" -ForegroundColor Yellow
 
   # -d $Ctx puts $Ctx tokens of KV in place before measuring, so these numbers
