@@ -30,16 +30,21 @@ module.exports = {
     {
       name: "qwen3-llama",
 
-      // llama-server binary path
-      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\llama-server.exe",
+      // Launch through launch-llama.cjs, NOT the exe directly: PM2's
+      // treekill can't reliably terminate a native exe on Windows (2026-08-07:
+      // orphaned llama-server survived pm2 stop/restart, squatted port 8081,
+      // crash-looped the respawns). The wrapper tree-kills the exe on shutdown
+      // and clears stale port-squatters before spawning.
+      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\launch-llama.cjs",
 
       // Working directory for relative paths
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
 
-      // Arguments passed to llama-server — tuned for 16GB VRAM RTX 4060 Ti
-      // Flags from the 2026-08-04 tuning sweep (see BENCH-RESULTS.md addendum)
+      // First arg = llama-server binary; the rest are passed to it — tuned for
+      // 16GB VRAM RTX 4060 Ti (2026-08-04 sweep, see BENCH-RESULTS.md addendum)
       // Port 8081 loopback only — llama-guardian owns 8080 and proxies to here.
       args: [
+        "C:\\Workspace\\Infrastructure\\llama-cpp-server\\llama-server.exe",
         "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
@@ -70,6 +75,7 @@ module.exports = {
       max_restarts: 5,
       restart_delay: 3000,
       kill_timeout: 20000,               // llama-server needs time to unwind CUDA on shutdown
+      shutdown_with_message: true,       // wrapper listens for PM2's IPC 'shutdown' and tree-kills the exe
 
       // Log output
       log_date_format: "YYYY-MM-DD HH:mm:ss",
@@ -104,7 +110,9 @@ module.exports = {
     // ─────────────────────────────────────────────────────────────────────
     {
       name: "qwen3-llama-vulkan",
-      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\llama-server.exe",
+      // Wrapper, not the exe — same Windows kill-reliability fix as qwen3-llama
+      // above (this entry is the one that hit the 687-restart loop 2026-08-07).
+      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\launch-llama.cjs",
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan",
 
       env: {
@@ -123,6 +131,7 @@ module.exports = {
         // ≈ 27 GB of ~31.7 GB usable. Q6_K (~29 GB) does NOT fit at 64k ctx.
         // Alias set to the quant-neutral "qwen3.6-35b" — matches what the
         // guardian queue (GUARDIAN_QUEUE_MODEL) and qwen-submit.ps1 send.
+        "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\llama-server.exe",
         "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
@@ -146,6 +155,7 @@ module.exports = {
       max_restarts: 5,
       restart_delay: 3000,
       kill_timeout: 20000,
+      shutdown_with_message: true,       // wrapper listens for PM2's IPC 'shutdown' and tree-kills the exe
 
       log_date_format: "YYYY-MM-DD HH:mm:ss",
       error_file: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\qwen3-llama-vulkan-error.log",
