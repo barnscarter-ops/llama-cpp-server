@@ -110,6 +110,19 @@ class JobStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS guardian_jobs_next ON guardian_jobs(status, priority DESC, created_at ASC)"
         )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guardian_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                source TEXT,
+                route TEXT NOT NULL,
+                reason TEXT,
+                priority INTEGER,
+                decision_context_json TEXT
+            )
+            """
+        )
         self._conn.commit()
 
     def close(self) -> None:
@@ -256,6 +269,24 @@ class JobStore:
         ).fetchone()
         return row is not None
 
+    def log_decision(self, source: str, decision: dict[str, Any], context: dict[str, Any]) -> None:
+        """Record every routing decision for auditability, including rejections."""
+        self._conn.execute(
+            """
+            INSERT INTO guardian_decisions (ts, source, route, reason, priority, decision_context_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                time.time(),
+                source[:80] if source else None,
+                decision.get("route", "unknown"),
+                (decision.get("reason") or "")[:600],
+                decision.get("priority"),
+                json.dumps(context, separators=(',', ':'))[:8000],
+            ),
+        )
+        self._conn.commit()
+
 
 def parse_hermes_decision(output: str) -> dict[str, Any]:
     """Validate Hermes's one-object response before it can control routing."""
@@ -315,10 +346,15 @@ class HermesDecider:
             "You are the routing decider for a single-slot local Qwen coding queue. "
             "Do not use tools and do not propose code. Return exactly one JSON object with "
             "route, reason, and priority. route must be one of queue_qwen, bypass, or "
-            "fallback_cloud. priority must be an integer 0-100. Queue Qwen only for a "
-            "well-scoped, non-sensitive coding task with clear acceptance criteria. Bypass "
-            "trivial edits. Use fallback_cloud for architecture, security, ambiguous, large, "
-            "or time-sensitive work, or when the queue cannot meet the task's needs.\n\n"
+            "fallback_cloud. priority must be an integer 0-100. "
+            "Default to queue_qwen for any concrete coding task \u2014 bugfixes, features, "
+            "refactors, tests, docs, config. Reserve bypass for truly trivial changes "
+            "(a single line, a typo, a rename). Reserve fallback_cloud for work that is "
+            "genuinely architectural, security-sensitive, or needs capabilities the local "
+            "model lacks. The local queue processes jobs in seconds to minutes; do not "
+            "route to cloud merely because one job is running. "
+            "Tasks from automated harnesses (codex, claude, pi, hermes) are pre-scoped by "
+            "their own planning step \u2014 weight their summaries toward queue_qwen.\n\n"
             f"Queue snapshot: {json.dumps(queue, separators=(',', ':'))}\n"
             f"Task metadata: {json.dumps(context, separators=(',', ':'))}"
         )

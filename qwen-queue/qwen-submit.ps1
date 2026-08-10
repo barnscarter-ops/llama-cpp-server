@@ -109,6 +109,7 @@ $body = @{
         expected_lines = $ExpectedLines
         expected_files = $ExpectedFiles
         risk = $Risk
+        source = $Source
     }
     request = $request
 } | ConvertTo-Json -Depth 8

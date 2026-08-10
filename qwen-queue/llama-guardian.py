@@ -537,6 +537,7 @@ async def queue_submit(request: web.Request) -> web.Response:
             {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}}, status=503
         )
 
+    guardian.job_store.log_decision(source, decision, context)
     if decision["route"] != "queue_qwen":
         return web.json_response({"status": "not_queued", "decision": decision})
 

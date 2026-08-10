@@ -68,6 +68,14 @@ class GuardianQueueTests(unittest.TestCase):
         with self.assertRaises(Exception):
             parse_hermes_decision('{"route":"anything", "reason":"no", "priority":1}')
 
+    def test_logs_all_decisions_including_rejections(self) -> None:
+        self.store.log_decision("codex", {"route": "bypass", "reason": "trivial", "priority": 10}, {"summary": "fix typo"})
+        self.store.log_decision("claude", {"route": "queue_qwen", "reason": "well-scoped", "priority": 60}, {"summary": "add test"})
+        rows = self.store._conn.execute("SELECT route, source FROM guardian_decisions ORDER BY id").fetchall()
+        self.assertEqual(2, len(rows))
+        self.assertEqual("bypass", rows[0]["route"])
+        self.assertEqual("queue_qwen", rows[1]["route"])
+
 
 class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
