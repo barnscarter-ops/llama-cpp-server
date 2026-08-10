@@ -120,8 +120,13 @@ QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S",
 #  LOGGING
 # ─────────────────────────────────────────────────────────────────────────────
 
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setLevel(logging.INFO)
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(logging.WARNING)
 logging.basicConfig(
     level=logging.INFO,
+    handlers=[_stdout_handler, _stderr_handler],
     format="%(asctime)s %(levelname)-7s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -1013,7 +1018,7 @@ async def enforce_single_llama(app: web.Application) -> None:
                 else:
                     # Transient race: PM2 says online but its PID isn't in the
                     # tasklist snapshot yet. Skip this tick — resolves on the next.
-                    log.info(
+                    log.debug(
                         f"enforcer: pm2 pid {pm2_pid} not in tasklist yet, skipping"
                     )
                     FIRST_RUN = False

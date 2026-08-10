@@ -180,6 +180,10 @@ module.exports = {
       script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\llama-guardian.py",
       interpreter: "python",
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
+      env: {
+        HERMES_DECIDER_MODEL: "glm-5.2",
+        HERMES_DECIDER_PROVIDER: "custom:zai-coding",
+      },
 
       exec_mode: "fork",
       autorestart: true,                 // Guardian must always be up — it's the gateway
