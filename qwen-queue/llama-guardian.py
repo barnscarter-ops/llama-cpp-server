@@ -59,6 +59,19 @@ LLAMA_PORT = 8081                 # llama-server internal port
 PROXY_HOST = "0.0.0.0"            # guardian listens on all interfaces (Tailscale)
 PROXY_PORT = 8080                 # where MCC connects (unchanged)
 
+# Listener watchdog. asyncio's proactor accept loop CLOSES the listening socket
+# on any OSError from accept() (see CPython proactor_events.py, "Accept failed
+# on a socket" → sock.close()) and never re-arms it. One aborted inbound
+# connection therefore kills 8080 permanently while the process stays alive —
+# background tasks keep the event loop running, so PM2 still reports "online"
+# and never restarts. That is exactly what happened 2026-08-09 22:24:10:
+# WinError 64 (ERROR_NETNAME_DELETED) on accept, then a live guardian with a
+# dead front door until it was restarted by hand. Since PROXY_HOST is 0.0.0.0
+# for Tailscale, any LAN client aborting a handshake can trigger it.
+LISTENER_POLL_S = 15              # how often to confirm 8080 still accepts
+LISTENER_FAIL_THRESHOLD = 2       # consecutive probe failures before acting
+LISTENER_REARM_MAX = 3            # failed re-arms before exiting for PM2
+
 # Services whose startup should trigger a llama pre-warm.
 # When one of these ports transitions down→up, we start llama in the
 # background so it's hot by the time a real request arrives.
@@ -1188,6 +1201,117 @@ async def guardian_health(request: web.Request) -> web.Response:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  LISTENER WATCHDOG  (keeps port 8080 alive)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def install_accept_failure_handler(
+    loop: asyncio.AbstractEventLoop, suspect: asyncio.Event
+) -> None:
+    """Wake the watchdog the moment asyncio kills the listening socket.
+
+    asyncio reports the fatal accept error through the loop exception handler
+    rather than raising it anywhere we can catch, so this is the only hook that
+    fires at the instant 8080 dies. Without it we'd wait up to a poll interval
+    to notice. Everything else is left to the default handler.
+    """
+    default = loop.get_exception_handler()
+
+    def handler(loop_, context):
+        if context.get("message") == "Accept failed on a socket":
+            suspect.set()
+        if default is None:
+            loop_.default_exception_handler(context)
+        else:
+            default(loop_, context)
+
+    loop.set_exception_handler(handler)
+
+
+async def listener_watchdog(site: web.TCPSite, suspect: asyncio.Event) -> None:
+    """Confirm 8080 still accepts connections; re-arm it in place if not.
+
+    Probes the proxy port on a timer, waking early when the accept handler
+    above signals trouble. On a confirmed dead listener it stops and restarts
+    the TCPSite, which builds a fresh listening socket through public aiohttp
+    API — in-place recovery keeps the job queue, llama process tracking and
+    idle timer intact, which a process restart would disturb. If re-arming
+    fails LISTENER_REARM_MAX times we exit non-zero so PM2 rebuilds us; a dead
+    gateway is worse than a restarted one.
+    """
+    consecutive_fail = 0
+    rearm_failures = 0
+
+    log.info(
+        f"listener watchdog started — probing {PROXY_PORT} every {LISTENER_POLL_S}s"
+    )
+    try:
+        while True:
+            # Wake on the timer OR immediately if the accept loop just died.
+            try:
+                await asyncio.wait_for(suspect.wait(), timeout=LISTENER_POLL_S)
+                log.error("listener watchdog: accept failure reported — checking 8080")
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                suspect.clear()
+
+            if await _port_open("127.0.0.1", PROXY_PORT):
+                consecutive_fail = 0
+                rearm_failures = 0
+                continue
+
+            consecutive_fail += 1
+            log.warning(
+                f"listener watchdog: {PROXY_PORT} not accepting "
+                f"({consecutive_fail}/{LISTENER_FAIL_THRESHOLD})"
+            )
+            # One failed probe can just be load or a transient; require a repeat.
+            if consecutive_fail < LISTENER_FAIL_THRESHOLD:
+                continue
+
+            log.error(f"listener watchdog: {PROXY_PORT} is DOWN — re-arming listener")
+            try:
+                await site.stop()
+            except Exception as exc:
+                # Expected when the socket is already closed under us; the
+                # start() below is what actually matters.
+                log.warning(f"listener watchdog: site.stop() failed: {exc}")
+            try:
+                await site.start()
+            except Exception as exc:
+                rearm_failures += 1
+                log.error(
+                    f"listener watchdog: re-arm failed "
+                    f"({rearm_failures}/{LISTENER_REARM_MAX}): {exc}"
+                )
+            else:
+                if await _port_open("127.0.0.1", PROXY_PORT):
+                    log.info(f"listener watchdog: {PROXY_PORT} re-armed and accepting")
+                    consecutive_fail = 0
+                    rearm_failures = 0
+                    continue
+                rearm_failures += 1
+                log.error(
+                    f"listener watchdog: re-arm reported success but "
+                    f"{PROXY_PORT} still refuses "
+                    f"({rearm_failures}/{LISTENER_REARM_MAX})"
+                )
+
+            if rearm_failures >= LISTENER_REARM_MAX:
+                log.critical(
+                    f"listener watchdog: cannot restore {PROXY_PORT} after "
+                    f"{rearm_failures} attempts — exiting so PM2 restarts the guardian"
+                )
+                # _exit, not sys.exit: we're inside a task, and a raised
+                # SystemExit here would just be swallowed as a task exception.
+                os._exit(1)
+    except asyncio.CancelledError:
+        log.info("listener watchdog cancelled")
+        raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  APP FACTORY + LIFECYCLE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1235,12 +1359,36 @@ def make_app() -> web.Application:
     return app
 
 
-if __name__ == "__main__":
-    # aiohttp's run_app manages the event loop for us.
-    web.run_app(
+async def serve() -> None:
+    """Run the guardian under a watchdog that can rebuild the listener.
+
+    This is the AppRunner/TCPSite expansion of what web.run_app() does, kept
+    explicit for one reason: run_app owns its site privately, and recovering
+    from a closed listening socket requires calling stop()/start() on that
+    site. See LISTENER_POLL_S for the failure this exists to survive.
+    """
+    runner = web.AppRunner(
         make_app(),
-        host=PROXY_HOST,
-        port=PROXY_PORT,
         access_log=None,  # we log transitions, not every request
-        print=None,       # silence the default "======== Running on..." banner
     )
+    await runner.setup()  # fires on_startup
+    site = web.TCPSite(runner, host=PROXY_HOST, port=PROXY_PORT)
+    await site.start()
+
+    suspect = asyncio.Event()
+    install_accept_failure_handler(asyncio.get_running_loop(), suspect)
+    watchdog = asyncio.create_task(listener_watchdog(site, suspect))
+
+    try:
+        await asyncio.Event().wait()  # serve until killed
+    finally:
+        watchdog.cancel()
+        await asyncio.gather(watchdog, return_exceptions=True)
+        await runner.cleanup()  # fires on_cleanup
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(serve())
+    except KeyboardInterrupt:
+        pass
