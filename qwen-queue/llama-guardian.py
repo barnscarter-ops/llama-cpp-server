@@ -99,7 +99,13 @@ IDLE_POLL_S = 60                  # how often the reaper checks
 STOP_START_COOLDOWN_S = int(os.environ.get("STOP_START_COOLDOWN_S", "45"))
 
 HEALTH_PATH = "/v1/models"        # llama endpoint we poll to confirm it's up
-HEALTH_TIMEOUT_S = 60             # max wait for llama to come up (model load)
+# Cold-load reality check (measured 2026-08-10, Q5_K_M 25GB on R9700):
+#   warm page cache      ~17s
+#   cold page cache      ~100-120s   ← blew the old 60s timeout, orphaned 26GB
+#   cold + RAM pressure  ~13min      (21:14 start; codex session had RAM pegged)
+# 300s covers the honest cold case. The pathological case is handled by
+# stop-on-timeout below — never leave a loading orphan behind.
+HEALTH_TIMEOUT_S = int(os.environ.get("GUARDIAN_HEALTH_TIMEOUT_S", "300"))
 HEALTH_POLL_S = 1                 # how often to poll while waiting
 
 PM2_APP = "qwen3-llama-vulkan"    # PM2 process name for llama-server (R9700 Vulkan build)
@@ -407,7 +413,16 @@ async def ensure_llama_started(reason: str) -> bool:
             guardian.last_request_time = time.time()
             log.info(f"llama is up ({reason})")
             return True
-        log.error(f"llama failed to come up within {HEALTH_TIMEOUT_S}s ({reason})")
+        # Stop what we started. Without this, a load that outlives the health
+        # window keeps loading unowned and parks ~26GB of commit on the box
+        # until the idle reaper fires (observed 2026-08-10, twice: the model
+        # finished loading ~50s after the caller had already been failed).
+        # We hold start_lock here, so no concurrent caller is mid-start.
+        log.error(
+            f"llama failed to come up within {HEALTH_TIMEOUT_S}s ({reason}) — "
+            f"stopping the in-flight load so it cannot orphan"
+        )
+        await pm2("stop")  # pm2() stamps last_stop_time, so cooldown applies
         return False
 
 
