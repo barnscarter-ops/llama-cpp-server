@@ -108,6 +108,15 @@ HEALTH_PATH = "/v1/models"        # llama endpoint we poll to confirm it's up
 HEALTH_TIMEOUT_S = int(os.environ.get("GUARDIAN_HEALTH_TIMEOUT_S", "300"))
 HEALTH_POLL_S = 1                 # how often to poll while waiting
 
+# GPU placement probe. 2026-08-11: after hard llama teardowns the AMD Vulkan
+# ICD can wedge while Device Manager still shows the R9700 healthy. llama then
+# silently falls back to CPU, loads fine, answers /v1/health 200 — and serves
+# ~10 t/s. A health check cannot see this, so after every successful start we
+# time a tiny generation: the R9700 does 120-140 t/s, CPU ~10. The threshold
+# sits well between. Set to 0 to disable the probe.
+GPU_PROBE_MIN_TPS = float(os.environ.get("GUARDIAN_GPU_PROBE_MIN_TPS", "40"))
+GPU_PROBE_TIMEOUT_S = 30          # CPU worst case: ~20 gen tokens at 10 t/s + prompt
+
 PM2_APP = "qwen3-llama-vulkan"    # PM2 process name for llama-server (R9700 Vulkan build)
 
 # Hermes-decided durable job queue.  It is intentionally loopback-only by
@@ -376,6 +385,49 @@ async def _gpu_cooldown(reason: str) -> None:
         await asyncio.sleep(remaining)
 
 
+async def _gpu_placement_ok(reason: str) -> bool:
+    """Confirm a freshly started llama is generating at GPU speed.
+
+    Sends one tiny non-streaming completion straight to 8081 and reads
+    timings.predicted_per_second. Only a *confirmed slow* generation returns
+    False — probe errors or missing timings assume OK, so a flaky probe can
+    never take down a healthy server.
+    """
+    if GPU_PROBE_MIN_TPS <= 0:
+        return True
+    payload = {
+        "model": QUEUE_MODEL_ALIAS,
+        "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+        "max_tokens": 24,
+        "stream": False,
+    }
+    try:
+        async with guardian._client.post(
+            f"{guardian.llama_target}/v1/chat/completions",
+            json=payload,
+            timeout=ClientTimeout(total=GPU_PROBE_TIMEOUT_S),
+        ) as resp:
+            body = await resp.json()
+    except Exception as e:
+        log.warning(f"GPU placement probe errored ({reason}): {e} — assuming OK")
+        return True
+    tps = ((body or {}).get("timings") or {}).get("predicted_per_second")
+    if tps is None:
+        log.warning(f"GPU placement probe: no timings in response ({reason}) — assuming OK")
+        return True
+    if tps >= GPU_PROBE_MIN_TPS:
+        log.info(f"GPU placement probe OK ({reason}): {tps:.1f} t/s")
+        return True
+    log.critical(
+        f"GPU placement probe FAILED ({reason}): {tps:.1f} t/s < {GPU_PROBE_MIN_TPS} — "
+        f"llama is almost certainly on CPU (wedged AMD Vulkan ICD; Device Manager "
+        f"will still show the card healthy). Recovery: double "
+        f"`pnputil /restart-device` on the R9700 instance, see "
+        f"benchmarks/bench-q4-vs-q5-perf-20260811.md"
+    )
+    return False
+
+
 async def ensure_llama_started(reason: str) -> bool:
     """Start llama if it's down. Dedups concurrent starts via a lock.
 
@@ -407,6 +459,11 @@ async def ensure_llama_started(reason: str) -> bool:
 
         # Wait for llama to finish loading the model (the slow part).
         if await guardian.wait_until_llama_up():
+            if not await _gpu_placement_ok(reason):
+                # Serving 10 t/s off a CPU fallback is worse than being down:
+                # every queue job would burn its timeout. Fail loudly instead.
+                await pm2("stop")
+                return False
             # A guardian may have been alive while llama was idle for hours.
             # Treat a completed cold start (including a pre-warm) as activity
             # so the idle reaper grants the fresh server its full window.

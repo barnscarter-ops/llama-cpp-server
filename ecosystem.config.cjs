@@ -27,61 +27,10 @@
 
 module.exports = {
   apps: [
-    {
-      name: "qwen3-llama",
-
-      // Launch through launch-llama.cjs, NOT the exe directly: PM2's
-      // treekill can't reliably terminate a native exe on Windows (2026-08-07:
-      // orphaned llama-server survived pm2 stop/restart, squatted port 8081,
-      // crash-looped the respawns). The wrapper tree-kills the exe on shutdown
-      // and clears stale port-squatters before spawning.
-      script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\launch-llama.cjs",
-
-      // Working directory for relative paths
-      cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server",
-
-      // First arg = llama-server binary; the rest are passed to it — tuned for
-      // 16GB VRAM RTX 4060 Ti (2026-08-04 sweep, see BENCH-RESULTS.md addendum)
-      // Port 8081 loopback only — llama-guardian owns 8080 and proxies to here.
-      args: [
-        "C:\\Workspace\\Infrastructure\\llama-cpp-server\\llama-server.exe",
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
-        "--host",       "127.0.0.1",
-        "--port",       "8081",
-        "--alias",      "qwen3.6-35b-iq3",
-        "--gpu-layers", "99",
-        "--ctx-size",   "65536",
-        "--parallel",   "1",
-        // KV cache: f16 (default — no --cache-type flags). q4_0 KV measured
-        // SLOWER at filled ctx (60.4 vs 64.6 t/s) and lower precision.
-        "--jinja",
-        "--batch-size",  "2048",
-        "--ubatch-size", "1024",
-        "--cont-batching",
-        "--flash-attn",  "auto",
-      ],
-
-      // PM2 process management
-      exec_mode: "fork",                 // Single instance (not cluster)
-      autorestart: true,                 // Restart if it crashes (but starts STOPPED)
-      watch: false,
-      max_memory_restart: "45G",          // Restart if it leaks past 45GB RAM
-
-      // Crash-loop protection. Without these, a stuck orphan on port 8081
-      // (e.g. leftover from a hard kill mid-CUDA-init) would cause PM2 to
-      // respawn indefinitely as the guardian's enforcer kept killing the
-      // new-but-can't-bind instance.
-      min_uptime: "30s",
-      max_restarts: 5,
-      restart_delay: 3000,
-      kill_timeout: 20000,               // llama-server needs time to unwind CUDA on shutdown
-      shutdown_with_message: true,       // wrapper listens for PM2's IPC 'shutdown' and tree-kills the exe
-
-      // Log output
-      log_date_format: "YYYY-MM-DD HH:mm:ss",
-      error_file: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\logs\\qwen3-llama-error.log",
-      out_file:    "C:\\Workspace\\Infrastructure\\llama-cpp-server\\logs\\qwen3-llama-out.log",
-    },
+    // qwen3-llama (CUDA/4060 Ti entry) removed 2026-08-11: its IQ3_XXS model
+    // was deleted along with every other quant — Q4_K_M below is deliberately
+    // the only model on disk. The CUDA b9550 build itself is still in this
+    // directory if a rollback ever needs it (it would need a model re-download).
 
     // ─────────────────────────────────────────────────────────────────────
     //  qwen3-llama-vulkan — Vulkan-backend twin of qwen3-llama.
