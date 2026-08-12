@@ -1,0 +1,260 @@
+##### /etc/systemd/system/hermes-gateway.service
+[Unit]
+Description=Hermes Agent Gateway - Messaging Platform Integration
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+ExecStart=/opt/hermes-venv/bin/python -m hermes_cli.main gateway run
+WorkingDirectory=/home/hermes/.hermes
+Environment="HOME=/home/hermes"
+Environment="USER=hermes"
+Environment="LOGNAME=hermes"
+Environment="PATH=/opt/hermes-venv/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/opt/hermes-venv"
+Environment="HERMES_HOME=/home/hermes/.hermes"
+EnvironmentFile=-/home/hermes/.hermes/.env
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStopPost=-/opt/hermes-venv/bin/python -m gateway.cgroup_cleanup
+TimeoutStopSec=90
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/hermes-triage.service
+[Unit]
+Description=Hermes Triage Daemon
+After=network.target hermes-gateway.service
+
+[Service]
+User=hermes
+WorkingDirectory=/opt/hermes-triage
+ExecStart=/opt/hermes-venv/bin/python triage_daemon.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/hermes/.hermes/.env
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/hermes-customer-sms.service
+[Unit]
+Description=Hermes Gateway - Grizzly customer SMS line (profile customer-sms)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+ExecStart=/opt/hermes-venv/bin/python -m hermes_cli.main gateway run
+WorkingDirectory=/home/hermes/.hermes/profiles/customer-sms
+Environment="HOME=/home/hermes"
+Environment="USER=hermes"
+Environment="LOGNAME=hermes"
+Environment="PATH=/opt/hermes-venv/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/opt/hermes-venv"
+Environment="HERMES_HOME=/home/hermes/.hermes/profiles/customer-sms"
+EnvironmentFile=-/home/hermes/.hermes/profiles/customer-sms/.env
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStopPost=-/opt/hermes-venv/bin/python -m gateway.cgroup_cleanup
+TimeoutStopSec=90
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/hermes-pc-sms.service
+[Unit]
+Description=Hermes Gateway - internal PC operations SMS line (profile pc-sms)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+ExecStart=/opt/hermes-venv/bin/python -m hermes_cli.main gateway run
+WorkingDirectory=/home/hermes/.hermes/profiles/pc-sms
+Environment="HOME=/home/hermes"
+Environment="USER=hermes"
+Environment="LOGNAME=hermes"
+Environment="PATH=/opt/hermes-venv/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/opt/hermes-venv"
+Environment="HERMES_HOME=/home/hermes/.hermes/profiles/pc-sms"
+EnvironmentFile=-/home/hermes/.hermes/profiles/pc-sms/.env
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStopPost=-/opt/hermes-venv/bin/python -m gateway.cgroup_cleanup
+TimeoutStopSec=90
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/pacc-registry.service
+[Unit]
+Description=PACC Registry Brain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pacc-registry
+Environment=PYTHONPATH=/opt/pacc-registry
+ExecStart=/opt/pacc-registry/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/orca-aiwa.service
+[Unit]
+Description=Orca headless runtime for AIWA
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=ELECTRON_DISABLE_SANDBOX=1
+ExecStart=/usr/bin/orca-ide serve --port 6768 --pairing-address 192.168.1.12 --json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/node_exporter.service
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+##### /etc/systemd/system/hcp-catalog-sync.service
+[Unit]
+Description=Grizzly HCP Catalog Sync — weekly job that exports the HCP price book, customers and estimates and publishes them to the RAG ingest directory
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hcp-catalog-sync
+# systemd requires an absolute path here. /usr/bin/node is v22 on the target host;
+# confirm with "command -v node" during pre-flight before installing.
+ExecStart=/usr/bin/node /opt/hcp-catalog-sync/sync-catalog.mjs
+EnvironmentFile=/opt/hcp-catalog-sync/hcp-catalog-sync.env
+SyslogIdentifier=hcp-catalog-sync
+
+# Type=oneshot defaults TimeoutStartSec to infinity. A run that finishes its
+# work but fails to release the MCP transport then wedges the unit in
+# "activating" forever, silently — the monitor only greps for
+# HCP_AUTH_PREFLIGHT_FAIL, which a hung success never prints. Bound it so the
+# unit lands in "failed" instead, which is visible.
+#
+# Observed runtime 76s (2026-07-28). 20m is ~15x headroom and still leaves the
+# unit dead long before the next weekly fire.
+TimeoutStartSec=1200
+
+# Hardening — this job only needs its own directory and the ingest directory
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+# The install root stays writable: the job writes the three CSVs under it
+# before copying the results into the ingest directory.
+ReadWritePaths=/mnt/samsung-sata/mav-rag/hcp-exports
+
+# No [Install] section on purpose — the timer is what gets enabled, not the service.
+##### /etc/systemd/system/hcp-estimates-sync.service
+[Unit]
+Description=Grizzly HCP Estimates Sync — weekly job that pulls job data from HCP, writes CSV, and clears stale Qdrant points
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hcp-estimates-sync
+# systemd requires an absolute path here. /usr/bin/node is v22 on the target host;
+# confirm with "command -v node" during pre-flight before installing.
+ExecStart=/usr/bin/node /opt/hcp-estimates-sync/sync-estimates.mjs
+EnvironmentFile=/opt/hcp-estimates-sync/hcp-estimates-sync.env
+SyslogIdentifier=hcp-estimates-sync
+
+# Type=oneshot defaults TimeoutStartSec to infinity. A run that finishes its
+# work but fails to release the MCP transport then wedges the unit in
+# "activating" forever, silently — the monitor only greps for
+# HCP_AUTH_PREFLIGHT_FAIL, which a hung success never prints. Bound it so the
+# unit lands in "failed" instead, which is visible.
+#
+# Observed runtime 43s (2026-07-27). 15m is ~20x headroom and stays well inside
+# the ~55m worst-case gap before hcp-catalog-sync.timer fires at 04:30 — the two
+# jobs write the same ingest directory and must not overlap.
+TimeoutStartSec=900
+
+# Hardening — this job only needs its own directory and the ingest directory
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+# The install root stays writable: the job writes ESTIMATES_CSV_PATH under it
+# before copying the result into the ingest directory.
+ReadWritePaths=/mnt/samsung-sata/mav-rag/hcp-exports
+
+# No [Install] section on purpose — the timer is what gets enabled, not the service.
+##### /etc/systemd/system/mav-pve-storage-metrics.service
+[Unit]
+Description=Maverick Proxmox storage metrics textfile update
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mav-pve-storage-metrics.sh
+##### /etc/systemd/system/pm2-root.service
+[Unit]
+Description=PM2 process manager
+Documentation=https://pm2.keymetrics.io/
+After=network.target
+
+[Service]
+Type=forking
+User=root
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=PM2_HOME=/root/.pm2
+PIDFile=/root/.pm2/pm2.pid
+Restart=on-failure
+
+ExecStart=/usr/lib/node_modules/pm2/bin/pm2 resurrect
+ExecReload=/usr/lib/node_modules/pm2/bin/pm2 reload all
+ExecStop=/usr/lib/node_modules/pm2/bin/pm2 kill
+
+[Install]
+WantedBy=multi-user.target
+root@AIWA:~/agent-work#

@@ -1,0 +1,108 @@
+===COMPOSE===
+/root/homelab-dashboard-stack/docker-compose.yml
+/opt/homelab-noc-dashboard/docker-compose.yml
+/opt/mav-rag/docker-compose.yml
+/opt/pipecat/docker-compose.yml
+===ENVFILES===
+EnvironmentFile=-/etc/default/chrony
+EnvironmentFile=-/etc/default/samba
+EnvironmentFile=-/etc/default/smartmontools
+EnvironmentFile=-/etc/default/ssh
+EnvironmentFile=-/etc/default/zfs
+EnvironmentFile=-/home/hermes/.hermes/.env
+EnvironmentFile=/home/hermes/.hermes/.env
+EnvironmentFile=-/home/hermes/.hermes/profiles/customer-sms/.env
+EnvironmentFile=-/home/hermes/.hermes/profiles/pc-sms/.env
+EnvironmentFile=/opt/hcp-catalog-sync/hcp-catalog-sync.env
+EnvironmentFile=/opt/hcp-estimates-sync/hcp-estimates-sync.env
+===TIMERS===
+apt-daily.service
+apt-daily-upgrade.service
+dpkg-db-backup.service
+e2scrub_all.service
+fstrim.service
+hcp-catalog-sync.service
+hcp-estimates-sync.service
+logrotate.service
+man-db.service
+mav-pve-storage-metrics.service
+pve-daily-update.service
+systemd-tmpfiles-clean.service
+xfs_scrub_all.service
+===SMBUSERS===
+mavshare:1000:
+===TS===
+certs
+derpmap.cached.json
+files
+profile-data
+tailscaled.log1.txt
+tailscaled.log2.txt
+tailscaled.log.conf
+tailscaled.state
+===SYNCTHING===
+/home/syncthing
+===IMAGES===
+pipecat-pipecat:latest 1.91GB
+mav-rag-ingest:latest 597MB
+hcp-scraper:latest 2.9GB
+mav-rag-api:latest 440MB
+mav-rag-ingest-docs:latest 521MB
+homelab-noc-dashboard-mav-console-dashboard:latest 229MB
+homelab-noc-dashboard-prometheus:latest 592MB
+homelab-noc-dashboard-bgw-exporter:latest 537MB
+homelab-noc-dashboard-homelab-noc-dashboard:latest 229MB
+prom/prometheus:latest 592MB
+prom/snmp-exporter:latest 35.4MB
+qdrant/qdrant:v1.9.4 235MB
+===ROOTDIRS===
+agent-work
+customer-sms-staging
+hcp-scraper
+hermes-supervisor-deploy
+homelab-dashboard-stack
+homelab-noc-dashboard-backup-20260608-1221.tar.gz
+homelab-noc-dashboard-backup-20260608-1235.tar.gz
+homelab-noc-dashboard-backup-20260608-1252.tar.gz
+homelab-noc-dashboard-backup-20260608-1256.tar.gz
+homelab-noc-dashboard-backup-20260608-action-queue.tar.gz
+homelab-noc-dashboard-backup-20260608-ai-labels.tar.gz
+homelab-noc-dashboard-backup-20260608-hermen-map-lines.tar.gz
+homelab-noc-dashboard-backup-20260608-mcc-home-v1.tar.gz
+homelab-noc-dashboard-backup-20260608-memory-layer.tar.gz
+homelab-noc-dashboard-backup-20260608-network-map-animation.tar.gz
+homelab-noc-dashboard-backup-20260608-ram-vram.tar.gz
+homelab-noc-dashboard-backup-20260608-repo-bridge.tar.gz
+homelab-noc-dashboard-backup-20260608-task-ledger-v11.tar.gz
+homelab-noc-dashboard-backup-.tar.gz
+homelab-noc-dashboard.zip
+lxc-conf-backup-2026-08-05
+nic-pin-backup-20260808-012944
+orca
+pb_probe.py
+pin.b64
+pin-nic-names.sh
+pin-out.txt
+R9700-SWAP-HANDOFF.md
+run_scheduled.py
+syncthing-linux-amd64-v1.15.0
+syncthing-linux-amd64-v1.15.0.tar.gz
+===OPTDIRS===
+containerd
+crawl4ai-env
+crawl-mikeholt.py
+crawl-nec2026.py
+crawl-upcodes-nec.py
+grizzly-hcp
+hcp-catalog-sync
+hcp-estimates-sync
+hermes-test-venv
+hermes-triage
+hermes-venv
+homelab-noc-dashboard
+maverick-rag-mcp
+mav-rag
+Orca
+pacc-registry
+pipecat
+root@AIWA:~/agent-work#

@@ -1,0 +1,742 @@
+<title>AIWA Transplant — Four Nights</title>
+<style>
+  :root {
+    --bg: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-2: #EDF0F3;
+    --ink: #191D24;
+    --ink-2: #58616D;
+    --ink-3: #878F9B;
+    --line: #DCE1E7;
+    --copper: #A85E32;
+    --copper-soft: #F6E7DC;
+    --slate: #3A6083;
+    --slate-soft: #E3EAF2;
+    --sage: #3F6E53;
+    --sage-soft: #E0EDE5;
+    --warn: #9C4A38;
+    --warn-soft: #F7E3DE;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0F1216; --surface: #171B21; --surface-2: #1E242B;
+      --ink: #E7EAEE; --ink-2: #9AA3AF; --ink-3: #6E7784; --line: #272E36;
+      --copper: #DE9161; --copper-soft: #33231A;
+      --slate: #86ACCC; --slate-soft: #182430;
+      --sage: #83B694; --sage-soft: #16261C;
+      --warn: #DD8168; --warn-soft: #2C1814;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1216; --surface: #171B21; --surface-2: #1E242B;
+    --ink: #E7EAEE; --ink-2: #9AA3AF; --ink-3: #6E7784; --line: #272E36;
+    --copper: #DE9161; --copper-soft: #33231A;
+    --slate: #86ACCC; --slate-soft: #182430;
+    --sage: #83B694; --sage-soft: #16261C;
+    --warn: #DD8168; --warn-soft: #2C1814;
+  }
+  :root[data-theme="light"] {
+    --bg: #F4F6F8; --surface: #FFFFFF; --surface-2: #EDF0F3;
+    --ink: #191D24; --ink-2: #58616D; --ink-3: #878F9B; --line: #DCE1E7;
+    --copper: #A85E32; --copper-soft: #F6E7DC;
+    --slate: #3A6083; --slate-soft: #E3EAF2;
+    --sage: #3F6E53; --sage-soft: #E0EDE5;
+    --warn: #9C4A38; --warn-soft: #F7E3DE;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 44px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .masthead { display: flex; flex-direction: column; gap: 14px; }
+  .masthead h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.1; font-weight: 680; letter-spacing: -0.02em;
+    text-wrap: balance; margin: 0;
+  }
+  .masthead p { margin: 0; max-width: 62ch; color: var(--ink-2); font-size: 17px; }
+  .rule { height: 2px; background: var(--copper); width: 48px; border-radius: 2px; }
+
+  /* ---- key ---- */
+  .key { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+  .key span { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+  .sw { width: 22px; height: 13px; border-radius: 3px; border: 1.5px solid; display: inline-block; }
+  .sw-move { border-color: var(--copper); background: var(--copper-soft); }
+  .sw-new  { border-color: var(--sage);   background: var(--sage-soft); }
+  .sw-key  { border-color: var(--slate);  background: var(--slate-soft); }
+  .sw-out  { border-color: var(--ink-3); border-style: dashed; background: transparent; }
+
+  /* ---- night cards ---- */
+  .timeline { display: flex; flex-direction: column; gap: 22px; }
+  .night {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 24px 26px 26px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .night::before {
+    content: ""; position: absolute; left: 0; top: 22px; bottom: 22px;
+    width: 3px; border-radius: 0 3px 3px 0; background: var(--stripe, var(--line));
+  }
+  .n-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; }
+  .n-num { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--stripe, var(--ink-3)); letter-spacing: 0.1em; }
+  .n-title { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; margin: 0; flex: 1 1 auto; min-width: 190px; }
+  .chip {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 4px 9px; border-radius: 4px; white-space: nowrap;
+    background: var(--chip-bg, var(--surface-2)); color: var(--chip-fg, var(--ink-2));
+  }
+  .n-when { font-family: var(--mono); font-size: 12px; color: var(--ink-3); width: 100%; }
+
+  .steps { display: flex; flex-direction: column; gap: 11px; }
+  .step { display: flex; gap: 12px; align-items: flex-start; }
+  .step .marker { flex: 0 0 auto; margin-top: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--stripe, var(--ink-3)); }
+  .step p { margin: 0; }
+
+  code { font-family: var(--mono); font-size: 0.86em; background: var(--surface-2); padding: 1px 5px; border-radius: 3px; }
+
+  .outcome {
+    background: var(--surface-2); border-radius: 7px; padding: 13px 16px;
+    font-size: 14.5px; color: var(--ink-2); display: flex; gap: 10px;
+  }
+  .outcome strong { color: var(--ink); font-weight: 620; }
+  .outcome .lbl {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-3); flex: 0 0 auto; padding-top: 3px;
+  }
+  .flag {
+    border-left: 3px solid var(--warn); background: var(--warn-soft);
+    border-radius: 0 7px 7px 0; padding: 12px 16px; font-size: 14.5px;
+  }
+  .flag strong { color: var(--warn); font-weight: 640; }
+
+  /* ---- diagrams ---- */
+  figure { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  .figscroll { overflow-x: auto; }
+  figure svg { display: block; width: 100%; min-width: 620px; height: auto; color: var(--ink); font-family: var(--sans); }
+  figcaption { font-size: 13px; color: var(--ink-3); }
+
+  .box   { fill: none; stroke: currentColor; stroke-opacity: .26; }
+  .ghost { fill: none; stroke: currentColor; stroke-opacity: .2; stroke-dasharray: 6 5; }
+  .pill      { fill: currentColor; fill-opacity: .045; stroke: currentColor; stroke-opacity: .16; }
+  .pill-move { fill: var(--copper-soft); stroke: var(--copper); }
+  .pill-new  { fill: var(--sage-soft);   stroke: var(--sage); }
+  .pill-key  { fill: var(--slate-soft);  stroke: var(--slate); }
+  .pill-out  { fill: none; stroke: currentColor; stroke-opacity: .22; stroke-dasharray: 4 4; }
+  .t      { font-size: 11.5px; fill: currentColor; fill-opacity: .82; }
+  .t-move { fill: var(--copper); fill-opacity: 1; font-weight: 600; }
+  .t-new  { fill: var(--sage);   fill-opacity: 1; font-weight: 600; }
+  .t-key  { fill: var(--slate);  fill-opacity: 1; font-weight: 600; }
+  .t-out  { fill-opacity: .4; }
+  .mname  { font-size: 13px; font-weight: 700; fill: currentColor; }
+  .mrole  { font-size: 11px; fill: currentColor; fill-opacity: .55; }
+  .mstat  { font-size: 11px; fill: currentColor; fill-opacity: .62; }
+  .flow   { fill: none; stroke: var(--copper); stroke-width: 1.7; }
+  .flow-q { fill: none; stroke: var(--slate);  stroke-width: 1.7; }
+  .flbl   { font-size: 11.5px; font-weight: 620; fill: var(--copper); }
+  .flbl-q { font-size: 11.5px; font-weight: 620; fill: var(--slate); }
+  .ahead  { fill: var(--copper); }
+  .ahead-q{ fill: var(--slate); }
+
+  section h2 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 6px; }
+  section > p.lede { margin: 0 0 20px; color: var(--ink-2); max-width: 62ch; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 560px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  th {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 500; background: var(--surface-2);
+  }
+  td.drive { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  td.fate { color: var(--ink-2); }
+  .tag {
+    display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .07em;
+    text-transform: uppercase; padding: 3px 7px; border-radius: 4px; white-space: nowrap;
+  }
+  .t-mv { background: var(--copper-soft); color: var(--copper); }
+  .t-st { background: var(--slate-soft);  color: var(--slate); }
+  .t-nw { background: var(--sage-soft);   color: var(--sage); }
+  .t-rt { background: var(--surface-2);   color: var(--ink-3); }
+
+  .closing {
+    border: 1px solid var(--line); border-left: 3px solid var(--sage);
+    background: var(--surface); border-radius: 0 10px 10px 0; padding: 20px 24px;
+  }
+  .closing h3 { margin: 0 0 8px; font-size: 17px; font-weight: 640; }
+  .closing p { margin: 0; color: var(--ink-2); font-size: 15px; max-width: 64ch; }
+
+  @media (max-width: 560px) {
+    .wrap { padding: 36px 14px 64px; gap: 34px; }
+    .night { padding: 20px 16px 22px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Proxmox host migration · ProDesk → Z690</div>
+    <h1>The AIWA transplant, in four nights</h1>
+    <div class="rule"></div>
+    <p>Three machines, drawn in the same three positions every night, so you can see
+       exactly what changes and what doesn't. The old ProDesk server keeps running production
+       until the very last night — and stays bootable even after that. By the end,
+       the Z690 becomes AIWA and the new X870E takes the desk.</p>
+    <div class="key">
+      <span><i class="sw sw-move"></i> moves / arrives</span>
+      <span><i class="sw sw-new"></i> brand new</span>
+      <span><i class="sw sw-key"></i> the piece that matters</span>
+      <span><i class="sw sw-out"></i> leaving / retired</span>
+    </div>
+  </header>
+
+  <div class="timeline">
+
+    <!-- ═══════════════ BEFORE ═══════════════ -->
+    <article class="night" style="--stripe: var(--sage);">
+      <div class="n-head">
+        <span class="n-num">BEFORE</span>
+        <h2 class="n-title">Parts on the bench</h2>
+        <span class="chip" style="--chip-bg: var(--sage-soft); --chip-fg: var(--sage);">Shopping</span>
+        <span class="n-when">Everything below must be in hand by Friday</span>
+      </div>
+      <div class="steps">
+        <div class="step"><span class="marker"></span><p><strong>Ordered:</strong> Okinos Cypress 7 case, AIO, thermal paste, AMD retention bracket, <strong>Samsung 9100 PRO 2 TB</strong> (bare SKU, not heatsink), ASRock Challenger 850W PSU, PWM fan hub.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>On hand:</strong> X870E motherboard, Ryzen 9900X, 32 GB DDR5 (64 GB kit coming), RTX 4060 Ti, Thermaltake Smart BM3 850W (stays with the Z690).</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Still to buy:</strong> UPS, one more M.2 active cooler (you have one, need two). Neither gates Night 1.</p></div>
+      </div>
+    </article>
+
+    <!-- ═══════════════ NIGHT 1 ═══════════════ -->
+    <article class="night" style="--stripe: var(--copper);">
+      <div class="n-head">
+        <span class="n-num">NIGHT 1</span>
+        <h2 class="n-title">Build the new X870E PC</h2>
+        <span class="chip" style="--chip-bg: var(--copper-soft); --chip-fg: var(--copper);">One new chassis</span>
+        <span class="n-when">Friday, August 15 · the long night</span>
+      </div>
+
+      <figure>
+        <div class="figscroll">
+        <svg viewBox="0 0 900 416" role="img" aria-label="The X870E is built into the Okinos case, receiving the 2 terabyte SN7100 drive and the network card out of the Z690. The Z690 keeps its CPU, memory, R9700, cooler and 1 terabyte drive. The ProDesk is untouched and still serving.">
+          <defs>
+            <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" class="ahead"/>
+            </marker>
+          </defs>
+
+          <path d="M450,62 C450,24 760,24 760,62" class="flow" marker-end="url(#ar1)"/>
+          <text x="605" y="19" text-anchor="middle" class="flbl">2 TB drive + network card</text>
+
+          <!-- ProDesk (dimmed) -->
+          <g opacity=".45">
+            <text x="140" y="80" text-anchor="middle" class="mname">ProDesk</text>
+            <text x="140" y="96" text-anchor="middle" class="mrole">still AIWA</text>
+            <rect x="20" y="106" width="240" height="226" rx="8" class="box"/>
+            <rect x="32" y="120" width="216" height="28" rx="5" class="pill"/>
+            <text x="44" y="138.5" class="t">Intel CPU · RAM</text>
+            <rect x="32" y="154" width="216" height="28" rx="5" class="pill"/>
+            <text x="44" y="172.5" class="t">Dual-port network card</text>
+            <rect x="32" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
+            <text x="44" y="206.5" class="t t-key">SN770 2 TB · Proxmox + 4 CTs</text>
+            <rect x="32" y="222" width="216" height="28" rx="5" class="pill pill-key"/>
+            <text x="44" y="240.5" class="t t-key">840 PRO · 266 GB of files</text>
+          </g>
+          <text x="140" y="350" text-anchor="middle" class="mstat">don't touch it — still serving</text>
+
+          <!-- Z690 — donates two parts -->
+          <text x="450" y="80" text-anchor="middle" class="mname">Z690</text>
+          <text x="450" y="96" text-anchor="middle" class="mrole">stays in the H5</text>
+          <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
+          <rect x="342" y="120" width="216" height="28" rx="5" class="pill"/>
+          <text x="354" y="138.5" class="t">i5-13500K · 64 GB DDR4</text>
+          <rect x="342" y="154" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="354" y="172.5" class="t t-key">R9700 — never moves</text>
+          <rect x="342" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="354" y="206.5" class="t t-key">Thermaltake 850 W — stays</text>
+          <rect x="342" y="222" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="354" y="240.5" class="t t-move">SN7100 2 TB → out</text>
+          <rect x="342" y="256" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="354" y="274.5" class="t t-move">Network card → out</text>
+          <rect x="342" y="290" width="216" height="28" rx="5" class="pill pill-out"/>
+          <text x="354" y="308.5" class="t t-out">Toshiba — pull &amp; retire</text>
+          <text x="450" y="350" text-anchor="middle" class="mstat">1 TB drive stays, blank, for Night 3</text>
+
+          <!-- X870E new build -->
+          <text x="760" y="80" text-anchor="middle" class="mname">X870E</text>
+          <text x="760" y="96" text-anchor="middle" class="mrole">new main PC</text>
+          <rect x="640" y="106" width="240" height="226" rx="8" class="box"/>
+          <rect x="652" y="120" width="216" height="28" rx="5" class="pill pill-new"/>
+          <text x="664" y="138.5" class="t t-new">Ryzen 9900X · 32 GB DDR5</text>
+          <rect x="652" y="154" width="216" height="28" rx="5" class="pill pill-new"/>
+          <text x="664" y="172.5" class="t t-new">RTX 4060 Ti · new AIO</text>
+          <rect x="652" y="188" width="216" height="28" rx="5" class="pill pill-new"/>
+          <text x="664" y="206.5" class="t t-new">9100 PRO 2 TB — C: Windows</text>
+          <rect x="652" y="222" width="216" height="28" rx="5" class="pill pill-new"/>
+          <text x="664" y="240.5" class="t t-new">ASRock 850 W PSU</text>
+          <rect x="652" y="256" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="664" y="274.5" class="t t-move">SN7100 2 TB ← Z690 (D:)</text>
+          <rect x="652" y="290" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="664" y="308.5" class="t t-move">Network card ← Z690</text>
+          <text x="760" y="350" text-anchor="middle" class="mstat">Okinos Cypress 7 · takes the desk</text>
+        </svg>
+        </div>
+        <figcaption>Two parts cross from the Z690 into the new build, and nothing needs copying first — the Gen 5 drive gets a clean Windows install, and the 2 TB SN7100 moves with its data intact. The R9700 and its Thermaltake PSU stay bolted together in the H5.</figcaption>
+      </figure>
+
+      <div class="steps">
+        <div class="step"><span class="marker"></span><p>Build the X870E into the Okinos: 9900X, AIO on the AM5 bracket, 32 GB DDR5, 4060 Ti, ASRock 850 W, and the <strong>9100 PRO as a fresh <code>C:</code></strong> with an active M.2 cooler on it.</p></div>
+        <div class="step"><span class="marker"></span><p>Pull the <strong>2 TB SN7100 and the network card</strong> out of the Z690 and into the X870E. The 2 TB moves as-is — no copying, it keeps its data and becomes <code>D:</code>.</p></div>
+        <div class="step"><span class="marker"></span><p>Clean Windows install on the Gen 5 drive, sign in to reclaim the license, then chipset and GPU drivers.</p></div>
+        <div class="step"><span class="marker"></span><p>Pull the Toshiba and retire it — the Grizzly photos are already in Google Photos, so there's nothing left on it to rescue.</p></div>
+        <div class="step"><span class="marker"></span><p>Leave the Z690's <strong>1 TB SN7100 in place and blank</strong>. It's the Proxmox boot drive on Night 3.</p></div>
+      </div>
+      <div class="outcome"><span class="lbl">Ends at</span><p>New PC on the desk, running Windows, with the 2 TB drive attached as <code>D:</code>. <strong>AIWA hasn't been touched.</strong></p></div>
+    </article>
+
+    <!-- ═══════════════ NIGHT 2 ═══════════════ -->
+    <article class="night" style="--stripe: var(--slate);">
+      <div class="n-head">
+        <span class="n-num">NIGHT 2</span>
+        <h2 class="n-title">Back everything up</h2>
+        <span class="chip" style="--chip-bg: var(--slate-soft); --chip-fg: var(--slate);">No hardware touched</span>
+        <span class="n-when">Monday night · ~2.5 hrs, mostly unattended</span>
+      </div>
+
+      <figure>
+        <div class="figscroll">
+        <svg viewBox="0 0 900 416" role="img" aria-label="Backups and the 266 gigabytes of files flow from the ProDesk across to the new X870E's D drive, and a second copy of the core set goes onto the SanDisk. No hardware moves tonight.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" class="ahead-q"/>
+            </marker>
+          </defs>
+
+          <path d="M140,62 C140,20 760,20 760,62" class="flow-q" marker-end="url(#ar2)"/>
+          <text x="450" y="15" text-anchor="middle" class="flbl-q">backups + the 266 GB of files</text>
+
+          <!-- ProDesk -->
+          <text x="140" y="80" text-anchor="middle" class="mname">ProDesk</text>
+          <text x="140" y="96" text-anchor="middle" class="mrole">AIWA today</text>
+          <rect x="20" y="106" width="240" height="226" rx="8" class="box"/>
+          <rect x="32" y="120" width="216" height="28" rx="5" class="pill"/>
+          <text x="44" y="138.5" class="t">Intel CPU · RAM</text>
+          <rect x="32" y="154" width="216" height="28" rx="5" class="pill"/>
+          <text x="44" y="172.5" class="t">Dual-port network card</text>
+          <rect x="32" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="44" y="206.5" class="t t-key">SN770 2 TB · Proxmox + 4 CTs</text>
+          <rect x="32" y="222" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="44" y="240.5" class="t t-key">840 PRO · 266 GB of files</text>
+          <text x="140" y="350" text-anchor="middle" class="mstat">running production throughout</text>
+
+          <!-- Z690 (dimmed, idle) -->
+          <g opacity=".45">
+            <text x="450" y="80" text-anchor="middle" class="mname">Z690</text>
+            <text x="450" y="96" text-anchor="middle" class="mrole">idle in the H5</text>
+            <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
+            <rect x="342" y="120" width="216" height="28" rx="5" class="pill"/>
+            <text x="354" y="138.5" class="t">i5-13500K · 64 GB DDR4</text>
+            <rect x="342" y="154" width="216" height="28" rx="5" class="pill"/>
+            <text x="354" y="172.5" class="t">R9700 · Thermaltake 850 W</text>
+            <rect x="342" y="188" width="216" height="28" rx="5" class="pill"/>
+            <text x="354" y="206.5" class="t">SN7100 1 TB — blank</text>
+          </g>
+          <text x="450" y="350" text-anchor="middle" class="mstat">powered off · waiting for Night 3</text>
+
+          <!-- X870E receives -->
+          <text x="760" y="80" text-anchor="middle" class="mname">X870E</text>
+          <text x="760" y="96" text-anchor="middle" class="mrole">your PC now</text>
+          <rect x="640" y="106" width="240" height="226" rx="8" class="box"/>
+          <rect x="652" y="120" width="216" height="28" rx="5" class="pill"/>
+          <text x="664" y="138.5" class="t">Ryzen 9900X · Windows</text>
+          <rect x="652" y="154" width="216" height="28" rx="5" class="pill"/>
+          <text x="664" y="172.5" class="t">9100 PRO 2 TB — C:</text>
+          <rect x="652" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="664" y="206.5" class="t t-key">SN7100 2 TB — D: lands here</text>
+          <rect x="652" y="222" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="664" y="240.5" class="t t-key">~33 GB core set + 266 GB</text>
+
+          <!-- X870E -> SanDisk -->
+          <path d="M760,334 L760,356" class="flow-q" marker-end="url(#ar2)"/>
+          <text x="640" y="351" text-anchor="end" class="flbl-q">core set, then unplug it</text>
+          <rect x="640" y="362" width="240" height="40" rx="7" class="pill pill-key"/>
+          <text x="760" y="386" text-anchor="middle" class="t t-key">SanDisk 256 GB · offline copy</text>
+        </svg>
+        </div>
+        <figcaption>Only data moves tonight — every screw stays where it is. The backups land on the new machine's <code>D:</code>, which is the same physical 2 TB drive that came out of the Z690 on Friday.</figcaption>
+      </figure>
+
+      <div class="steps">
+        <div class="step"><span class="marker"></span><p>Dump all four containers, and tar up the host's own config — the parts a container backup never captures.</p></div>
+        <div class="step"><span class="marker"></span><p>Pull it all to the X870E's <code>D:</code> drive, along with the 266 GB living on the Samsung SATA drive that's being retired.</p></div>
+        <div class="step"><span class="marker"></span><p>Copy the core set to the SanDisk, verify the checksums, unplug it.</p></div>
+        <div class="step"><span class="marker"></span><p>Monday is deliberate: the Sunday 02:00 RAG refresh and 03:00 vzdump have both finished, so you're capturing a fresh, quiet state.</p></div>
+      </div>
+      <div class="outcome"><span class="lbl">Ends at</span><p>Three copies of everything, one of them offline. <strong>Nothing on AIWA has changed.</strong></p></div>
+    </article>
+
+    <!-- ═══════════════ NIGHT 3 ═══════════════ -->
+    <article class="night" style="--stripe: var(--slate);">
+      <div class="n-head">
+        <span class="n-num">NIGHT 3</span>
+        <h2 class="n-title">Rehearse the Z690 → AIWA migration</h2>
+        <span class="chip" style="--chip-bg: var(--slate-soft); --chip-fg: var(--slate);">Testing &amp; validation</span>
+        <span class="n-when">Anytime after Night 2 · ~3 hrs if anything breaks</span>
+      </div>
+
+      <figure>
+        <div class="figscroll">
+        <svg viewBox="0 0 900 416" role="img" aria-label="Z690 is powered on with the 1TB SN7100 as Proxmox boot drive. The R9700 GPU is tested with Proxmox to validate it on Linux. ProDesk and X870E are running.">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" class="ahead-q"/>
+            </marker>
+          </defs>
+
+          <!-- ProDesk production (dimmed) -->
+          <g opacity=".45">
+            <text x="140" y="80" text-anchor="middle" class="mname">ProDesk</text>
+            <text x="140" y="96" text-anchor="middle" class="mrole">still AIWA</text>
+            <rect x="20" y="106" width="240" height="226" rx="8" class="box"/>
+            <rect x="32" y="120" width="216" height="28" rx="5" class="pill pill-key"/>
+            <text x="44" y="138.5" class="t t-key">Proxmox 9.2.2 · 4 CTs</text>
+            <rect x="32" y="154" width="216" height="28" rx="5" class="pill pill-key"/>
+            <text x="44" y="172.5" class="t t-key">SN770 2 TB + 840 PRO</text>
+          </g>
+          <text x="140" y="350" text-anchor="middle" class="mstat">serving production, untouched</text>
+
+          <!-- Z690 — test boot -->
+          <text x="450" y="80" text-anchor="middle" class="mname">Z690</text>
+          <text x="450" y="96" text-anchor="middle" class="mrole">proof of concept</text>
+          <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
+          <rect x="342" y="120" width="216" height="28" rx="5" class="pill"/>
+          <text x="354" y="138.5" class="t">i5-13500K · 64 GB DDR4</text>
+          <rect x="342" y="154" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="354" y="172.5" class="t t-move">R9700 — GPU test on Linux</text>
+          <rect x="342" y="188" width="216" height="28" rx="5" class="pill pill-new"/>
+          <text x="354" y="206.5" class="t t-new">SN7100 1 TB — Proxmox boot</text>
+          <rect x="342" y="222" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="354" y="240.5" class="t t-move">Frost Commander 140 cooler</text>
+          <rect x="342" y="256" width="216" height="28" rx="5" class="pill pill-new"/>
+          <text x="354" y="274.5" class="t t-new">Thermaltake 850W PSU</text>
+          <text x="450" y="350" text-anchor="middle" class="mstat">single-boot Proxmox test</text>
+
+          <!-- X870E on desk (dimmed) -->
+          <g opacity=".45">
+            <text x="760" y="80" text-anchor="middle" class="mname">X870E</text>
+            <text x="760" y="96" text-anchor="middle" class="mrole">at your desk</text>
+            <rect x="640" y="106" width="240" height="226" rx="8" class="box"/>
+            <rect x="652" y="120" width="216" height="28" rx="5" class="pill"/>
+            <text x="664" y="138.5" class="t">Ryzen 9900X · DDR5</text>
+            <rect x="652" y="154" width="216" height="28" rx="5" class="pill"/>
+            <text x="664" y="172.5" class="t">RTX 4060 Ti · AIO</text>
+            <rect x="652" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
+            <text x="664" y="206.5" class="t t-key">D: holds the backups</text>
+          </g>
+          <text x="760" y="350" text-anchor="middle" class="mstat">running Windows</text>
+        </svg>
+        </div>
+        <figcaption>Same three machines, same three columns as the nights above — only the Z690 changes. It boots Proxmox off the 1 TB SN7100 for the first time so the R9700 gets proven on Linux before anything real depends on it.</figcaption>
+      </figure>
+
+      <div class="steps">
+        <div class="step"><span class="marker"></span><p>Wipe the 1 TB SN7100 (D: on the Z690). Boot Proxmox from a USB stick onto it — this is a test install, <strong>not</strong> the real one.</p></div>
+        <div class="step"><span class="marker"></span><p>Validate the R9700 under Linux: run a test llama inference or vkmark to prove the GPU is recognized and works.</p></div>
+        <div class="step"><span class="marker"></span><p>Document the exact install commands and any workarounds needed (VK_LOADER_DRIVERS_SELECT, pnputil recoveries, etc.). This becomes your Night 4 runbook.</p></div>
+        <div class="step"><span class="marker"></span><p>Shut down Z690. Leave it in H5, powered off.</p></div>
+      </div>
+      <div class="outcome"><span class="lbl">Ends at</span><p>Proof that the Z690 + R9700 + 1TB SN7100 can run Proxmox. <strong>No data on AIWA has changed.</strong></p></div>
+    </article>
+
+    <!-- ═══════════════ NIGHT 4 ═══════════════ -->
+    <article class="night" style="--stripe: var(--sage);">
+      <div class="n-head">
+        <span class="n-num">NIGHT 4</span>
+        <h2 class="n-title">Cut over to the Z690</h2>
+        <span class="chip" style="--chip-bg: var(--sage-soft); --chip-fg: var(--sage);">Four approval gates</span>
+        <span class="n-when">Next Sunday morning · ~2 hrs active, 3–4 hrs migrations</span>
+      </div>
+
+      <figure>
+        <div class="figscroll">
+        <svg viewBox="0 0 900 416" role="img" aria-label="Z690 is now the production AIWA with Proxmox 9.2.2, all containers restored, R9700 running, llama serving. ProDesk and X870E stay running.">
+          <defs>
+            <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" class="ahead"/>
+            </marker>
+          </defs>
+
+          <path d="M760,62 C760,24 450,24 450,62" class="flow" marker-end="url(#ar4)"/>
+          <text x="605" y="19" text-anchor="middle" class="flbl">containers + host config restore</text>
+
+          <!-- ProDesk retired (dimmed) -->
+          <g opacity=".45">
+            <text x="140" y="80" text-anchor="middle" class="mname">ProDesk</text>
+            <text x="140" y="96" text-anchor="middle" class="mrole">retired</text>
+            <rect x="20" y="106" width="240" height="226" rx="8" class="ghost"/>
+            <rect x="32" y="120" width="216" height="28" rx="5" class="pill pill-out"/>
+            <text x="44" y="138.5" class="t t-out">stays bootable as backup</text>
+          </g>
+          <text x="140" y="350" text-anchor="middle" class="mstat">offline · cold spare</text>
+
+          <!-- Z690 — production AIWA -->
+          <text x="450" y="80" text-anchor="middle" class="mname">Z690</text>
+          <text x="450" y="96" text-anchor="middle" class="mrole">new AIWA</text>
+          <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
+          <rect x="342" y="120" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="354" y="138.5" class="t t-key">Proxmox 9.2.2 · 4 CTs</text>
+          <rect x="342" y="154" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="354" y="172.5" class="t t-key">R9700 + llama serving</text>
+          <rect x="342" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="354" y="206.5" class="t t-key">SN7100 1 TB + 2 TB</text>
+          <rect x="342" y="222" width="216" height="28" rx="5" class="pill pill-move"/>
+          <text x="354" y="240.5" class="t t-move">All restored from backups</text>
+          <rect x="342" y="256" width="216" height="28" rx="5" class="pill pill-key"/>
+          <text x="354" y="274.5" class="t t-key">Thermaltake 850W PSU</text>
+          <text x="450" y="350" text-anchor="middle" class="mstat">in H5 case · serving</text>
+
+          <!-- X870E (dimmed) -->
+          <g opacity=".45">
+            <text x="760" y="80" text-anchor="middle" class="mname">X870E</text>
+            <text x="760" y="96" text-anchor="middle" class="mrole">main PC</text>
+            <rect x="640" y="106" width="240" height="226" rx="8" class="box"/>
+            <rect x="652" y="120" width="216" height="28" rx="5" class="pill"/>
+            <text x="664" y="138.5" class="t">Ryzen 9900X · Windows</text>
+            <rect x="652" y="154" width="216" height="28" rx="5" class="pill pill-out"/>
+            <text x="664" y="172.5" class="t t-out">llama serving → leaves here</text>
+          </g>
+          <text x="760" y="350" text-anchor="middle" class="mstat">28 GB working set freed up</text>
+        </svg>
+        </div>
+        <figcaption>The Z690 takes production, restoring from the backups made on Night 2. The ProDesk goes quiet but stays bootable — that's the rollback. Llama serving moves off the X870E onto the R9700 over Tailscale, which is what frees the 28 GB working set on your main machine.</figcaption>
+      </figure>
+
+      <div class="steps">
+        <div class="step"><span class="marker"></span><p><strong>Gate 1:</strong> Stop services on ProDesk. Run the pre-flight checks in TASK4-MONDAY-BACKUP-PLAN.md — space, SMART, free sockets.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Gate 2:</strong> Begin container restore into Z690. Watch the first LXC boot.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Gate 3:</strong> Restore the host config (network, Samba, Docker compose stacks, identity state) and verify each one boots without crashing.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Gate 4:</strong> Start llama inference on the R9700, verify latency and throughput, then update the client on X870E (change Tailscale target from ProDesk to Z690). Verify one cutover call succeeds.</p></div>
+        <div class="step"><span class="marker"></span><p>Shut down ProDesk. It stays built and bootable as a rollback spare.</p></div>
+      </div>
+      <div class="outcome"><span class="lbl">Ends at</span><p>Z690 is production AIWA. Llama, container workloads, and network services all running on the new host. ProDesk is cold spare. <strong>You're done.</strong></p></div>
+    </article>
+
+  </div>
+
+  <!-- ════════════════ PARTS LIST ════════════════ -->
+  <section>
+    <h2>Parts list, status &amp; constraints</h2>
+    <p class="lede">Locked specs as of 2026-08-11. The Okinos arrives with 4×120mm fans pre-installed.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>Model</th>
+            <th>Status</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="4" style="background: var(--surface-2); font-weight: 600; color: var(--ink);">X870E Build</td>
+          </tr>
+          <tr>
+            <td>Motherboard</td>
+            <td class="drive">GIGABYTE X870E AORUS Elite WIFI7</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>5 fan headers (1 CPU, 1 CPU/PUMP, 3 CHA, 1 CHA/PUMP)</td>
+          </tr>
+          <tr>
+            <td>CPU</td>
+            <td class="drive">Ryzen 9 9900X</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>Zen 5, 12c/24t, 3.3–5.6 GHz</td>
+          </tr>
+          <tr>
+            <td>RAM</td>
+            <td class="drive">32 GB DDR5</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>64 GB kit arriving next week</td>
+          </tr>
+          <tr>
+            <td>GPU</td>
+            <td class="drive">RTX 4060 Ti 16 GB</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>Code executor only (no thinking/reasoning). Local model support only.</td>
+          </tr>
+          <tr>
+            <td>SSD — Boot</td>
+            <td class="drive">Samsung 9100 PRO 2 TB</td>
+            <td><span class="tag t-nw">Ordered</span></td>
+            <td><strong>Bare SKU</strong> ($287.84), not heatsink. You'll use your own M.2 cooler.</td>
+          </tr>
+          <tr>
+            <td>AIO Cooler</td>
+            <td class="drive">NZXT AIO (new)</td>
+            <td><span class="tag t-nw">Ordered</span></td>
+            <td>Socket AM5 · LGA1700-compatible bracket included</td>
+          </tr>
+          <tr>
+            <td>PSU</td>
+            <td class="drive">ASRock Challenger 850W</td>
+            <td><span class="tag t-nw">Ordered</span></td>
+            <td>ATX 3.1, 80+ Gold, non-modular (fine for the roomy Okinos), native 12V-2x6</td>
+          </tr>
+          <tr>
+            <td>Case</td>
+            <td class="drive">Okinos Cypress 7</td>
+            <td><span class="tag t-nw">Ordered</span></td>
+            <td>ATX, walnut wood side, 4×120mm pre-installed fans, 360mm AIO support</td>
+          </tr>
+          <tr>
+            <td>Thermal Paste</td>
+            <td class="drive">Thermal paste</td>
+            <td><span class="tag t-nw">Ordered</span></td>
+            <td>For the 9900X</td>
+          </tr>
+          <tr>
+            <td>AMD Retention</td>
+            <td class="drive">AMD AM5 Retention Bracket</td>
+            <td><span class="tag t-nw">Ordered</span></td>
+            <td>For AIO mounting on AM5</td>
+          </tr>
+          <tr>
+            <td>SSD — Data</td>
+            <td class="drive">SN7100 2 TB (from Z690)</td>
+            <td><span class="tag t-mv">Moves from Z690</span></td>
+            <td>Physically moved on Night 1, keeps its data, becomes <code>D:</code>. Receives the AIWA backups on Night 2.</td>
+          </tr>
+          <tr>
+            <td colspan="4" style="background: var(--surface-2); font-weight: 600; color: var(--ink);">Z690 (becomes AIWA)</td>
+          </tr>
+          <tr>
+            <td>Motherboard</td>
+            <td class="drive">Z690</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>CPU</td>
+            <td class="drive">i5-13500K</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>RAM</td>
+            <td class="drive">64 GB DDR4</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>GPU</td>
+            <td class="drive">XFX Radeon AI PRO R9700 32G</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td><strong>Stays in Z690.</strong> Uses 12V-2x6 connector (never re-seat it).</td>
+          </tr>
+          <tr>
+            <td>SSD — Boot/Data</td>
+            <td class="drive">SN7100 1 TB (from Z690 D:)</td>
+            <td><span class="tag t-mv">Repurposed</span></td>
+            <td>Becomes Proxmox boot drive. Wipe and install on Night 3. (~300 GB needed of 931 GB available).</td>
+          </tr>
+          <tr>
+            <td>PSU</td>
+            <td class="drive">Thermaltake Smart BM3 850W</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td><strong>Follows the R9700 from the current build.</strong> Its 12V-2x6 cable is already seated in the GPU — never unseat it. ATX 3.1, semi-modular.</td>
+          </tr>
+          <tr>
+            <td>Cooler</td>
+            <td class="drive">Thermalright Frost Commander 140</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td><strong>Stays mounted.</strong> Already in H5 case, clears without issue.</td>
+          </tr>
+          <tr>
+            <td>Case</td>
+            <td class="drive">NZXT H5</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td><strong>No case move.</strong> Z690 stays in H5.</td>
+          </tr>
+          <tr>
+            <td colspan="4" style="background: var(--surface-2); font-weight: 600; color: var(--ink);">ProDesk (AIWA today — retiring)</td>
+          </tr>
+          <tr>
+            <td>Role</td>
+            <td class="drive">HP ProDesk</td>
+            <td><span class="tag t-rt">Retiring</span></td>
+            <td>Runs Proxmox 9.2.2 today. Becomes cold spare after Night 4.</td>
+          </tr>
+          <tr>
+            <td>SSD — System</td>
+            <td class="drive">SN770 2 TB</td>
+            <td><span class="tag t-rt">Retiring</span></td>
+            <td><strong>Stays in ProDesk.</strong> Backed up on Night 2. Never moves.</td>
+          </tr>
+          <tr>
+            <td>SSD — Data</td>
+            <td class="drive">Samsung 840 PRO 500 GB</td>
+            <td><span class="tag t-rt">Retiring</span></td>
+            <td>266 GB live data (mav-rag, syncthing, etc.). Copied to the X870E's <code>D:</code> on Night 2.</td>
+          </tr>
+          <tr>
+            <td colspan="4" style="background: var(--surface-2); font-weight: 600; color: var(--ink);">Backups</td>
+          </tr>
+          <tr>
+            <td>Core Set Offline</td>
+            <td class="drive">SanDisk 256 GB</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td>Carries vzdump + host tarball + 840 PRO data. Verified and unplugged at the end of Night 2.</td>
+          </tr>
+          <tr>
+            <td>UPS</td>
+            <td class="drive">New UPS (TBD)</td>
+            <td><span class="tag t-rt">To buy</span></td>
+            <td>To protect Z690 during cutover.</td>
+          </tr>
+          <tr>
+            <td>M.2 Cooler</td>
+            <td class="drive">Active M.2 fan (1 more)</td>
+            <td><span class="tag t-rt">To buy</span></td>
+            <td>You have 1, need 2 (for 2TB + 1TB SN7100 drives in Z690).</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </section>
+
+  <!-- ════════════════ SUMMARY ════════════════ -->
+  <section>
+    <div class="closing">
+      <h3>Key decisions locked</h3>
+      <p><strong>Z690 stays in H5 case.</strong> No rack move. Thermaltake PSU + R9700 + Frost Commander 140 cooler all move with it. <strong>X870E goes into Okinos Cypress 7.</strong> AsRock 850W PSU, new AIO. ProDesk becomes a cold spare. Llama serving moves to AIWA (R9700) to free your 28 GB working set on the new build. Test everything on Night 3 before the real cutover on Night 4.</p>
+    </div>
+  </section>
+
+</div>
