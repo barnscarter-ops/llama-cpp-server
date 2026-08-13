@@ -222,13 +222,14 @@
         <span class="n-num">BEFORE</span>
         <h2 class="n-title">Parts on the bench</h2>
         <span class="chip" style="--chip-bg: var(--sage-soft); --chip-fg: var(--sage);">Shopping</span>
-        <span class="n-when">Everything below must be in hand by Friday</span>
+        <span class="n-when">Checked 2026-08-13 · everything arrived except the case</span>
       </div>
       <div class="steps">
-        <div class="step"><span class="marker"></span><p><strong>Ordered:</strong> Okinos Cypress 7 case, AIO, thermal paste, AMD retention bracket, <strong>Samsung 9100 PRO 2 TB</strong> (bare SKU, not heatsink), ASRock Challenger 850W PSU, PWM fan hub.</p></div>
-        <div class="step"><span class="marker"></span><p><strong>On hand:</strong> X870E motherboard, Ryzen 9900X, 32 GB DDR5 (64 GB kit coming), RTX 4060 Ti, Thermaltake Smart BM3 850W (stays with the Z690).</p></div>
-        <div class="step"><span class="marker"></span><p><strong>Still to buy:</strong> UPS, one more M.2 active cooler (you have one, need two). Neither gates Night 1.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>In hand:</strong> X870E motherboard, Ryzen 9900X, 32 GB DDR5, RTX 4060 Ti, Samsung 9100 PRO 2 TB, AIO, thermal paste, AM5 retention bracket, ASRock Challenger 850 W, PWM fan hub. Thermaltake Smart BM3 850 W stays with the Z690.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Not here yet:</strong> the <strong>Okinos Cypress 7</strong>. It's the only part that gates Friday — see the split below.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Still to buy:</strong> UPS, one more M.2 active cooler (you have one, need two), 64 GB DDR5 kit. None of these gate any night.</p></div>
       </div>
+      <div class="flag"><strong>The case is late, so Friday splits in two.</strong> Everything that finds problems happens on the bench with the board on its own box: POST, BIOS update, Windows onto the 9100 PRO, chipset and GPU drivers, both M.2 slots verified. The drive and card pulled from the Z690 go in there too. Final mounting into the Okinos becomes a separate hour whenever it lands — dropping an already-booting build into a case is screws, not risk. <strong>Nights 2, 3 and 4 are unaffected</strong>; none of them need the X870E to be in its case.</div>
     </article>
 
     <!-- ═══════════════ NIGHT 1 ═══════════════ -->
@@ -302,20 +303,21 @@
           <text x="664" y="274.5" class="t t-move">SN7100 2 TB ← Z690 (D:)</text>
           <rect x="652" y="290" width="216" height="28" rx="5" class="pill pill-move"/>
           <text x="664" y="308.5" class="t t-move">Network card ← Z690</text>
-          <text x="760" y="350" text-anchor="middle" class="mstat">Okinos Cypress 7 · takes the desk</text>
+          <text x="760" y="350" text-anchor="middle" class="mstat">on the bench · Okinos still in transit</text>
         </svg>
         </div>
         <figcaption>Two parts cross from the Z690 into the new build, and nothing needs copying first — the Gen 5 drive gets a clean Windows install, and the 2 TB SN7100 moves with its data intact. The R9700 and its Thermaltake PSU stay bolted together in the H5.</figcaption>
       </figure>
 
       <div class="steps">
-        <div class="step"><span class="marker"></span><p>Build the X870E into the Okinos: 9900X, AIO on the AM5 bracket, 32 GB DDR5, 4060 Ti, ASRock 850 W, and the <strong>9100 PRO as a fresh <code>C:</code></strong> with an active M.2 cooler on it.</p></div>
+        <div class="step"><span class="marker"></span><p>Bench-build the X870E on the motherboard box: 9900X, AIO on the AM5 bracket, 32 GB DDR5, 4060 Ti, ASRock 850 W, and the <strong>9100 PRO as a fresh <code>C:</code></strong> with an active M.2 cooler on it. POST it and update the BIOS before anything else.</p></div>
         <div class="step"><span class="marker"></span><p>Pull the <strong>2 TB SN7100 and the network card</strong> out of the Z690 and into the X870E. The 2 TB moves as-is — no copying, it keeps its data and becomes <code>D:</code>.</p></div>
         <div class="step"><span class="marker"></span><p>Clean Windows install on the Gen 5 drive, sign in to reclaim the license, then chipset and GPU drivers.</p></div>
         <div class="step"><span class="marker"></span><p>Pull the Toshiba and retire it — the Grizzly photos are already in Google Photos, so there's nothing left on it to rescue.</p></div>
         <div class="step"><span class="marker"></span><p>Leave the Z690's <strong>1 TB SN7100 in place and blank</strong>. It's the Proxmox boot drive on Night 3.</p></div>
+        <div class="step"><span class="marker"></span><p>When the Okinos arrives: transplant the finished build into it. Nothing gets re-diagnosed — it already booted.</p></div>
       </div>
-      <div class="outcome"><span class="lbl">Ends at</span><p>New PC on the desk, running Windows, with the 2 TB drive attached as <code>D:</code>. <strong>AIWA hasn't been touched.</strong></p></div>
+      <div class="outcome"><span class="lbl">Ends at</span><p>New PC running Windows on the bench, with the 2 TB drive attached as <code>D:</code>, waiting on a case. <strong>AIWA hasn't been touched.</strong></p></div>
     </article>
 
     <!-- ═══════════════ NIGHT 2 ═══════════════ -->
@@ -593,37 +595,37 @@
           <tr>
             <td>SSD — Boot</td>
             <td class="drive">Samsung 9100 PRO 2 TB</td>
-            <td><span class="tag t-nw">Ordered</span></td>
+            <td><span class="tag t-st">On hand</span></td>
             <td><strong>Bare SKU</strong> ($287.84), not heatsink. You'll use your own M.2 cooler.</td>
           </tr>
           <tr>
             <td>AIO Cooler</td>
             <td class="drive">NZXT AIO (new)</td>
-            <td><span class="tag t-nw">Ordered</span></td>
+            <td><span class="tag t-st">On hand</span></td>
             <td>Socket AM5 · LGA1700-compatible bracket included</td>
           </tr>
           <tr>
             <td>PSU</td>
             <td class="drive">ASRock Challenger 850W</td>
-            <td><span class="tag t-nw">Ordered</span></td>
+            <td><span class="tag t-st">On hand</span></td>
             <td>ATX 3.1, 80+ Gold, non-modular (fine for the roomy Okinos), native 12V-2x6</td>
           </tr>
           <tr>
             <td>Case</td>
             <td class="drive">Okinos Cypress 7</td>
             <td><span class="tag t-nw">Ordered</span></td>
-            <td>ATX, walnut wood side, 4×120mm pre-installed fans, 360mm AIO support</td>
+            <td>ATX, walnut wood side, 4×120mm pre-installed fans, 360mm AIO support. <strong>Still in transit as of Aug 13</strong> — the only outstanding part, and the reason Night 1 is a bench build.</td>
           </tr>
           <tr>
             <td>Thermal Paste</td>
             <td class="drive">Thermal paste</td>
-            <td><span class="tag t-nw">Ordered</span></td>
+            <td><span class="tag t-st">On hand</span></td>
             <td>For the 9900X</td>
           </tr>
           <tr>
             <td>AMD Retention</td>
             <td class="drive">AMD AM5 Retention Bracket</td>
-            <td><span class="tag t-nw">Ordered</span></td>
+            <td><span class="tag t-st">On hand</span></td>
             <td>For AIO mounting on AM5</td>
           </tr>
           <tr>
