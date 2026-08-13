@@ -13,13 +13,50 @@ HP ProDesk is retired and sold.
 
 ### Main PC — X870E AORUS Elite WiFi 7 + Ryzen 9 9900X
 
+> Parts table reconciled against the physical bench inventory on 2026-08-13.
+> `aiwa-transplant/transplant-map.html` is the live version — update both.
+
 | Component | Source | Notes |
 |---|---|---|
-| X870E AORUS Elite WiFi 7 motherboard + 9900X | purchased | DDR5, 2 DIMMs only |
-| 32GB DDR5 | allocated | Do NOT run 4 mismatched DIMMs |
-| RTX 4060 | allocated | Main-PC GPU |
-| 2TB WD_BLACK SN7100 (`C:`, Windows) | stays | see VMD note below |
-| 1TB WD_BLACK SN7100 (`D:`, storage) | stays | |
+| GIGABYTE X870E AORUS Elite WIFI7 motherboard + 9900X | purchased | DDR5, 2 DIMMs populated |
+| KLEVV BOLT V 32GB DDR5-6000 (2x16) | purchased | Do NOT run 4 mismatched DIMMs. 64GB kit ordered. |
+| ASUS ProArt GeForce RTX 4060 Ti 16GB | allocated | Confirmed from the card itself 2026-08-13 |
+| Samsung 9100 PRO 2TB (bare SKU) | purchased | New `C:`, clean Windows install. Gen 5 — needs the HR-10. |
+| Thermalright HR-10 2280 Pro Black | purchased | **Active** M.2 heatsink (30mm fan, 6000 RPM, 12V/0.09A). Second unit acquired — the "need 2" line is closed. |
+| ASRock Challenger CL-850G | purchased | ATX 3.1, 80+ Gold, non-modular, native 12V-2x6 |
+| ARCTIC Liquid Freezer III Pro 360 A-RGB | purchased | **Arrived used — returning, see below** |
+| NZXT AIO | already owned | **Unusable — mounting hardware lost.** Not a fallback. Needs a bracket, and NZXT retention varies by Kraken generation. |
+| Thermalright AM5 Secure Frame (black) | purchased | Contact frame, fits before the cooler |
+| Okinos Cypress 7 case | ordered | **In transit.** Confirm clearance for a 38mm radiator. |
+| 2TB WD_BLACK SN7100 (`C:`, Windows) | stays | see VMD note below; becomes `D:` on the new board |
+| 1TB WD_BLACK SN7100 (`D:`, storage) | stays | wiped, becomes the Proxmox boot drive |
+
+### AIO cooler — arrived used (2026-08-13)
+
+The Liquid Freezer III Pro 360 was delivered as a previously-installed
+customer return sold as new: bare scratched coldplate with no protective cap
+and no factory MX-6, thermal paste residue in the mounting hardware, retail
+box torn open and repacked. Sold via ARCTIC's Amazon store.
+
+Amazon quoted **September 29** for a replacement on an item that is in stock
+and buyable the same day at $76.99. Resolution is therefore **refund and
+immediate re-order**, not replacement.
+
+**The NZXT is not a usable fallback — its mounting hardware is lost.** That is
+part of why the Arctic was bought in the first place. Without a bracket the
+NZXT cannot mount, so the only cooler on hand is unusable.
+
+**The real fallback is Micro Center Dallas**, which stocks NZXT brackets and
+complete coolers. Preferred plan: refund the Amazon unit and buy the
+replacement in person rather than re-ordering online. Same day, inspectable at
+the register, and it avoids the commingled-inventory pool that produced the
+used unit. Buy a complete cooler, not a bracket — NZXT retention differs
+across Kraken generations, so a bracket run requires knowing the exact model
+and hoping that SKU is stocked.
+
+**On arrival, check the coldplate first.** A genuine unit has grey MX-6
+pre-applied under a plastic cap. Bare copper means another used unit — refuse
+it and buy elsewhere rather than trying a third time from the same pool.
 
 ### New AIWA — Z690 + 13600K (retained from the main PC)
 

@@ -87,6 +87,7 @@
   .sw-new  { border-color: var(--sage);   background: var(--sage-soft); }
   .sw-key  { border-color: var(--slate);  background: var(--slate-soft); }
   .sw-out  { border-color: var(--ink-3); border-style: dashed; background: transparent; }
+  .sw-warn { border-color: var(--warn);  background: var(--warn-soft); }
 
   /* ---- night cards ---- */
   .timeline { display: flex; flex-direction: column; gap: 22px; }
@@ -147,11 +148,13 @@
   .pill-new  { fill: var(--sage-soft);   stroke: var(--sage); }
   .pill-key  { fill: var(--slate-soft);  stroke: var(--slate); }
   .pill-out  { fill: none; stroke: currentColor; stroke-opacity: .22; stroke-dasharray: 4 4; }
+  .pill-warn { fill: var(--warn-soft);  stroke: var(--warn); }
   .t      { font-size: 11.5px; fill: currentColor; fill-opacity: .82; }
   .t-move { fill: var(--copper); fill-opacity: 1; font-weight: 600; }
   .t-new  { fill: var(--sage);   fill-opacity: 1; font-weight: 600; }
   .t-key  { fill: var(--slate);  fill-opacity: 1; font-weight: 600; }
   .t-out  { fill-opacity: .4; }
+  .t-warn { fill: var(--warn);   fill-opacity: 1; font-weight: 600; }
   .mname  { font-size: 13px; font-weight: 700; fill: currentColor; }
   .mrole  { font-size: 11px; fill: currentColor; fill-opacity: .55; }
   .mstat  { font-size: 11px; fill: currentColor; fill-opacity: .62; }
@@ -182,6 +185,7 @@
   .t-st { background: var(--slate-soft);  color: var(--slate); }
   .t-nw { background: var(--sage-soft);   color: var(--sage); }
   .t-rt { background: var(--surface-2);   color: var(--ink-3); }
+  .t-wn { background: var(--warn-soft);   color: var(--warn); }
 
   .closing {
     border: 1px solid var(--line); border-left: 3px solid var(--sage);
@@ -211,6 +215,7 @@
       <span><i class="sw sw-new"></i> brand new</span>
       <span><i class="sw sw-key"></i> the piece that matters</span>
       <span><i class="sw sw-out"></i> leaving / retired</span>
+      <span><i class="sw sw-warn"></i> blocked / not in hand</span>
     </div>
   </header>
 
@@ -222,14 +227,15 @@
         <span class="n-num">BEFORE</span>
         <h2 class="n-title">Parts on the bench</h2>
         <span class="chip" style="--chip-bg: var(--sage-soft); --chip-fg: var(--sage);">Shopping</span>
-        <span class="n-when">Checked 2026-08-13 · everything arrived except the case</span>
+        <span class="n-when">Checked 2026-08-13 · two things outstanding — the case and a CPU cooler</span>
       </div>
       <div class="steps">
-        <div class="step"><span class="marker"></span><p><strong>In hand:</strong> X870E motherboard, Ryzen 9900X, 32 GB DDR5, RTX 4060 Ti, Samsung 9100 PRO 2 TB, AIO, thermal paste, AM5 retention bracket, ASRock Challenger 850 W, PWM fan hub. Thermaltake Smart BM3 850 W stays with the Z690.</p></div>
-        <div class="step"><span class="marker"></span><p><strong>Not here yet:</strong> the <strong>Okinos Cypress 7</strong>. It's the only part that gates Friday — see the split below.</p></div>
-        <div class="step"><span class="marker"></span><p><strong>Still to buy:</strong> UPS, one more M.2 active cooler (you have one, need two), 64 GB DDR5 kit. None of these gate any night.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>In hand:</strong> GIGABYTE X870E AORUS Elite WIFI7, Ryzen 9900X, KLEVV BOLT V 32 GB DDR5-6000, ASUS ProArt RTX 4060 Ti 16 GB, Samsung 9100 PRO 2 TB, two Thermalright HR-10 2280 Pro Black active M.2 coolers, Thermalright AM5 Secure Frame, ASRock Challenger CL-850G, and a PWM fan hub. <strong>No usable CPU cooler</strong> — the Arctic went back and the NZXT has no mounting hardware. Thermaltake Smart BM3 850 W stays with the Z690.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Not here yet:</strong> the <strong>Okinos Cypress 7</strong>, and a <strong>CPU cooler</strong> after the Arctic went back used. The case splits Friday in two; the cooler stops it outright until one is bought — see below.</p></div>
+        <div class="step"><span class="marker"></span><p><strong>Still to buy:</strong> UPS and the 64 GB DDR5 kit. Neither gates any night. The second M.2 cooler is now in hand.</p></div>
       </div>
-      <div class="flag"><strong>The case is late, so Friday splits in two.</strong> Everything that finds problems happens on the bench with the board on its own box: POST, BIOS update, Windows onto the 9100 PRO, chipset and GPU drivers, both M.2 slots verified. The drive and card pulled from the Z690 go in there too. Final mounting into the Okinos becomes a separate hour whenever it lands — dropping an already-booting build into a case is screws, not risk. <strong>Nights 2, 3 and 4 are unaffected</strong>; none of them need the X870E to be in its case.</div>
+      <div class="flag"><strong>Aug 13 — the new AIO arrived used and is going back. There is no cooler on hand.</strong> The ARCTIC Liquid Freezer III Pro 360 was delivered as a previously-installed customer return sold as new: bare scratched coldplate with no protective cap or factory MX-6, paste residue in the mounting hardware, retail box torn open and repacked. Amazon quoted <strong>September 29</strong> for a replacement on an item in stock and buyable the same day, so the resolution is a refund. <strong>The NZXT AIO does not cover this</strong> — its mounting hardware is lost, which is why the Arctic was bought. The contingency is a <strong>Micro Center Dallas run</strong>: buy a complete cooler in person rather than re-ordering online. Same day, inspectable at the register, and it avoids the commingled Amazon pool that produced the used unit. Buy a whole cooler, not an NZXT bracket — retention differs across Kraken generations, so a bracket run needs the exact model and luck on stock.</div>
+      <div class="flag"><strong>The case is late, so Friday still splits in two.</strong> Everything that finds problems happens on the bench with the board on its own box: POST, BIOS update, Windows onto the 9100 PRO, chipset and GPU drivers, both M.2 slots verified. The drive and card pulled from the Z690 go in there too. Final mounting into the Okinos becomes a separate hour whenever it lands — dropping an already-booting build into a case is screws, not risk. <strong>Nights 2, 3 and 4 are unaffected</strong>; none of them need the X870E to be in its case.</div>
     </article>
 
     <!-- ═══════════════ NIGHT 1 ═══════════════ -->
@@ -274,7 +280,7 @@
           <text x="450" y="96" text-anchor="middle" class="mrole">stays in the H5</text>
           <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
           <rect x="342" y="120" width="216" height="28" rx="5" class="pill"/>
-          <text x="354" y="138.5" class="t">i5-13500K · 64 GB DDR4</text>
+          <text x="354" y="138.5" class="t">i5-13600K · 64 GB DDR4</text>
           <rect x="342" y="154" width="216" height="28" rx="5" class="pill pill-key"/>
           <text x="354" y="172.5" class="t t-key">R9700 — never moves</text>
           <rect x="342" y="188" width="216" height="28" rx="5" class="pill pill-key"/>
@@ -294,7 +300,7 @@
           <rect x="652" y="120" width="216" height="28" rx="5" class="pill pill-new"/>
           <text x="664" y="138.5" class="t t-new">Ryzen 9900X · 32 GB DDR5</text>
           <rect x="652" y="154" width="216" height="28" rx="5" class="pill pill-new"/>
-          <text x="664" y="172.5" class="t t-new">RTX 4060 Ti · new AIO</text>
+          <text x="664" y="172.5" class="t t-new">RTX 4060 Ti 16 GB</text>
           <rect x="652" y="188" width="216" height="28" rx="5" class="pill pill-new"/>
           <text x="664" y="206.5" class="t t-new">9100 PRO 2 TB — C: Windows</text>
           <rect x="652" y="222" width="216" height="28" rx="5" class="pill pill-new"/>
@@ -303,10 +309,12 @@
           <text x="664" y="274.5" class="t t-move">SN7100 2 TB ← Z690 (D:)</text>
           <rect x="652" y="290" width="216" height="28" rx="5" class="pill pill-move"/>
           <text x="664" y="308.5" class="t t-move">Network card ← Z690</text>
-          <text x="760" y="350" text-anchor="middle" class="mstat">on the bench · Okinos still in transit</text>
+          <text x="760" y="346" text-anchor="middle" class="mstat">on the bench · Okinos still in transit</text>
+          <rect x="652" y="360" width="216" height="34" rx="5" class="pill pill-warn"/>
+          <text x="664" y="381" class="t t-warn">No cooler on hand — Micro Center run</text>
         </svg>
         </div>
-        <figcaption>Two parts cross from the Z690 into the new build, and nothing needs copying first — the Gen 5 drive gets a clean Windows install, and the 2 TB SN7100 moves with its data intact. The R9700 and its Thermaltake PSU stay bolted together in the H5.</figcaption>
+        <figcaption>Two parts cross from the Z690 into the new build, and nothing needs copying first — the Gen 5 drive gets a clean Windows install, and the 2 TB SN7100 moves with its data intact. The R9700 and its Thermaltake PSU stay bolted together in the H5. The new Arctic AIO went back as a used unit and the NZXT cannot substitute — its mounting hardware is lost — so this night now needs a cooler bought in person before it can run.</figcaption>
       </figure>
 
       <div class="steps">
@@ -361,7 +369,7 @@
             <text x="450" y="96" text-anchor="middle" class="mrole">idle in the H5</text>
             <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
             <rect x="342" y="120" width="216" height="28" rx="5" class="pill"/>
-            <text x="354" y="138.5" class="t">i5-13500K · 64 GB DDR4</text>
+            <text x="354" y="138.5" class="t">i5-13600K · 64 GB DDR4</text>
             <rect x="342" y="154" width="216" height="28" rx="5" class="pill"/>
             <text x="354" y="172.5" class="t">R9700 · Thermaltake 850 W</text>
             <rect x="342" y="188" width="216" height="28" rx="5" class="pill"/>
@@ -436,7 +444,7 @@
           <text x="450" y="96" text-anchor="middle" class="mrole">proof of concept</text>
           <rect x="330" y="106" width="240" height="226" rx="8" class="box"/>
           <rect x="342" y="120" width="216" height="28" rx="5" class="pill"/>
-          <text x="354" y="138.5" class="t">i5-13500K · 64 GB DDR4</text>
+          <text x="354" y="138.5" class="t">i5-13600K · 64 GB DDR4</text>
           <rect x="342" y="154" width="216" height="28" rx="5" class="pill pill-move"/>
           <text x="354" y="172.5" class="t t-move">R9700 — GPU test on Linux</text>
           <rect x="342" y="188" width="216" height="28" rx="5" class="pill pill-new"/>
@@ -552,7 +560,7 @@
   <!-- ════════════════ PARTS LIST ════════════════ -->
   <section>
     <h2>Parts list, status &amp; constraints</h2>
-    <p class="lede">Locked specs as of 2026-08-11. The Okinos arrives with 4×120mm fans pre-installed.</p>
+    <p class="lede">Locked specs as of 2026-08-13, reconciled against the parts actually on the bench. The Okinos arrives with 4×120mm fans pre-installed.</p>
 
     <div class="tablewrap">
       <table>
@@ -582,15 +590,15 @@
           </tr>
           <tr>
             <td>RAM</td>
-            <td class="drive">32 GB DDR5</td>
+            <td class="drive">KLEVV BOLT V 32 GB DDR5-6000</td>
             <td><span class="tag t-st">On hand</span></td>
-            <td>64 GB kit arriving next week</td>
+            <td>2×16 GB. Board is 4-DIMM but 2 populated — 64 GB kit arriving next week.</td>
           </tr>
           <tr>
             <td>GPU</td>
-            <td class="drive">RTX 4060 Ti 16 GB</td>
+            <td class="drive">ASUS ProArt RTX 4060 Ti 16 GB</td>
             <td><span class="tag t-st">On hand</span></td>
-            <td>Code executor only (no thinking/reasoning). Local model support only.</td>
+            <td>Confirmed off the card 2026-08-13. Code executor only (no thinking/reasoning). Local model support only.</td>
           </tr>
           <tr>
             <td>SSD — Boot</td>
@@ -600,13 +608,19 @@
           </tr>
           <tr>
             <td>AIO Cooler</td>
-            <td class="drive">NZXT AIO (new)</td>
-            <td><span class="tag t-st">On hand</span></td>
-            <td>Socket AM5 · LGA1700-compatible bracket included</td>
+            <td class="drive">ARCTIC Liquid Freezer III Pro 360 A-RGB</td>
+            <td><span class="tag t-wn">Returned — rebuy</span></td>
+            <td><strong>Delivered Aug 12 as a used customer return sold as new.</strong> Bare scratched coldplate, no protective cap or factory MX-6, paste residue in the mounting screws, retail box torn open and repacked. Amazon quoted Sept 29 for a replacement on an in-stock $76.99 item, so: refund + immediate re-order instead. <strong>This does gate Night 1</strong> — there is no usable cooler on hand, see the row below. 38 mm radiator — confirm top clearance in the Okinos before committing to a top mount.</td>
+          </tr>
+          <tr>
+            <td>AIO Cooler — contingency</td>
+            <td class="drive">Micro Center Dallas, in person</td>
+            <td><span class="tag t-wn">To buy</span></td>
+            <td>The previously owned <strong>NZXT AIO is unusable — its mounting hardware is lost</strong>, which is why the Arctic was bought. Buy a complete cooler in store rather than re-ordering online: same day, inspectable at the register, outside the commingled Amazon pool. Not a bracket — NZXT retention varies by Kraken generation. Expect roughly <strong>$120–140</strong> for a 360 there against $77 on Amazon; the premium buys the build night.</td>
           </tr>
           <tr>
             <td>PSU</td>
-            <td class="drive">ASRock Challenger 850W</td>
+            <td class="drive">ASRock Challenger CL-850G</td>
             <td><span class="tag t-st">On hand</span></td>
             <td>ATX 3.1, 80+ Gold, non-modular (fine for the roomy Okinos), native 12V-2x6</td>
           </tr>
@@ -614,19 +628,25 @@
             <td>Case</td>
             <td class="drive">Okinos Cypress 7</td>
             <td><span class="tag t-nw">Ordered</span></td>
-            <td>ATX, walnut wood side, 4×120mm pre-installed fans, 360mm AIO support. <strong>Still in transit as of Aug 13</strong> — the only outstanding part, and the reason Night 1 is a bench build.</td>
+            <td>ATX, walnut wood side, 4×120mm pre-installed fans, 360mm AIO support. <strong>Still in transit as of Aug 13</strong> — the reason Night 1 is a bench build. "360 mm support" is not the same as clearance for a 38 mm-thick radiator plus fans (~63 mm); check the spec before planning a top mount.</td>
           </tr>
           <tr>
             <td>Thermal Paste</td>
             <td class="drive">Thermal paste</td>
             <td><span class="tag t-st">On hand</span></td>
-            <td>For the 9900X</td>
+            <td>For the 9900X. A genuine Liquid Freezer III ships with MX-6 pre-applied under a plastic cap — if the re-ordered unit doesn't have that, it's another used one, so refuse it.</td>
           </tr>
           <tr>
-            <td>AMD Retention</td>
-            <td class="drive">AMD AM5 Retention Bracket</td>
+            <td>AM5 Contact Frame</td>
+            <td class="drive">Thermalright AM5 Secure Frame (black)</td>
             <td><span class="tag t-st">On hand</span></td>
-            <td>For AIO mounting on AM5</td>
+            <td>Replaces the stock ILM to flatten AM5 socket bow. <strong>Not</strong> an AIO retention bracket — the AIO brings its own AM5 mount. Fit this before the cooler goes on.</td>
+          </tr>
+          <tr>
+            <td>M.2 Cooler ×2</td>
+            <td class="drive">Thermalright HR-10 2280 Pro Black</td>
+            <td><span class="tag t-st">On hand</span></td>
+            <td><strong>Active</strong> — 30 mm fan, 6000 RPM, 12V / 0.09A. One for the 9100 PRO (Gen 5, runs hot), one for the Z690. Both acquired. Verify clearance against the GPU backplate and the AIO block.</td>
           </tr>
           <tr>
             <td>SSD — Data</td>
@@ -645,7 +665,7 @@
           </tr>
           <tr>
             <td>CPU</td>
-            <td class="drive">i5-13500K</td>
+            <td class="drive">i5-13600K</td>
             <td><span class="tag t-st">On hand</span></td>
             <td>—</td>
           </tr>
@@ -720,12 +740,6 @@
             <td class="drive">New UPS (TBD)</td>
             <td><span class="tag t-rt">To buy</span></td>
             <td>To protect Z690 during cutover.</td>
-          </tr>
-          <tr>
-            <td>M.2 Cooler</td>
-            <td class="drive">Active M.2 fan (1 more)</td>
-            <td><span class="tag t-rt">To buy</span></td>
-            <td>You have 1, need 2 (for 2TB + 1TB SN7100 drives in Z690).</td>
           </tr>
         </tbody>
       </table>
