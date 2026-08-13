@@ -4,7 +4,7 @@ import type { AppConfig } from "../src/config.js";
 
 const baseConfig: AppConfig = {
   baseUrl: "http://127.0.0.1:8080/v1",
-  model: "qwen3.6-35b",
+  model: "local-llm",
   queueBaseUrl: "http://127.0.0.1:8080",
   queuePollMs: 1,
   queueSource: "acp-qwen-agent",

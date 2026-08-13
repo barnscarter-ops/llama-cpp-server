@@ -81,7 +81,7 @@ if ($ContextFiles.Count -gt 0) {
 # ── Assemble the OpenAI-compatible request ───────────────────────────────
 
 $request = @{
-    model = "qwen3.6-35b"
+    model = "local-llm"
     stream = $false
     temperature = 0.1
     messages = @(

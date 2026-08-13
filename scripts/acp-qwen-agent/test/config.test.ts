@@ -21,7 +21,7 @@ describe("loadConfig", () => {
 
     const cfg = loadConfig(process.env);
     expect(cfg.baseUrl).toBe("http://127.0.0.1:8080/v1");
-    expect(cfg.model).toBe("qwen3.6-35b");
+    expect(cfg.model).toBe("local-llm");
     expect(cfg.queueBaseUrl).toBe("http://127.0.0.1:8080");
     expect(cfg.queuePollMs).toBe(750);
     expect(cfg.queueSource).toBe("acp-qwen-agent");

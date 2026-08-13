@@ -27,7 +27,7 @@ npm run build
 # Validate env + list models through guardian (exit 0 = model present)
 npm run build
 $env:ACP_QWEN_BASE_URL = 'http://127.0.0.1:8080/v1'
-$env:ACP_QWEN_MODEL = 'qwen3.6-35b'
+$env:ACP_QWEN_MODEL = 'local-llm'
 npm run start -- --health
 
 # Smoke test: validates the retained workspace safety helpers only.
@@ -44,7 +44,7 @@ npm run start -- --smoke
 | Variable | Default | Purpose |
 |---|---|---|
 | `ACP_QWEN_BASE_URL` | `http://127.0.0.1:8080/v1` | OpenAI-compatible base URL |
-| `ACP_QWEN_MODEL` | `qwen3.6-35b` | Model id from `GET /v1/models` |
+| `ACP_QWEN_MODEL` | `local-llm` | Model id from `GET /v1/models` |
 | `ACP_QUEUE_BASE_URL` | base URL derived from `ACP_QWEN_BASE_URL` | Guardian queue origin, normally `http://127.0.0.1:8080` |
 | `ACP_QUEUE_POLL_MS` | `750` | Job-status polling interval |
 | `ACP_QUEUE_SOURCE` | `acp-qwen-agent` | Durable queue/audit source label |
@@ -103,7 +103,7 @@ node C:\Workspace\Infrastructure\llama-cpp-server\scripts\acp-qwen-agent\dist\in
 
 ```powershell
 $env:ACP_QWEN_BASE_URL = 'http://127.0.0.1:8080/v1'
-$env:ACP_QWEN_MODEL = 'qwen3.6-35b'
+$env:ACP_QWEN_MODEL = 'local-llm'
 $env:ACP_QUEUE_BASE_URL = 'http://127.0.0.1:8080'
 $env:ACP_ALLOW_WRITES = 'false'
 ```

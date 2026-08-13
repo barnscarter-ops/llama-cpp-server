@@ -1,0 +1,219 @@
+{
+  "baseline_no_reasoning": {
+    "extra_flags": [
+      "--reasoning",
+      "off"
+    ],
+    "completions": {
+      "code_gen": {
+        "elapsed_s": 3.99,
+        "prompt_tokens": 73,
+        "completion_tokens": 550,
+        "tok_per_s": 137.8,
+        "content_len": 1968,
+        "reasoning_len": 0,
+        "content_preview": "```python\nfrom typing import Any, Dict, List\n\ndef group_and_sort(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]:\n    \"\"\"\n    Group a list of dictionaries by the 'category' key and retu"
+      },
+      "tool_call_json": {
+        "elapsed_s": 0.35,
+        "prompt_tokens": 83,
+        "completion_tokens": 28,
+        "tok_per_s": 79.5,
+        "content_len": 85,
+        "reasoning_len": 0,
+        "content_preview": "{\"tool\": \"get_weather\", \"arguments\": {\"location\": \"Dallas, TX\", \"units\": \"imperial\"}}"
+      },
+      "reasoning": {
+        "elapsed_s": 5.51,
+        "prompt_tokens": 104,
+        "completion_tokens": 749,
+        "tok_per_s": 136.0,
+        "content_len": 2314,
+        "reasoning_len": 0,
+        "content_preview": "Here is the step-by-step reasoning to calculate the total latency for a request to service A.\n\n### Step 1: Identify the dependencies\nWe are given the following dependency chain:\n*   **Service A** depe"
+      }
+    }
+  },
+  "reasoning_auto": {
+    "extra_flags": [],
+    "completions": {
+      "code_gen": {
+        "elapsed_s": 14.5,
+        "prompt_tokens": 73,
+        "completion_tokens": 2047,
+        "tok_per_s": 141.2,
+        "content_len": 2037,
+        "reasoning_len": 5855,
+        "content_preview": "Here's a clean, production-ready implementation:\n\n```python\nfrom typing import List, Dict\n\ndef group_by_category_and_sort_by_priority(items: List[dict]) -> Dict[str, List[dict]]:\n    \"\"\"\n    Group a l"
+      },
+      "tool_call_json": {
+        "elapsed_s": 4.19,
+        "prompt_tokens": 83,
+        "completion_tokens": 576,
+        "tok_per_s": 137.5,
+        "content_len": 85,
+        "reasoning_len": 2047,
+        "content_preview": "{\"tool\": \"get_weather\", \"arguments\": {\"location\": \"Dallas, TX\", \"units\": \"imperial\"}}"
+      },
+      "reasoning": {
+        "elapsed_s": 13.18,
+        "prompt_tokens": 104,
+        "completion_tokens": 1820,
+        "tok_per_s": 138.1,
+        "content_len": 815,
+        "reasoning_len": 5136,
+        "content_preview": "**Step-by-step reasoning:**\n\n1. **Service C:** The problem states that C takes 200 ms to respond.  \n   \u2192 `C_time = 200 ms`\n\n2. **Service B:** B depends on C, and its total time is given as \"100 ms + C"
+      }
+    }
+  },
+  "reasoning_on_budget_512": {
+    "extra_flags": [
+      "--reasoning",
+      "on",
+      "--reasoning-budget",
+      "512"
+    ],
+    "completions": {
+      "code_gen": {
+        "elapsed_s": 14.99,
+        "prompt_tokens": 73,
+        "completion_tokens": 2115,
+        "tok_per_s": 141.1,
+        "content_len": 6265,
+        "reasoning_len": 2138,
+        "content_preview": "4\n   ```python\n   from typing import List, Dict\n\n   def group_by_category_and_sort_by_priority(items: List[dict]) -> Dict[str, List[dict]]:\n       \"\"\"\n       Group a list of dictionaries by the 'categ"
+      },
+      "tool_call_json": {
+        "elapsed_s": 3.99,
+        "prompt_tokens": 83,
+        "completion_tokens": 540,
+        "tok_per_s": 135.4,
+        "content_len": 85,
+        "reasoning_len": 1918,
+        "content_preview": "{\"tool\": \"get_weather\", \"arguments\": {\"location\": \"Dallas, TX\", \"units\": \"imperial\"}}"
+      },
+      "reasoning": {
+        "elapsed_s": 7.64,
+        "prompt_tokens": 104,
+        "completion_tokens": 1042,
+        "tok_per_s": 136.4,
+        "content_len": 1678,
+        "reasoning_len": 1699,
+        "content_preview": "Let's break this down step by step, carefully interpreting the dependencies and how the timing formulas work.\n\n### Step 1: Understand the dependency structure\n- **C** is the base service with no depen"
+      }
+    }
+  },
+  "reasoning_on_budget_1024": {
+    "extra_flags": [
+      "--reasoning",
+      "on",
+      "--reasoning-budget",
+      "1024"
+    ],
+    "completions": {
+      "code_gen": {
+        "elapsed_s": 12.17,
+        "prompt_tokens": 73,
+        "completion_tokens": 1720,
+        "tok_per_s": 141.4,
+        "content_len": 2619,
+        "reasoning_len": 4148,
+        "content_preview": "Here's a clean, production-ready solution:\n\n```python\nfrom typing import List, Dict\n\ndef group_by_category_and_sort_by_priority(items: List[dict]) -> Dict[str, List[dict]]:\n    \"\"\"\n    Group a list of"
+      },
+      "tool_call_json": {
+        "elapsed_s": 4.25,
+        "prompt_tokens": 83,
+        "completion_tokens": 576,
+        "tok_per_s": 135.5,
+        "content_len": 85,
+        "reasoning_len": 2047,
+        "content_preview": "{\"tool\": \"get_weather\", \"arguments\": {\"location\": \"Dallas, TX\", \"units\": \"imperial\"}}"
+      },
+      "reasoning": {
+        "elapsed_s": 9.64,
+        "prompt_tokens": 104,
+        "completion_tokens": 1331,
+        "tok_per_s": 138.1,
+        "content_len": 944,
+        "reasoning_len": 3467,
+        "content_preview": "**Step-by-step reasoning:**\n\n1. **Identify the base service time:**  \n   Service C has a fixed response time of 200 ms.  \n   \u2192 `C_time = 200 ms`\n\n2. **Compute B's total time:**  \n   The problem states"
+      }
+    }
+  },
+  "kv_q8_0": {
+    "extra_flags": [
+      "--reasoning",
+      "off",
+      "--cache-type-k",
+      "q8_0",
+      "--cache-type-v",
+      "q8_0"
+    ],
+    "completions": {
+      "code_gen": {
+        "elapsed_s": 4.04,
+        "prompt_tokens": 73,
+        "completion_tokens": 546,
+        "tok_per_s": 135.3,
+        "content_len": 1940,
+        "reasoning_len": 0,
+        "content_preview": "```python\nfrom typing import Any, Dict, List\n\ndef group_and_sort(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]:\n    \"\"\"\n    Group a list of dictionaries by the 'category' key and retu"
+      },
+      "tool_call_json": {
+        "elapsed_s": 0.38,
+        "prompt_tokens": 83,
+        "completion_tokens": 28,
+        "tok_per_s": 74.6,
+        "content_len": 85,
+        "reasoning_len": 0,
+        "content_preview": "{\"tool\": \"get_weather\", \"arguments\": {\"location\": \"Dallas, TX\", \"units\": \"imperial\"}}"
+      },
+      "reasoning": {
+        "elapsed_s": 4.03,
+        "prompt_tokens": 104,
+        "completion_tokens": 529,
+        "tok_per_s": 131.4,
+        "content_len": 1750,
+        "reasoning_len": 0,
+        "content_preview": "Here is the step-by-step reasoning to calculate the total latency for a request to service A.\n\n### Step 1: Identify the dependencies\nWe are given the following dependency chain:\n*   **Service A** depe"
+      }
+    }
+  },
+  "ubatch_1024": {
+    "extra_flags": [
+      "--reasoning",
+      "off",
+      "--ubatch-size",
+      "1024"
+    ],
+    "completions": {
+      "code_gen": {
+        "elapsed_s": 4.0,
+        "prompt_tokens": 73,
+        "completion_tokens": 550,
+        "tok_per_s": 137.6,
+        "content_len": 1968,
+        "reasoning_len": 0,
+        "content_preview": "```python\nfrom typing import Any, Dict, List\n\ndef group_and_sort(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]:\n    \"\"\"\n    Group a list of dictionaries by the 'category' key and retu"
+      },
+      "tool_call_json": {
+        "elapsed_s": 0.38,
+        "prompt_tokens": 83,
+        "completion_tokens": 28,
+        "tok_per_s": 73.5,
+        "content_len": 85,
+        "reasoning_len": 0,
+        "content_preview": "{\"tool\": \"get_weather\", \"arguments\": {\"location\": \"Dallas, TX\", \"units\": \"imperial\"}}"
+      },
+      "reasoning": {
+        "elapsed_s": 5.49,
+        "prompt_tokens": 104,
+        "completion_tokens": 749,
+        "tok_per_s": 136.3,
+        "content_len": 2314,
+        "reasoning_len": 0,
+        "content_preview": "Here is the step-by-step reasoning to calculate the total latency for a request to service A.\n\n### Step 1: Identify the dependencies\nWe are given the following dependency chain:\n*   **Service A** depe"
+      }
+    }
+  }
+}

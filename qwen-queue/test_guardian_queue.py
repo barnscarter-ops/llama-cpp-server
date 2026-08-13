@@ -119,7 +119,7 @@ class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(202, response.status)
         submitted = await response.json()
         self.assertEqual("queued", submitted["status"])
-        self.assertEqual("qwen3.6-35b", self.module.guardian.job_store.get(submitted["job_id"]).request["model"])
+        self.assertEqual("local-llm", self.module.guardian.job_store.get(submitted["job_id"]).request["model"])
 
         response = await self.client.get(f"/__guardian/jobs/{submitted['job_id']}")
         self.assertEqual(200, response.status)

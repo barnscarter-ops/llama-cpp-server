@@ -6,7 +6,7 @@ const ConfigSchema = z.object({
     .string()
     .url()
     .default("http://127.0.0.1:8080/v1"),
-  model: z.string().min(1).default("qwen3.6-35b"),
+  model: z.string().min(1).default("local-llm"),
   queueBaseUrl: z.string().url(),
   queuePollMs: z.coerce.number().int().min(100).max(10_000).default(750),
   queueSource: z.string().min(1).max(80).default("acp-qwen-agent"),

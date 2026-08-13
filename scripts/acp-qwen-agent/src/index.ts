@@ -27,7 +27,7 @@ Usage:
 
 Environment:
   ACP_QWEN_BASE_URL   default http://127.0.0.1:8080/v1
-  ACP_QWEN_MODEL      default qwen3.6-35b
+  ACP_QWEN_MODEL      default local-llm
   ACP_QUEUE_BASE_URL  default base URL derived from ACP_QWEN_BASE_URL
   ACP_QUEUE_POLL_MS   default 750
   ACP_QUEUE_SOURCE    default acp-qwen-agent

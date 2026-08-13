@@ -7,7 +7,7 @@ $ECO = "$ROOT\ecosystem.config.cjs"
 $PM2_APP = "qwen3-llama"
 $LLAMA_PORT = 8081
 $HEALTH_URL = "http://127.0.0.1:$LLAMA_PORT/v1/models"
-$EXPECTED_ALIAS = "qwen3.6-35b"
+$EXPECTED_ALIAS = "local-llm"
 
 function Test-Command {
     param([string]$Name)

@@ -8,7 +8,7 @@ Required env vars (set in .env or shell before running):
   SLACK_BOT_TOKEN   xoxb-... (Bot User OAuth Token)
   SLACK_APP_TOKEN   xapp-... (App-Level Token with connections:write scope)
   LLAMA_BASE_URL    http://127.0.0.1:8080  (default)
-  LLAMA_MODEL       qwen3.6-35b-a3b        (must match --alias in your start script)
+  LLAMA_MODEL       local-llm              (must match --alias in your start script)
   SYSTEM_PROMPT     (optional override)
 
 Usage:
@@ -35,7 +35,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 BOT_TOKEN   = os.environ["SLACK_BOT_TOKEN"]
 APP_TOKEN   = os.environ["SLACK_APP_TOKEN"]
 LLAMA_URL   = os.environ.get("LLAMA_BASE_URL", "http://127.0.0.1:8080")
-LLAMA_MODEL = os.environ.get("LLAMA_MODEL", "qwen3.6-35b-a3b")
+LLAMA_MODEL = os.environ.get("LLAMA_MODEL", "local-llm")
 MAX_HISTORY = int(os.environ.get("MAX_HISTORY_TURNS", "20"))  # messages kept per thread
 
 SYSTEM_PROMPT = os.environ.get(

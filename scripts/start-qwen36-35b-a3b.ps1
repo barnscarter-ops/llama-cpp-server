@@ -35,7 +35,7 @@ if ((Test-Command "pm2") -and (Test-Path $ECO)) {
     & "$ROOT\llama-server.exe" `
         --model $MODEL `
         --host 127.0.0.1 --port 8081 `
-        --alias qwen3.6-35b `
+        --alias local-llm `
         --gpu-layers 99 `
         --ctx-size 131072 `
         --parallel 1 `

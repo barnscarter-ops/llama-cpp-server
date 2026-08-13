@@ -33,60 +33,49 @@ module.exports = {
     // directory if a rollback ever needs it (it would need a model re-download).
 
     // ─────────────────────────────────────────────────────────────────────
-    //  qwen3-llama-vulkan — Vulkan-backend twin of qwen3-llama.
+    //  qwen3-llama-vulkan — Vulkan backend on the R9700 (32GB).
     //
-    //  Staged 2026-08-04 for the Radeon AI PRO R9700 (32GB) install. Uses the
-    //  llama.cpp b10275 Vulkan build in ..\llama-cpp-server-vulkan\ (production
-    //  above is the CUDA b9550 build, left untouched for rollback).
+    //  MODEL CUTOVER 2026-08-12: Qwen3.6-35B → Nemotron 3.5 Lightning 30B-A3B.
+    //  Nemotron wins on every metric (R9700 Vulkan, b10362 build, tuned sweep):
+    //    - tg128: 152 t/s vs 133 t/s (+14%)
+    //    - code_gen: 138 t/s vs 90 t/s (+53% with --reasoning off)
+    //    - reasoning: 136 t/s vs 121 t/s (+12%)
+    //    - Same tool-call JSON correctness, more concise output
+    //  MTP tested and REJECTED on Vulkan: 90 t/s with spec vs 152 t/s without
+    //  (draft forward-pass overhead dominates; 66% acceptance can't overcome it).
+    //  KV q8_0, ubatch 1024 also tested — no gain or slight regression.
+    //  See: benchmarks/nemotron-tuning-sweep-*.json + bench-nemotron-vs-qwen-*.json
     //
-    //  Binds the SAME port 8081, so exactly one of the two may run at a time:
-    //      pm2 stop qwen3-llama && pm2 start qwen3-llama-vulkan
-    //  Rollback is the reverse. The guardian on 8080 is agnostic to which.
+    //  ROLLBACK: change --model back to Qwen3.6-35B-A3B-UD-Q4_K_M.gguf, remove
+    //  --reasoning off, and point cwd/exe back to llama-cpp-server-vulkan (b10275).
+    //  The Qwen GGUF is NOT deleted — it stays on disk for instant rollback.
     //
-    //  BEFORE FIRST START, see R9700-INSTALL.md. Two things must be set:
-    //    1. VK_LOADER_DRIVERS_SELECT below — pin to the R9700 by only loading
-    //       the AMD ICD. Do not pin by index (GGML_VK_VISIBLE_DEVICES):
-    //       enumeration order is not stable across process contexts.
-    //    2. --model / --ctx-size — the args below are copied from the CUDA
-    //       config and are sized for a 16GB card (IQ3_XXS was forced by VRAM).
-    //       On 32GB, requantize to Q4_K_M/Q5_K_M first; that is the real win.
-    //
-    //  Vulkan/R9700 Q5_K_M sweep 2026-08-06 (32k depth, 3 reps, 60s cool):
-    //  benchmarks/vulkan-tuning-sweep.md + tune-vulkan-q5km-*.log
-    //  Winner: ub512 / b2048 / flash-attn on / f16 KV — best prefill (2261 t/s),
-    //  tg within noise of ub1024 (111.9 vs 112.1). Larger ubatch/batch slower;
-    //  fa off tanks; q4/q8 KV hurts prefill hard for ~1 t/s tg.
+    //  Build: b10362 (4801e3c56) required for nemotron_h_moe architecture.
+    //  Previous b10275 build in ..\llama-cpp-server-vulkan\ is the rollback.
     // ─────────────────────────────────────────────────────────────────────
     {
       name: "qwen3-llama-vulkan",
       // Wrapper, not the exe — same Windows kill-reliability fix as qwen3-llama
       // above (this entry is the one that hit the 687-restart loop 2026-08-07).
       script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\launch-llama.cjs",
-      cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan",
+      cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan-b10362",
 
       env: {
         // Only load the AMD Vulkan ICD so the R9700 is always index 0.
-        // Do NOT use GGML_VK_VISIBLE_DEVICES with an index: enumeration order
-        // (Intel UHD 770 iGPU vs R9700) is not stable across process contexts —
-        // under the elevated PM2 daemon the child saw a different order and
-        // silently ran on the iGPU/CPU at ~2.6 t/s (2026-08-06). The loader
-        // filter is deterministic: the Intel ICD never loads at all.
         VK_LOADER_DRIVERS_SELECT: "*amd*",
       },
 
       args: [
-        // Q4_K_M (2026-08-11): beat Q5_K_M on the same-night A/B — +7% tg
-        // (140.5 vs 131.5), +3% pp, and HumanEval 10/10 + tools 3/3 vs Q5's
-        // 7/10 + 3/3 (bench-qwen36-q4km-vulkan.json). 4.1 GB smaller, so cold
-        // loads clear the guardian health window sooner. See
-        // benchmarks/bench-q4-vs-q5-perf-20260811.md. Q6_K does NOT fit at 64k.
-        // Alias set to the quant-neutral "qwen3.6-35b" — matches what the
-        // guardian queue (GUARDIAN_QUEUE_MODEL) and qwen-submit.ps1 send.
-        "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\llama-server.exe",
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+        // Nemotron 3.5 Lightning (2026-08-12): +14% tg, +53% code gen vs Qwen.
+        // --reasoning off is CRITICAL: Nemotron auto-detects thinking mode and
+        // burns 1500+ hidden tokens per request without it. Alias stays
+        // "local-llm" so guardian (GUARDIAN_QUEUE_MODEL) and qwen-submit work
+        // unchanged — the swap is transparent downstream.
+        "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan-b10362\\llama-server.exe",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
-        "--alias",      "qwen3.6-35b",
+        "--alias",      "local-llm",
         "--gpu-layers", "99",
         "--ctx-size",   "65536",
         "--parallel",   "1",
@@ -95,6 +84,7 @@ module.exports = {
         "--ubatch-size", "512",
         "--cont-batching",
         "--flash-attn",  "on",
+        "--reasoning",   "off",
       ],
 
       exec_mode: "fork",

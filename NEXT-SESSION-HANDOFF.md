@@ -7,7 +7,7 @@ e93d5f1..a4cae79 (this session's three commits).
 ## Current state (verified 2026-08-06 ~19:09)
 
 - Production **running**: `qwen3-llama-vulkan` + `llama-guardian` (pm2 save done).
-  Q5_K_M, alias `qwen3.6-35b`, 64k ctx, f16 KV, **ub512 / b2048 / flash-attn on**
+  Q5_K_M, alias `local-llm`, 64k ctx, f16 KV, **ub512 / b2048 / flash-attn on**
   (Vulkan sweep winner). SI driver `oem56`/`u0200492` @ 32.0.22042.14002.
 - Boot 18:33:42 after full TDR stack (TDR 60/60/120/10, MemoryCompression False,
   phantom NVIDIA + Adrenalin residuals purged). Canary + 9-config sweep: **zero**

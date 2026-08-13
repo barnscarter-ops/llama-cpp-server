@@ -6,7 +6,7 @@ import type { QwenChatClient } from "../src/qwen/client.js";
 
 const config: AppConfig = {
   baseUrl: "http://127.0.0.1:8080/v1",
-  model: "qwen3.6-35b",
+  model: "local-llm",
   timeoutMs: 5_000,
   allowWrites: false,
   workspace: undefined,
