@@ -13,7 +13,8 @@ HP ProDesk is retired and sold.
 
 ### Main PC — X870E AORUS Elite WiFi 7 + Ryzen 9 9900X
 
-> Parts table reconciled against the physical bench inventory on 2026-08-13.
+> Parts table reconciled against the physical bench inventory on 2026-08-13,
+> assembly state updated 2026-08-14.
 > `aiwa-transplant/transplant-map.html` is the live version — update both.
 
 | Component | Source | Notes |
@@ -22,15 +23,112 @@ HP ProDesk is retired and sold.
 | KLEVV BOLT V 32GB DDR5-6000 (2x16) | purchased | Do NOT run 4 mismatched DIMMs. 64GB kit ordered. |
 | ASUS ProArt GeForce RTX 4060 Ti 16GB | allocated | Confirmed from the card itself 2026-08-13 |
 | Samsung 9100 PRO 2TB (bare SKU) | purchased | New `C:`, clean Windows install. Gen 5 — needs the HR-10. |
-| Thermalright HR-10 2280 Pro Black | purchased | **Active** M.2 heatsink (30mm fan, 6000 RPM, 12V/0.09A). Second unit acquired — the "need 2" line is closed. |
+| Thermalright HR-10 2280 Pro Black ×3 | purchased | **Active** M.2 heatsink (30mm fan, 6000 RPM, 12V/0.09A). **Three on hand as of 2026-08-14** — a third was bought once both X870E drives were spoken for. Two go in the X870E (9100 PRO + SN7100), one to the Z690/AIWA. |
 | ASRock Challenger CL-850G | purchased | ATX 3.1, 80+ Gold, non-modular, native 12V-2x6 |
-| ARCTIC Liquid Freezer III Pro 360 A-RGB | purchased | First unit arrived used — **Amazon approved return + free replacement, delivering Fri 2026-08-15 AM** |
+| ARCTIC Liquid Freezer III Pro 360 A-RGB | purchased | First unit arrived used — **Amazon approved return + free replacement, delivering Fri 2026-08-14 AM**. Still not delivered as of Friday morning. |
 | NZXT AIO | already owned | **Unusable — mounting hardware lost.** Not a fallback. Needs a bracket, and NZXT retention varies by Kraken generation. |
 | Thermalright Frost Commander 140 | on the Z690 | **Night 1 fallback if the AIO slips.** Currently cooling the 13600K — see the conflict note below. |
 | Thermalright AM5 Secure Frame (black) | purchased | Contact frame, fits before the cooler |
 | Okinos Cypress 7 case | **arrived 2026-08-13** | On the bench. **38mm radiator clearance verified** by test-fitting the used AIO before it ships back. |
 | 2TB WD_BLACK SN7100 (`C:`, Windows) | stays | see VMD note below; becomes `D:` on the new board |
 | 1TB WD_BLACK SN7100 (`D:`, storage) | stays | wiped, becomes the Proxmox boot drive |
+
+### Build progress — 2026-08-14 morning
+
+Observed and reported by Carter, not verified by me:
+
+- 9900X seated on the X870E under the Thermalright Secure Frame
+- Board mounted **in the Okinos** — there was no bench stage, see below
+- RAM in **A2/B2** (correct for 2-DIMM AM5)
+- Samsung 9100 PRO in **M.2 slot 1**, between the GPU and the CPU, with an
+  HR-10 on it, intake facing up toward the CPU
+- RTX 4060 Ti installed with the anti-sag bracket. **It blocks M.2 slot 2.**
+- PSU bolted into the case, no wiring run yet
+- 9100 PRO's M.2 fan on `SYS_FAN2`; hub PWM-input jumper on `SYS_FAN1`, hub
+  itself not mounted yet
+- AIO had **not** arrived; still scheduled for the 14th
+
+**No bench stage.** Earlier revisions of this document and the map said to
+build on the motherboard box and drop the finished machine into the case
+afterward. That was written when the case was late. The case arrived on the
+13th, so Carter went straight into it on the 14th. Both documents have been
+corrected; if you find another "bench-build first" reference, it is stale.
+
+**The 4060 Ti blocks M.2 slot 2.** All four M.2 slots on this board are Gen 5,
+so the SN7100 (a Gen 4 drive) loses nothing by going in slot 3 instead of
+pulling the GPU back out. Use slot 3.
+
+### Fan, AIO and M.2 cooler wiring — final, verified against the hardware
+
+The board has **six** fan headers, not five as an earlier revision recorded.
+
+```
+CPU_FAN   <- AIO "FAN"  (3 radiator fans)   PWM, quiet curve
+CPU_PUMP  <- AIO "PUMP"                     PWM, leave at 100%
+CPU_OPT   <- AIO "VRM"                      PWM   <- not DC; ARCTIC specifies PWM
+SYS_FAN1  <- fan hub PWM input
+SYS_FAN2  <- M.2 fan, 9100 PRO (4-pin PWM)
+SYS_FAN3  <- M.2 fan, SN7100
+D_LED1    <- AIO A-RGB (3-pin 5V only — never the 4-pin 12V header)
+hub F-1   -> rear exhaust   (master port; the only one reporting RPM)
+hub F-2   -> front trio     (case's own splitter)
+hub POWER -> SATA or Molex direct from the PSU
+```
+
+Four things that were wrong at some point during the build session and are
+worth not re-deriving:
+
+1. **The AIO has three leads, not one.** The Liquid Freezer III **Pro** ships
+   two alternative control cables: an *All-in-One* single-connector cable, and
+   an *Individual control* cable ending in three connectors labelled PUMP, VRM
+   and FAN. Use the **individual** cable — it lets the pump sit at 100% while
+   the radiator fans follow a quiet curve. The all-in-one cable couples them.
+2. **`CPU_OPT` is PWM.** The VRM fan is 3-pin, which normally implies DC, but
+   ARCTIC's own documentation specifies PWM for all three headers.
+3. **The hub is required.** Those three AIO leads consume every CPU-side
+   header, so the four case fans have nowhere to go once the two M.2 coolers
+   take `SYS_FAN2`/`SYS_FAN3`. Earlier notes calling the hub a spare are wrong.
+4. **The hub needs its own PSU power.** It has a power-input *socket*, not a
+   captive pigtail — a SATA or Molex lead has to be run to it. A fan header
+   alone cannot feed four fans.
+
+Case fans are 4-pin, the front three are pre-split to one connector, and there
+is no RGB on them. Radiator mounts top, exhaust, fans underneath pushing up,
+tubes exiting at the rear. Per ARCTIC: **connect the PWM control cable before
+mounting the cooler to the board.**
+
+See `aiwa-transplant/transplant-map.html` (Night 1) for the diagram.
+
+### USB kit for the clean Windows install
+
+Staged 2026-08-14 at **`C:\Workspace\Active\x870e-usb-kit\`** — binaries stay
+out of this repo; the docs are mirrored to `aiwa-transplant/x870e-usb-kit/`.
+
+Four installers downloaded from vendor domains, SHA256-recorded and
+Authenticode-verified (all `Valid`): AMD chipset 8.07.16.1035, NVIDIA 595.97,
+Samsung Magician 9.0.1.950, and the Windows 11 Media Creation Tool.
+`verify-kit.ps1` re-checks all four and passes 4/4.
+
+Four items could **not** be staged — GIGABYTE returns HTTP 403 to every
+scripted request, and third-party driver mirrors are not an acceptable source
+for a BIOS image. BIOS, Wi-Fi 7 + Bluetooth, Realtek 2.5GbE LAN, and Realtek
+audio must be downloaded in a browser. Only the LAN driver is install-critical,
+and only if Windows 11 doesn't bring the NIC up itself.
+
+**Blocking on the board revision:** GIGABYTE publishes a different BIOS per
+revision (1.0/1.1, 1.2, 1.3) and Q-Flash Plus will write the wrong one. The
+revision also decides the Wi-Fi chip — MediaTek MT7925 on rev 1.0, Realtek
+RTL8922AE on rev 1.1/1.2. Read `REV: 1.x` off the silkscreen first.
+
+**Pull the SN7100 before running Windows Setup.** Setup places the EFI System
+Partition on whichever disk it likes when two are present. If it lands on the
+SN7100, the 9100 PRO stops booting the moment that drive moves — and it
+surfaces weeks later. This reverses the "install it early while the slot is
+reachable" instinct. That drive is also Night 2's backup target.
+
+**Build the Windows stick with the Media Creation Tool**, not a file copy —
+`install.wim` exceeds FAT32's 4 GB limit. Use a separate stick for the kit;
+MCT reformats its target.
 
 ### AIO cooler — resolved 2026-08-13, replacement lands Friday AM
 
