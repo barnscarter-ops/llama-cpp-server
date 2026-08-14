@@ -1,10 +1,10 @@
 # llama-cpp-server setup for Orca
-# Ensures the tuned Qwen3.6-35B-A3B llama-server is running via PM2.
+# Ensures the configured local llama-server is running via PM2.
 
 $ErrorActionPreference = "Stop"
 $ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ECO = "$ROOT\ecosystem.config.cjs"
-$PM2_APP = "qwen3-llama"
+$PM2_APP = "local-llm"
 $LLAMA_PORT = 8081
 $HEALTH_URL = "http://127.0.0.1:$LLAMA_PORT/v1/models"
 $EXPECTED_ALIAS = "local-llm"
@@ -57,7 +57,7 @@ if (-not $app) {
     Write-Warn "'$PM2_APP' is not registered in PM2. Registering from $ECO"
     pm2 start $ECO | Out-Null
 
-    # The ecosystem config registers qwen3-llama as STOPPED, so we must start it.
+    # The ecosystem config registers local-llm as STOPPED, so we must start it.
     pm2 start $PM2_APP | Out-Null
 } else {
     Write-Ok "'$PM2_APP' is registered (status: $($app.pm2_env.status))"
@@ -108,7 +108,7 @@ Write-Step "Ensuring PM2 startup is saved"
 pm2 save --force 2>$null | Out-Null
 
 Write-Host ""
-Write-Host "Setup complete. The Qwen3.6-35B-A3B server is ready." -ForegroundColor Green
+Write-Host "Setup complete. The local model server is ready." -ForegroundColor Green
 Write-Host "  Health:   $HEALTH_URL" -ForegroundColor Gray
 Write-Host "  Logs:     pm2 logs $PM2_APP" -ForegroundColor Gray
 Write-Host "  Stop:     pm2 stop $PM2_APP" -ForegroundColor Gray

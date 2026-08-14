@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ROOT = Split-Path -Parent $SCRIPT_DIR
 $ECO = "$ROOT\ecosystem.config.cjs"
-$PM2_APP = "qwen3-llama"
+$PM2_APP = "local-llm"
 $MODEL = "$ROOT\models\Qwen3.6-35B-A3B-UD-IQ2_XXS.gguf"
 
 function Test-Command {

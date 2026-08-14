@@ -20,6 +20,7 @@ logs/*.sqlite3-wal
 ## Backup files
 *.bak
 *.bak-*
+dump.pm2
 
 ## Finetune data/adapters
 finetunes/

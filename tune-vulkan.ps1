@@ -29,7 +29,7 @@ if (-not (Test-Path $Model)) { throw "Model not found: $Model" }
 
 # Pin to the AMD card by ICD filter, NOT by device index — enumeration order
 # (Intel iGPU vs R9700) is not stable across process contexts. See
-# ecosystem.config.cjs qwen3-llama-vulkan env block (2026-08-06 incident).
+# ecosystem.config.cjs local-llm env block (2026-08-06 incident).
 $env:VK_LOADER_DRIVERS_SELECT = "*amd*"
 if ($Device) { $env:GGML_VK_VISIBLE_DEVICES = $Device }  # legacy override, avoid
 
@@ -41,7 +41,7 @@ if ($Device) { $env:GGML_VK_VISIBLE_DEVICES = $Device }  # legacy override, avoi
 $guardianUp = Test-NetConnection -ComputerName 100.124.216.11 -Port 8080 -InformationLevel Quiet -WarningAction SilentlyContinue
 if ($guardianUp) { throw "llama-guardian is listening on 100.124.216.11:8080 — stop it via PM2 first. NEVER sweep alongside prod." }
 $llamaUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 8081 -InformationLevel Quiet -WarningAction SilentlyContinue
-if ($llamaUp) { throw "Port 8081 is listening — stop qwen3-llama-vulkan via PM2 first." }
+if ($llamaUp) { throw "Port 8081 is listening — stop local-llm via PM2 first." }
 if (Get-Process llama-server -ErrorAction SilentlyContinue) {
   throw "An llama-server.exe process is still running — kill/verify before sweeping."
 }
@@ -116,4 +116,4 @@ $md += ""
 Add-Content -Path $out -Value ($md -join "`n")
 
 Write-Host "Appended to $out" -ForegroundColor Gray
-Write-Host "Apply the winner to ecosystem.config.cjs (qwen3-llama-vulkan block)." -ForegroundColor Gray
+Write-Host "Apply the winner to ecosystem.config.cjs (local-llm block)." -ForegroundColor Gray

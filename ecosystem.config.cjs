@@ -1,12 +1,12 @@
 // ecosystem.config.cjs — PM2 process definitions for llama-cpp-server
 //
 // Register with:  pm2 start ecosystem.config.cjs          (starts paused or running)
-// Start:          pm2 start qwen3-llama                  (start if stopped)
-// Stop:           pm2 stop qwen3-llama                   (stop without removing)
-// Remove:         pm2 delete qwen3-llama                 (remove from PM2 entirely)
+// Start:          pm2 start local-llm                    (start if stopped)
+// Stop:           pm2 stop local-llm                     (stop without removing)
+// Remove:         pm2 delete local-llm                   (remove from PM2 entirely)
 //
 // TUNED SETTINGS:
-//   - Model: Qwen3.6-35B-A3B-UD-IQ3_XXS (100% GPU offload; MoE, 3B active)
+//   - Model: NVIDIA Nemotron 3.5 Lightning 30B-A3B Q4_K_M (100% GPU offload)
 //   - Context: 64k (15.26 GB peak VRAM at filled ctx — tuned sweep 2026-08-04)
 //   - KV Cache: F16 (faster AND higher quality than q4_0 on this model; KV is
 //     tiny thanks to GQA, so f16 fits even at 64k)
@@ -21,19 +21,19 @@
 //     that never terminate — the guardian auto-retries non-streaming
 //     finish_reason=length responses with a nudged seed, see llama-guardian.py)
 //
-// NOTE: This config registers qwen3-llama as STOPPED by default.
+// NOTE: This config registers local-llm as STOPPED by default.
 //       llama-guardian starts it on demand via port 8080 proxy.
 //       Parallel kept at 1 — single slot, matches bench config.
 
 module.exports = {
   apps: [
-    // qwen3-llama (CUDA/4060 Ti entry) removed 2026-08-11: its IQ3_XXS model
+    // The former CUDA/4060 Ti entry was removed 2026-08-11: its IQ3_XXS model
     // was deleted along with every other quant — Q4_K_M below is deliberately
     // the only model on disk. The CUDA b9550 build itself is still in this
     // directory if a rollback ever needs it (it would need a model re-download).
 
     // ─────────────────────────────────────────────────────────────────────
-    //  qwen3-llama-vulkan — Vulkan backend on the R9700 (32GB).
+    //  local-llm — Vulkan backend on the R9700 (32GB).
     //
     //  MODEL CUTOVER 2026-08-12: Qwen3.6-35B → Nemotron 3.5 Lightning 30B-A3B.
     //  Nemotron wins on every metric (R9700 Vulkan, b10362 build, tuned sweep):
@@ -54,8 +54,8 @@ module.exports = {
     //  Previous b10275 build in ..\llama-cpp-server-vulkan\ is the rollback.
     // ─────────────────────────────────────────────────────────────────────
     {
-      name: "qwen3-llama-vulkan",
-      // Wrapper, not the exe — same Windows kill-reliability fix as qwen3-llama
+      name: "local-llm",
+      // Wrapper, not the exe — Windows kill-reliability fix for llama-server
       // above (this entry is the one that hit the 687-restart loop 2026-08-07).
       script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\launch-llama.cjs",
       cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan-b10362",
@@ -99,8 +99,8 @@ module.exports = {
       shutdown_with_message: true,       // wrapper listens for PM2's IPC 'shutdown' and tree-kills the exe
 
       log_date_format: "YYYY-MM-DD HH:mm:ss",
-      error_file: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\qwen3-llama-vulkan-error.log",
-      out_file:   "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\qwen3-llama-vulkan-out.log",
+      error_file: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\local-llm-error.log",
+      out_file:   "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan\\logs\\local-llm-out.log",
     },
 
     // ─────────────────────────────────────────────────────────────────────
@@ -110,8 +110,8 @@ module.exports = {
     //  internal port 8081. Pre-warms llama when MCC boots, and
     //  stops llama after 30 min idle. See llama-guardian.py for full docs.
     //
-    //  This app ALWAYS auto-starts (~40MB RAM). It controls qwen3-llama's
-    //  lifecycle — qwen3-llama itself stays stopped until the guardian or a
+    //  This app ALWAYS auto-starts (~40MB RAM). It controls local-llm's
+    //  lifecycle — local-llm itself stays stopped until the guardian or a
     //  user starts it.
     // ─────────────────────────────────────────────────────────────────────
     {

@@ -14,4 +14,4 @@ Write-Host "=== Newest WATCHDOG ==="
 Get-ChildItem C:\Windows\LiveKernelReports\WATCHDOG -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name, LastWriteTime
 Write-Host "=== GPU ==="
 Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, Status | Format-Table -AutoSize
-Write-Host "DONE — if clean, start ONLY qwen3-llama-vulkan via elevated pm2, one short gen, then controlled stop/start with 60s gap"
+Write-Host "DONE — if clean, start ONLY local-llm via elevated pm2, one short gen, then controlled stop/start with 60s gap"

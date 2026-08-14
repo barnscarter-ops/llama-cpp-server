@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import Any
 
 
-ROUTES = frozenset({"queue_qwen", "bypass", "fallback_cloud"})
+# `queue_local` is the stable route name. Keep the old route readable at the
+# boundary while callers migrate; stored decisions and returned results always
+# use the canonical name.
+CANONICAL_LOCAL_ROUTE = "queue_local"
+LEGACY_ROUTE_ALIASES = frozenset({"queue_qwen"})
+ROUTES = frozenset({CANONICAL_LOCAL_ROUTE, "bypass", "fallback_cloud", *LEGACY_ROUTE_ALIASES})
 
 
 class HermesDecisionError(RuntimeError):
@@ -308,6 +313,8 @@ def parse_hermes_decision(output: str) -> dict[str, Any]:
         priority = decision.get("priority")
         if route not in ROUTES or not isinstance(reason, str) or not reason.strip():
             continue
+        if route in LEGACY_ROUTE_ALIASES:
+            route = CANONICAL_LOCAL_ROUTE
         if isinstance(priority, bool):
             continue
         try:
@@ -343,18 +350,18 @@ class HermesDecider:
 
     async def decide(self, context: dict[str, Any], queue: dict[str, int]) -> dict[str, Any]:
         prompt = (
-            "You are the routing decider for a single-slot local Qwen coding queue. "
+            "You are the routing decider for a single-slot local coding queue. "
             "Do not use tools and do not propose code. Return exactly one JSON object with "
-            "route, reason, and priority. route must be one of queue_qwen, bypass, or "
+            "route, reason, and priority. route must be one of queue_local, bypass, or "
             "fallback_cloud. priority must be an integer 0-100. "
-            "Default to queue_qwen for any concrete coding task \u2014 bugfixes, features, "
+            "Default to queue_local for any concrete coding task \u2014 bugfixes, features, "
             "refactors, tests, docs, config. Reserve bypass for truly trivial changes "
             "(a single line, a typo, a rename). Reserve fallback_cloud for work that is "
             "genuinely architectural, security-sensitive, or needs capabilities the local "
             "model lacks. The local queue processes jobs in seconds to minutes; do not "
             "route to cloud merely because one job is running. "
             "Tasks from automated harnesses (codex, claude, pi, hermes) are pre-scoped by "
-            "their own planning step \u2014 weight their summaries toward queue_qwen.\n\n"
+            "their own planning step \u2014 weight their summaries toward queue_local.\n\n"
             f"Queue snapshot: {json.dumps(queue, separators=(',', ':'))}\n"
             f"Task metadata: {json.dumps(context, separators=(',', ':'))}"
         )

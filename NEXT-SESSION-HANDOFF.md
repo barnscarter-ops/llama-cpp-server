@@ -1,5 +1,33 @@
 # Next Session Handoff — post-Q5_K_M-cutover tasks
 
+> Historical Qwen/Q5 incident notes follow. The section below is the current
+> operational source of truth as of 2026-08-14.
+
+## Current state (verified 2026-08-14)
+
+- Production identity is **`local-llm`**, served by PM2 behind
+  **`llama-guardian`**. The retired `qwen3-llama-vulkan` PM2 entry was removed
+  after a private `C:\ProgramData\pm2\dump.pm2` rollback backup.
+- The active GGUF is `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` on
+  the R9700 Vulkan build, with alias `local-llm`, 64k context, parallel 1,
+  continuous batching, flash attention, and reasoning disabled.
+- A no-tools Pi request through `llamacpp/local-llm` returned
+  `NEMOTRON_LOCAL_READY`; `/v1/models` advertises `local-llm` while loaded.
+- Guardian and queue use model-neutral names: `local-llm` and `queue_local`.
+  Legacy Qwen model/route IDs remain accepted only as compatibility inputs.
+- Idle reaper is **30 minutes**. It skips active proxy requests and queued
+  work, and polls direct 8081 slots every five seconds to avoid stopping an
+  in-flight direct request.
+- Validation: `python -m pytest qwen-queue/test_guardian_queue.py` passed
+  7/7; Python compile and `node --check ecosystem.config.cjs` passed.
+
+## Session-close follow-up
+
+- Keep `dump.pm2` untracked; it can include PM2 environment data. The repo
+  `.gitignore` explicitly excludes it.
+- Commit and push the model-neutral migration on `main`; no additional
+  service action is required for the 30-minute reaper setting.
+
 Written 2026-08-06 (~09:20) after the Q5_K_M requant + guardian hardening
 session. Prior context: R9700-SWAP-HANDOFF.md (cutover) and git log
 e93d5f1..a4cae79 (this session's three commits).

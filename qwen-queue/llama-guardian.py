@@ -12,8 +12,8 @@ Four jobs:
   2. PRE-WARM       — when MCC (3000) comes online, start llama so it's
                       hot before the first real request.
   3. IDLE REAPER    — stop llama after IDLE_TIMEOUT_MIN of no activity.
-  4. QWEN QUEUE     — ask Hermes whether a bounded coding task should enter
-                      a durable, single-worker local Qwen queue.
+  4. LOCAL QUEUE    — ask Hermes whether a bounded coding task should enter
+                      a durable, single-worker local-model queue.
 
 WHY A PROXY (not a process watcher)
 ===================================
@@ -25,7 +25,7 @@ MCC needs ZERO changes — it keeps hitting localhost:8080.
 
 PM2 LIFECYCLE
 =============
-  - qwen3-llama:   registered STOPPED. This guardian controls its lifecycle.
+  - local-llm:     registered STOPPED. This guardian controls its lifecycle.
                    autorestart=true so it recovers from crashes while running,
                    but never auto-starts on boot.
   - llama-guardian: auto-starts on boot (this file). ~40MB RAM.
@@ -48,7 +48,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import ClientError, ClientTimeout, web
 
-from guardian_queue import HermesDecider, HermesDecisionError, JobStore, QueueJob
+from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONFIG — tune here. All times in seconds unless noted.
@@ -78,14 +78,14 @@ LISTENER_REARM_MAX = 3            # failed re-arms before exiting for PM2
 PREWARM_PORTS = [3000]            # 3000 = MCC. 3012 (customer-chat/maverickforge) migrated to AIWA — cloud DeepSeek via hermes gateway, no longer local.
 PREWARM_POLL_S = 5                # how often to check prewarm ports
 
-# Qwen3.6 reasoning loops never self-terminate: a stuck trajectory burns the
+# Local reasoning loops can fail to self-terminate: a stuck trajectory burns the
 # whole token budget and returns finish_reason=length (verified 2026-08-04 —
 # tripling the cap reproduced the identical failures). A nudged seed takes a
 # different trajectory and almost always completes. Applies only to
 # non-streaming chat completions; streams can't be retried mid-flight.
 LENGTH_RETRY_MAX = 2              # extra attempts after a finish_reason=length
 
-IDLE_TIMEOUT_MIN = 60             # stop llama after this many idle minutes
+IDLE_TIMEOUT_MIN = 30             # stop llama after this many idle minutes
 # Allow override for testing (e.g. IDLE_TIMEOUT_MIN=1 to test the reaper fast)
 if os.environ.get("IDLE_TIMEOUT_MIN"):
     IDLE_TIMEOUT_MIN = int(os.environ["IDLE_TIMEOUT_MIN"])
@@ -117,7 +117,7 @@ HEALTH_POLL_S = 1                 # how often to poll while waiting
 GPU_PROBE_MIN_TPS = float(os.environ.get("GUARDIAN_GPU_PROBE_MIN_TPS", "40"))
 GPU_PROBE_TIMEOUT_S = 30          # CPU worst case: ~20 gen tokens at 10 t/s + prompt
 
-PM2_APP = "qwen3-llama-vulkan"    # PM2 process name for llama-server (R9700 Vulkan build)
+PM2_APP = "local-llm"              # PM2 process name for llama-server (R9700 Vulkan build)
 
 # Hermes-decided durable job queue.  It is intentionally loopback-only by
 # default because the guardian also listens on Tailscale-facing interfaces.
@@ -127,6 +127,7 @@ QUEUE_DB_PATH = os.environ.get(
 QUEUE_MAX_REQUEST_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
 QUEUE_MAX_RESULT_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_RESULT_BYTES", str(2 * 1024 * 1024)))
 QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
+LEGACY_MODEL_ALIASES = frozenset({"qwen3.6-35b", "qwen3-llama"})
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
@@ -307,7 +308,7 @@ def _pm2_exe_path() -> str:
 
 
 def _pm2_get_llama_pid() -> tuple[str, int]:
-    """Query PM2 for qwen3-llama's status and PID.
+    """Query PM2 for local-llm's status and PID.
 
     Source of truth for the single-llama enforcer. Returns (status, pid):
       - status: 'online' | 'stopped' | 'errored' | 'unknown'
@@ -505,7 +506,7 @@ HOP_BY_HOP = frozenset(
 
 
 WARMING_MSG = (
-    "Qwen is getting dressed — model is loading onto the GPU. "
+    "The local model is loading onto the GPU. "
     "Wait ~20–40 seconds and send your request again."
 )
 
@@ -525,6 +526,18 @@ def warming_response(extra=None) -> web.Response:
         status=503,
         headers={"Retry-After": "30"},
     )
+
+
+def normalize_legacy_model_alias(body: bytes) -> tuple[bytes, bool]:
+    """Rewrite retired public model IDs to the stable local-model alias."""
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return body, False
+    if not isinstance(payload, dict) or payload.get("model") not in LEGACY_MODEL_ALIASES:
+        return body, False
+    payload["model"] = QUEUE_MODEL_ALIAS
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8"), True
 
 
 def _queue_authorized(request: web.Request) -> bool:
@@ -589,7 +602,7 @@ async def _validate_queue_submission(request: web.Request) -> tuple[str, str, di
 
 
 async def queue_submit(request: web.Request) -> web.Response:
-    """Ask Hermes to route a candidate task, then enqueue Qwen work if approved."""
+    """Ask Hermes to route a candidate task, then enqueue local-model work if approved."""
     if not _queue_authorized(request):
         return _queue_forbidden()
     try:
@@ -610,7 +623,7 @@ async def queue_submit(request: web.Request) -> web.Response:
         )
 
     guardian.job_store.log_decision(source, decision, context)
-    if decision["route"] != "queue_qwen":
+    if decision["route"] != CANONICAL_LOCAL_ROUTE:
         return web.json_response({"status": "not_queued", "decision": decision})
 
     job, created = guardian.job_store.submit(
@@ -676,19 +689,19 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
             return web.json_response(
                 {
                     "error": {
-                        "message": "Local Qwen is asleep (idle). Send a chat to wake it.",
+                        "message": "The local model is asleep (idle). Send a chat to wake it.",
                         "type": "llama_offline",
                         "code": "llama_offline",
                     },
-                    "message": "Local Qwen is asleep (idle). Send a chat to wake it.",
+                    "message": "The local model is asleep (idle). Send a chat to wake it.",
                 },
                 status=503,
             )
         # Real work while cold: kick the load, return a friendly 503 immediately.
         # Holding the HTTP request for 30–60s of GGUF load usually just produces
         # client timeouts / ugly status codes. Agents/orchestrator/MCC retry once
-        # (or the human resends) — by then Qwen is dressed.
-        log.info("cold generation request — dressing Qwen (async start + friendly 503)")
+        # (or the human resends) — by then the local model is ready.
+        log.info("cold generation request — starting local model (async start + friendly 503)")
         asyncio.create_task(ensure_llama_started(reason="request"))
         return warming_response()
 
@@ -699,6 +712,11 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }
     body = await request.read()
+    body, model_alias_normalized = normalize_legacy_model_alias(body)
+    if model_alias_normalized:
+        # The payload length changed, so aiohttp must calculate a fresh value.
+        fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
+        log.info("normalized retired model alias to %s", QUEUE_MODEL_ALIAS)
 
     # Length-retry applies only to non-streaming chat completions we can parse.
     req_json = None
@@ -767,11 +785,11 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
             return web.json_response(
                 {
                     "error": {
-                        "message": f"Local Qwen hiccup: {e}",
+                        "message": f"Local model upstream error: {e}",
                         "type": "upstream_error",
                         "code": "upstream_error",
                     },
-                    "message": f"Local Qwen hiccup: {e}",
+                    "message": f"Local model upstream error: {e}",
                 },
                 status=502,
             )
@@ -813,11 +831,11 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
             return web.json_response(
                 {
                     "error": {
-                        "message": f"Local Qwen hiccup: {e}",
+                        "message": f"Local model upstream error: {e}",
                         "type": "upstream_error",
                         "code": "upstream_error",
                     },
-                    "message": f"Local Qwen hiccup: {e}",
+                    "message": f"Local model upstream error: {e}",
                 },
                 status=502,
             )
@@ -837,7 +855,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  HERMES-DECIDED QWEN QUEUE
+#  HERMES-DECIDED LOCAL QUEUE
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -847,7 +865,7 @@ async def run_queued_job(job: QueueJob) -> None:
     try:
         async with guardian.generation_lock:
             if not await ensure_llama_started(reason=f"queue:{job.job_id}"):
-                guardian.job_store.fail(job.job_id, "Qwen did not become healthy before the queue timeout.")
+                guardian.job_store.fail(job.job_id, "Local model did not become healthy before the queue timeout.")
                 return
 
             guardian.active_requests += 1
@@ -863,12 +881,12 @@ async def run_queued_job(job: QueueJob) -> None:
                     if len(body) > QUEUE_MAX_RESULT_BYTES:
                         guardian.job_store.fail(
                             job.job_id,
-                            f"Qwen result exceeded durable queue limit of {QUEUE_MAX_RESULT_BYTES} bytes.",
+                            f"Local-model result exceeded durable queue limit of {QUEUE_MAX_RESULT_BYTES} bytes.",
                         )
                         return
                     text = body.decode(errors="replace")
                     if upstream_resp.status >= 400:
-                        guardian.job_store.fail(job.job_id, f"Qwen returned HTTP {upstream_resp.status}: {text[:1200]}")
+                        guardian.job_store.fail(job.job_id, f"Local model returned HTTP {upstream_resp.status}: {text[:1200]}")
                         return
                     try:
                         result = json.loads(text)
@@ -881,7 +899,7 @@ async def run_queued_job(job: QueueJob) -> None:
                     log.info(f"queue succeeded {job.job_id}")
             except (ClientError, asyncio.TimeoutError) as exc:
                 guardian._llama_up = False
-                guardian.job_store.fail(job.job_id, f"Qwen request failed: {exc}")
+                guardian.job_store.fail(job.job_id, f"Local-model request failed: {exc}")
                 log.warning(f"queue failed {job.job_id}: {exc}")
             finally:
                 guardian.active_requests -= 1
@@ -897,7 +915,7 @@ async def queue_worker(app: web.Application) -> None:
     recovered = guardian.job_store.recover_interrupted()
     if recovered:
         log.warning(f"queue requeued {recovered} interrupted job(s) after guardian restart")
-    log.info("Hermes-decided Qwen queue worker started")
+    log.info("Hermes-decided local queue worker started")
     try:
         while True:
             job = guardian.job_store.claim_next()
@@ -915,12 +933,12 @@ async def queue_worker(app: web.Application) -> None:
             except asyncio.TimeoutError:
                 pass
     except asyncio.CancelledError:
-        log.info("Hermes-decided Qwen queue worker cancelled")
+        log.info("Hermes-decided local queue worker cancelled")
         raise
 
 
 async def guardian_sleep(request: web.Request) -> web.Response:
-    """Stop an idle Qwen cleanly after a verification run or manual drain."""
+    """Stop an idle local model cleanly after a verification run or manual drain."""
     if not _queue_authorized(request):
         return _queue_forbidden()
     summary = guardian.job_store.summary()
@@ -928,7 +946,7 @@ async def guardian_sleep(request: web.Request) -> web.Response:
         return web.json_response(
             {
                 "error": {
-                    "message": "Qwen cannot sleep while a generation or queue job is active.",
+                    "message": "The local model cannot sleep while a generation or queue job is active.",
                     "code": "queue_not_idle",
                 }
             },
@@ -939,7 +957,7 @@ async def guardian_sleep(request: web.Request) -> web.Response:
         async with guardian.start_lock:
             if guardian.active_requests:
                 return web.json_response(
-                    {"error": {"message": "Qwen became active while draining.", "code": "queue_not_idle"}},
+                    {"error": {"message": "The local model became active while draining.", "code": "queue_not_idle"}},
                     status=409,
                 )
             if not await guardian.is_llama_up():
@@ -947,12 +965,12 @@ async def guardian_sleep(request: web.Request) -> web.Response:
             stopped, detail = await pm2("stop")
             if not stopped:
                 return web.json_response(
-                    {"error": {"message": f"PM2 could not stop Qwen: {detail[:600]}", "code": "pm2_stop_failed"}},
+                    {"error": {"message": f"PM2 could not stop the local model: {detail[:600]}", "code": "pm2_stop_failed"}},
                     status=502,
                 )
             guardian._llama_up = False
             guardian.last_request_time = time.time()
-            log.info("Qwen put to sleep by local guardian control request")
+            log.info("Local model put to sleep by guardian control request")
             return web.json_response({"status": "asleep", "llama_up": False})
 
 

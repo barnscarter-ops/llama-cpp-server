@@ -1,6 +1,6 @@
-# qwen-queue
+# Local-model queue
 
-Everything for the Hermes-decided Qwen coding queue, consolidated 2026-07-22.
+Everything for the Hermes-decided local-model coding queue, consolidated 2026-07-22.
 
 ## Contents
 
