@@ -1,41 +1,56 @@
-# Task 4 — Monday Night Backup Sequence (2026-08-11 → 08-12)
+# Task 4 — Monday Night Backup Sequence (2026-08-17 → 08-18)
 
-Drafted 2026-08-11. **Not yet approved — nothing here runs until Carter says go
+Drafted 2026-08-11, **re-dated 2026-08-13** — the original 08-11 date passed
+without the run. **Not yet approved — nothing here runs until Carter says go
 on the night.** All commands run via Orca on `aiwa-host` unless marked
 `[main PC]`. Approval gates are marked ⛔.
 
 ## Decisions baked into this plan
 
-- **Backups land on C:, not D:.** Revised 2026-08-11: the 1 TB SN7100 (D:) is
-  being repurposed as the new AIWA's boot drive and will be wiped, so nothing
-  durable can live there. C: has 1211 GB free and moves to the X870E intact.
+- **Backups land on the 2 TB SN7100, which is `D:` by the time this runs.**
+  Revised 2026-08-11, corrected 2026-08-13 for the drive-letter shift. The
+  reasoning is unchanged — the 1 TB SN7100 becomes the new AIWA's Proxmox boot
+  drive and gets wiped, so nothing durable can live on it — but **Night 1
+  (Fri 2026-08-14) renames the target**. The 2 TB SN7100 is `C:` today with
+  1166 GB free; it moves to the X870E and comes back as **`D:`** with its data
+  intact, while the fresh Samsung 9100 PRO becomes the new `C:`.
+
+  So on Monday night, **write to `D:\`, not `C:\`**. `C:` will be a days-old
+  Windows install on a different physical disk. Verify the letter with
+  `Get-Volume` before the first robocopy rather than trusting this table —
+  if Night 1 slipped and the swap hasn't happened, the target is still `C:`.
+  The disk is the same either way: the 2 TB WD_BLACK SN7100.
 - **840 PRO (500 GB SATA) retires with the old hardware.** Its 266 GB of live
-  data gets copied to main PC `C:\aiwa-840pro\` Monday night. The cutover
+  data gets copied to main PC `D:\aiwa-840pro\` Monday night. The cutover
   runbook (task 6) will re-home `/mnt/samsung-sata` consumers onto the new
   host's storage.
 - **R9700 stays in the Z690** — no GPU moves on swap night.
 - **Grizzly photos → Google Photos**, not a drive rescue. **Confirmed backed up
   by Carter 2026-08-11** — the Toshiba (`E:`) is now free to retire on swap
   night with no rescue copy. Not part of Monday.
-- Monday is chosen because the Sunday 02:00 RAG refresh and the sun 03:00
-  vzdump of CT 102 have both completed — backups capture a fresh, quiet state.
+- **Monday 2026-08-17** is chosen because the Sunday 02:00 RAG refresh and the
+  Sunday 03:00 vzdump of CT 102 have both completed — backups capture a fresh,
+  quiet state. It also lands after Night 1, so the target drive is settled.
 
 ## Copy map (end state Monday night)
 
-| Artifact | Size (est) | AIWA local | Main PC C: | SanDisk 256 GB |
+| Artifact | Size (est) | AIWA local | Main PC `D:` (2 TB SN7100) | SanDisk 256 GB |
 |---|---|---|---|---|
 | vzdump ×4 CTs (zstd) | ~10–15 GB | ✔ /var/lib/vz/dump | ✔ | ✔ |
 | Host-state tarball | ~8–12 GB | ✔ /var/lib/vz/dump | ✔ | ✔ |
 | SHA256SUMS | — | ✔ | ✔ | ✔ |
 | 840 PRO data (266 GB) | 266 GB | (source drive itself) | ✔ | ✂ doesn't fit |
 
-The 840 PRO data ends with two copies (the drive itself until cutover + C:).
-The core set ends with three. SanDisk is disconnected at the end.
+The 840 PRO data ends with two copies (the drive itself until cutover + the
+2 TB SN7100). The core set ends with three. SanDisk is disconnected at the end.
 
-**Drive-letter warning:** on the main PC, `E:` is currently the **Toshiba
-"Archive"** drive, not the SanDisk. Confirm the SanDisk's actual letter when it
-is plugged in (Phase 5) and substitute it — do not run Phase 5 against E:
-blind.
+**Drive-letter warning:** every letter on the main PC moves on Friday 08-14.
+The 2 TB SN7100 goes `C:` → `D:`, a fresh 9100 PRO becomes `C:`, and the
+Toshiba "Archive" (`E:` today) is pulled and retired that night. So `E:` may
+well be free by Monday and land on the SanDisk — which is convenient and also
+exactly how the wrong drive gets written. **Run `Get-Volume` first and
+substitute the letters you actually observe.** Do not run any phase against a
+letter this document asserts.
 
 ## Phase 0 — Pre-flight (read-only, can run before Monday)
 
@@ -57,11 +72,13 @@ docker system df -v | head -40
 # 0.4 SMART quick re-check both drives
 smartctl -H /dev/nvme0; smartctl -H /dev/sda
 
-# 0.5 [main PC] free space on C: (need ~300 GB) and SanDisk present
-Get-PSDrive C | Select-Object Free
+# 0.5 [main PC] confirm drive letters post-Night-1, free space (need ~300 GB), SanDisk present
+Get-Volume | Where-Object DriveLetter | Format-Table DriveLetter, FileSystemLabel, Size, SizeRemaining
+# expect: 2 TB SN7100 as D: with ~1166 GB free. If it is still C:, Night 1 has not run.
 ```
 
-Abort criteria: any SMART FAIL, <30 GB free on AIWA local, <300 GB free on C:.
+Abort criteria: any SMART FAIL, <30 GB free on AIWA local, <300 GB free on the
+2 TB SN7100, or the SN7100 not appearing at the letter the later phases use.
 
 ## Phase 1 — vzdump all four CTs (~20 min)
 
@@ -93,7 +110,7 @@ crontab -l > /root/crontab-root-backup.txt
 
 # (if approved) systemctl stop docker
 
-tar --xattrs --acls --numeric-owner -czf /var/lib/vz/dump/aiwa-host-state-20260811.tar.gz \
+tar --xattrs --acls --numeric-owner -czf /var/lib/vz/dump/aiwa-host-state-20260817.tar.gz \
   /etc /root /opt /home /usr/local/bin \
   /var/lib/tailscale /var/lib/samba/private /var/lib/docker/volumes \
   /var/spool/cron 2>/tmp/tar-warnings.txt
@@ -103,17 +120,17 @@ tail /tmp/tar-warnings.txt   # expect only "file changed as we read it" class no
 ```
 
 Secrets note: the five .env files ride inside this tarball. The tarball goes
-only to C: and the SanDisk (both physical media in Carter's possession), never
-into this repo or any cloud.
+only to the 2 TB SN7100 and the SanDisk (both physical media in Carter's
+possession), never into this repo or any cloud.
 
 ## Phase 3 — Checksums on AIWA (~5 min)
 
 ```
-cd /var/lib/vz/dump && sha256sum vzdump-lxc-1*.tar.zst aiwa-host-state-20260811.tar.gz > SHA256SUMS-20260811.txt
-cat SHA256SUMS-20260811.txt
+cd /var/lib/vz/dump && sha256sum vzdump-lxc-1*.tar.zst aiwa-host-state-20260817.tar.gz > SHA256SUMS-20260817.txt
+cat SHA256SUMS-20260817.txt
 ```
 
-## Phase 4 — Stage + pull to main PC C: ⛔ one temp config change
+## Phase 4 — Stage + pull to main PC `D:` ⛔ one temp config change
 
 The existing `[Proxmox]` share only exposes `mav-transfer`, so the rest of the
 840 PRO and the dump dir aren't reachable from the main PC.
@@ -142,10 +159,10 @@ without moving them first.)
 
 ```
 net use T: \\192.168.1.12\transplant-ro /user:mavshare *
-robocopy T:\var\lib\vz\dump C:\aiwa-backups\20260811 vzdump-lxc-*.tar.zst aiwa-host-state-20260811.tar.gz SHA256SUMS-20260811.txt /Z /J /R:2
-robocopy T:\mnt\samsung-sata C:\aiwa-840pro /E /Z /J /R:2 /XD "hcp-exports"   # exclude regenerable weekly exports? — confirm on the night; ~45–90 min for 266 GB on gigabit
+robocopy T:\var\lib\vz\dump D:\aiwa-backups\20260817 vzdump-lxc-*.tar.zst aiwa-host-state-20260817.tar.gz SHA256SUMS-20260817.txt /Z /J /R:2
+robocopy T:\mnt\samsung-sata D:\aiwa-840pro /E /Z /J /R:2 /XD "hcp-exports"   # exclude regenerable weekly exports? — confirm on the night; ~45–90 min for 266 GB on gigabit
 # verify core set
-cd C:\aiwa-backups\20260811; Get-FileHash * -Algorithm SHA256   # compare against SHA256SUMS
+cd D:\aiwa-backups\20260817; Get-FileHash * -Algorithm SHA256   # compare against SHA256SUMS
 ```
 
 For the 266 GB tree, robocopy's own per-file verification plus a final
@@ -159,8 +176,8 @@ Core set only (266 GB doesn't fit on 256 GB):
 
 ```
 Get-Volume | Where-Object DriveLetter | Format-Table DriveLetter, FileSystemLabel, Size   # identify the SanDisk's letter first — <S:> below
-robocopy C:\aiwa-backups\20260811 <S:>\aiwa-backups\20260811 /E /Z
-cd <S:>\aiwa-backups\20260811; Get-FileHash * -Algorithm SHA256   # compare against SHA256SUMS
+robocopy D:\aiwa-backups\20260817 <S:>\aiwa-backups\20260817 /E /Z
+cd <S:>\aiwa-backups\20260817; Get-FileHash * -Algorithm SHA256   # compare against SHA256SUMS
 # then eject and physically disconnect the SanDisk
 ```
 
@@ -183,7 +200,7 @@ the third copy of the core set and the restore source for task 5.
 | 1 vzdump ×4 | ~20 min |
 | 2 host tarball | ~15 min (+5 if Docker stopped) |
 | 3 checksums | 5 min |
-| 4 pull to C: (core + 266 GB) | ~60–100 min, unattended |
+| 4 pull to `D:` (core + 266 GB) | ~60–100 min, unattended |
 | 5 SanDisk + verify | ~15 min |
 | 6 cleanup | 5 min |
 | **Total** | **~2–2.5 h, mostly unattended** |

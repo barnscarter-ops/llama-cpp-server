@@ -24,39 +24,50 @@ HP ProDesk is retired and sold.
 | Samsung 9100 PRO 2TB (bare SKU) | purchased | New `C:`, clean Windows install. Gen 5 — needs the HR-10. |
 | Thermalright HR-10 2280 Pro Black | purchased | **Active** M.2 heatsink (30mm fan, 6000 RPM, 12V/0.09A). Second unit acquired — the "need 2" line is closed. |
 | ASRock Challenger CL-850G | purchased | ATX 3.1, 80+ Gold, non-modular, native 12V-2x6 |
-| ARCTIC Liquid Freezer III Pro 360 A-RGB | purchased | **Arrived used — returning, see below** |
+| ARCTIC Liquid Freezer III Pro 360 A-RGB | purchased | First unit arrived used — **Amazon approved return + free replacement, delivering Fri 2026-08-15 AM** |
 | NZXT AIO | already owned | **Unusable — mounting hardware lost.** Not a fallback. Needs a bracket, and NZXT retention varies by Kraken generation. |
+| Thermalright Frost Commander 140 | on the Z690 | **Night 1 fallback if the AIO slips.** Currently cooling the 13600K — see the conflict note below. |
 | Thermalright AM5 Secure Frame (black) | purchased | Contact frame, fits before the cooler |
-| Okinos Cypress 7 case | ordered | **In transit.** Confirm clearance for a 38mm radiator. |
+| Okinos Cypress 7 case | **arrived 2026-08-13** | On the bench. **38mm radiator clearance verified** by test-fitting the used AIO before it ships back. |
 | 2TB WD_BLACK SN7100 (`C:`, Windows) | stays | see VMD note below; becomes `D:` on the new board |
 | 1TB WD_BLACK SN7100 (`D:`, storage) | stays | wiped, becomes the Proxmox boot drive |
 
-### AIO cooler — arrived used (2026-08-13)
+### AIO cooler — resolved 2026-08-13, replacement lands Friday AM
 
-The Liquid Freezer III Pro 360 was delivered as a previously-installed
+The first Liquid Freezer III Pro 360 was delivered as a previously-installed
 customer return sold as new: bare scratched coldplate with no protective cap
-and no factory MX-6, thermal paste residue in the mounting hardware, retail
-box torn open and repacked. Sold via ARCTIC's Amazon store.
+and no factory pre-applied paste, thermal paste residue in the mounting
+hardware, retail box torn open and repacked. Sold via ARCTIC's Amazon store.
 
-Amazon quoted **September 29** for a replacement on an item that is in stock
-and buyable the same day at $76.99. Resolution is therefore **refund and
-immediate re-order**, not replacement.
+**Resolved.** Carter reached Amazon 2026-08-13. The used unit is being
+returned and a **brand-new replacement ships free, delivering the morning of
+Friday 2026-08-14**. The earlier September 29 quote and the refund-and-re-buy
+plan are both superseded. Micro Center Dallas drops to a distant third option
+and is only in play if Friday's delivery is also bad.
 
-**The NZXT is not a usable fallback — its mounting hardware is lost.** That is
-part of why the Arctic was bought in the first place. Without a bracket the
-NZXT cannot mount, so the only cooler on hand is unusable.
+**On arrival, check the coldplate before anything else.** A genuine unit has
+grey paste pre-applied under a plastic cap. Bare copper means another used
+unit — refuse it, fall back to air for the night, and buy in person rather
+than trying a third time from the same commingled pool.
 
-**The real fallback is Micro Center Dallas**, which stocks NZXT brackets and
-complete coolers. Preferred plan: refund the Amazon unit and buy the
-replacement in person rather than re-ordering online. Same day, inspectable at
-the register, and it avoids the commingled-inventory pool that produced the
-used unit. Buy a complete cooler, not a bracket — NZXT retention differs
-across Kraken generations, so a bracket run requires knowing the exact model
-and hoping that SKU is stocked.
+#### Fallback if the AIO slips: Frost Commander 140 — read the conflict
 
-**On arrival, check the coldplate first.** A genuine unit has grey MX-6
-pre-applied under a plastic cap. Bare copper means another used unit — refuse
-it and buy elsewhere rather than trying a third time from the same pool.
+If the replacement doesn't show by build time, Night 1 runs on the
+**Thermalright Frost Commander 140** air cooler instead of stalling. That is
+the right call — a bench build needs a cooler, not specifically *that* cooler.
+Two things to know before committing to it:
+
+1. **It is currently mounted on the 13600K**, and per the Night 3 plan it
+   stays with the Z690 to cool the new AIWA. Borrowing it for the AM5 build
+   means swapping it back onto the Z690 once the AIO arrives — fine as a
+   temporary measure, but it is a loan, not a reassignment. Do not let Night 3
+   arrive with the Frost Commander bolted to the 9900X.
+2. **Its AM5 mounting kit is confirmed on hand (2026-08-13).** That was the
+   open risk — a lost bracket is what took the NZXT out of play — and it is
+   closed. The fallback is real, not theoretical.
+
+**The NZXT still is not a fallback** — its mounting hardware is lost, which is
+why the Arctic was bought in the first place.
 
 ### New AIWA — Z690 + 13600K (retained from the main PC)
 
@@ -114,8 +125,13 @@ and any repository runbook **first**.
 **Preparation only. Do not attempt the cutover.**
 
 The Z690 is still in the daily-driver desktop and won't be free until the AM5
-build lands — at least a week out. The goal is that when the hardware is
-free, the migration is mechanical with a verified backup behind it.
+build lands. **Night 1 — the X870E build — is Friday 2026-08-14**, so that is
+days away, not the week estimated on 08-10. The goal is that when the hardware
+is free, the migration is mechanical with a verified backup behind it.
+
+Note the sequencing pressure this creates: **Night 2 (the backup run) has not
+happened yet**, and nothing should be wiped on AIWA until it has. Night 1
+touches no AIWA state, so Friday is safe to run regardless.
 
 Out of scope: GPU passthrough (IOMMU/vfio). Separate session, after the host
 is proven stable.
