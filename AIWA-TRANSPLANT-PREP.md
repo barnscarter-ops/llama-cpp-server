@@ -22,8 +22,8 @@ HP ProDesk is retired and sold.
 | GIGABYTE X870E AORUS Elite WIFI7 motherboard + 9900X | purchased | DDR5, 2 DIMMs populated |
 | KLEVV BOLT V 32GB DDR5-6000 (2x16) | purchased | Do NOT run 4 mismatched DIMMs. 64GB kit ordered. |
 | ASUS ProArt GeForce RTX 4060 Ti 16GB | allocated | Confirmed from the card itself 2026-08-13 |
-| Samsung 9100 PRO 2TB (bare SKU) | purchased | New `C:`, clean Windows install. Gen 5 — needs the HR-10. |
-| Thermalright HR-10 2280 Pro Black ×3 | purchased | **Active** M.2 heatsink (30mm fan, 6000 RPM, 12V/0.09A). **Three on hand as of 2026-08-14** — a third was bought once both X870E drives were spoken for. Two go in the X870E (9100 PRO + SN7100), one to the Z690/AIWA. |
+| Samsung 9100 PRO 2TB (bare SKU) | purchased | New `C:`, clean Windows install. **Runs on the board's stock M.2 heatsink — the HR-10 does not clear the AIO in slot 1.** Idles 35°C (observed 2026-08-17). A low-profile heatsink comes off the ProDesk's NVMe when that machine retires. |
+| Thermalright HR-10 2280 Pro Black ×3 | purchased | **Active** M.2 heatsink (30mm fan, 6000 RPM, 12V/0.09A). **Three on hand as of 2026-08-14.** Corrected 2026-08-17: **only one goes in the X870E**, on the SN7100 in slot 3 (verified to clear). Slot 1 is blocked by the AIO, so the 9100 PRO runs stock. The SN7100 is the drive that needs it — it takes the sustained backup writes. |
 | ASRock Challenger CL-850G | purchased | ATX 3.1, 80+ Gold, non-modular, native 12V-2x6 |
 | ARCTIC Liquid Freezer III Pro 360 A-RGB | purchased | First unit arrived used — **Amazon approved return + free replacement, delivering Fri 2026-08-14 AM**. Still not delivered as of Friday morning. |
 | NZXT AIO | already owned | **Unusable — mounting hardware lost.** Not a fallback. Needs a bracket, and NZXT retention varies by Kraken generation. |
@@ -40,25 +40,50 @@ Observed and reported by Carter, not verified by me:
 - 9900X seated on the X870E under the Thermalright Secure Frame
 - Board mounted **in the Okinos** — there was no bench stage, see below
 - RAM in **A2/B2** (correct for 2-DIMM AM5)
-- Samsung 9100 PRO in **M.2 slot 1**, between the GPU and the CPU, with an
-  HR-10 on it, intake facing up toward the CPU
+- Samsung 9100 PRO in **M.2 slot 1**, between the GPU and the CPU, on the
+  board's **stock heatsink** — see the correction below
 - RTX 4060 Ti installed with the anti-sag bracket. **It blocks M.2 slot 2.**
 - PSU bolted into the case, no wiring run yet
-- 9100 PRO's M.2 fan on `SYS_FAN2`; hub PWM-input jumper on `SYS_FAN1`, hub
-  itself not mounted yet
+- hub PWM-input jumper on `SYS_FAN1`, hub itself not mounted yet
 - AIO had **not** arrived; still scheduled for the 14th
 
-### X870E follow-ups — deferred, non-blocking (2026-08-16)
+**Corrected 2026-08-17 — the HR-10 is not on the 9100 PRO.** Earlier revisions
+of this document and the map recorded an HR-10 on the 9100 PRO in slot 1 with
+its fan on `SYS_FAN2`. It does not fit: the AIO occupies that clearance. The
+drive runs on the board's stock M.2 heatsink and idles at 35°C, so this is a
+non-issue in practice. The HR-10 **does** clear in slot 3 and goes on the
+SN7100 when that drive is installed. `SYS_FAN2` is therefore unused.
 
-- The onboard Realtek RTL8922 Wi-Fi driver is still missing. The PC is on wired
-  LAN, so install the official GIGABYTE Wi-Fi package locally when Carter is at
-  the machine; do not retry it remotely during the AIWA cutover.
-- The ChatGPT Chrome computer-use extension still needs to be installed and
-  connected through **Settings → Computer use** before Chrome can be controlled
-  remotely. This is not a cutover gate.
-- Download and install the official AMD X870E chipset package locally once a
-  valid executable is available from AMD or GIGABYTE; automated AMD downloads
-  returned an HTML access-denied page and must not be run.
+### X870E follow-ups — CLOSED 2026-08-17
+
+All of the 08-16 follow-ups are resolved. **Device Manager is clean — zero
+problem devices**, down from six.
+
+| Was failing | Fixed by |
+|---|---|
+| `PCI\VEN_1022&DEV_1649` AMD PSP | Windows Update (SecurityDevices 5.17.0.0) |
+| `ACPI\AMDI0204`, `ACPI\AMDI0052` | AMD Chipset Software 8.07.16.1035 |
+| `PCI\VEN_10EC&DEV_8922` Realtek RTL8922AE Wi-Fi + Bluetooth | GIGABYTE Control Center |
+| `ACPI\ITE8800\6` + `\7` USB-C UCSI | GIGABYTE Control Center |
+
+Also done: NVIDIA 595.97 (`32.0.15.9597`, up from 591.86), Samsung Magician
+9.0.1.950, Windows 11 Pro **activated** (RETAIL channel, permanently activated).
+
+**The AMD download is scriptable after all** — the earlier HTML access-denied
+result was a missing `Referer` header, not hard bot protection. This works:
+
+```powershell
+curl.exe -sL -A "<browser UA>" -e "https://www.amd.com/en/support/download/drivers.html" `
+  -o amd_software_8.07.16.1035.exe "https://drivers.amd.com/drivers/amd_software_8.07.16.1035.exe"
+```
+
+It returns the genuine 81,490,200-byte installer, SHA256 `1B55DD2D…E66BDB`,
+Authenticode `Valid`. **GIGABYTE is still hard-blocked** — a JS challenge, and
+no header combination gets past it. Use GCC or a browser for their packages.
+
+Still open, non-blocking: the ChatGPT Chrome computer-use extension needs
+installing and connecting through **Settings → Computer use**. Note it pairs
+with ChatGPT/Codex only and grants no browser control to other agents.
 
 **No bench stage.** Earlier revisions of this document and the map said to
 build on the motherboard box and drop the finished machine into the case
@@ -79,8 +104,8 @@ CPU_FAN   <- AIO "FAN"  (3 radiator fans)   PWM, quiet curve
 CPU_PUMP  <- AIO "PUMP"                     PWM, leave at 100%
 CPU_OPT   <- AIO "VRM"                      PWM   <- not DC; ARCTIC specifies PWM
 SYS_FAN1  <- fan hub PWM input
-SYS_FAN2  <- M.2 fan, 9100 PRO (4-pin PWM)
-SYS_FAN3  <- M.2 fan, SN7100
+SYS_FAN2  <- (unused — the 9100 PRO has no HR-10, see correction above)
+SYS_FAN3  <- M.2 fan, SN7100 (HR-10 in slot 3, 4-pin PWM)
 D_LED1    <- AIO A-RGB (3-pin 5V only — never the 4-pin 12V header)
 hub F-1   -> rear exhaust   (master port; the only one reporting RPM)
 hub F-2   -> front trio     (case's own splitter)
@@ -98,8 +123,9 @@ worth not re-deriving:
 2. **`CPU_OPT` is PWM.** The VRM fan is 3-pin, which normally implies DC, but
    ARCTIC's own documentation specifies PWM for all three headers.
 3. **The hub is required.** Those three AIO leads consume every CPU-side
-   header, so the four case fans have nowhere to go once the two M.2 coolers
-   take `SYS_FAN2`/`SYS_FAN3`. Earlier notes calling the hub a spare are wrong.
+   header, so the four case fans have nowhere to go. Earlier notes calling the
+   hub a spare are wrong. (This holds even though only one M.2 cooler is
+   actually fitted — the AIO alone takes all three CPU-side headers.)
 4. **The hub needs its own PSU power.** It has a power-input *socket*, not a
    captive pigtail — a SATA or Molex lead has to be run to it. A fan header
    alone cannot feed four fans.
@@ -121,11 +147,36 @@ Authenticode-verified (all `Valid`): AMD chipset 8.07.16.1035, NVIDIA 595.97,
 Samsung Magician 9.0.1.950, and the Windows 11 Media Creation Tool.
 `verify-kit.ps1` re-checks all four and passes 4/4.
 
-Four items could **not** be staged — GIGABYTE returns HTTP 403 to every
-scripted request, and third-party driver mirrors are not an acceptable source
-for a BIOS image. BIOS, Wi-Fi 7 + Bluetooth, Realtek 2.5GbE LAN, and Realtek
-audio must be downloaded in a browser. Only the LAN driver is install-critical,
-and only if Windows 11 doesn't bring the NIC up itself.
+**All four browser-only items are now staged — kit complete 2026-08-17.**
+Carter downloaded the GIGABYTE files in a browser and published the whole kit
+as **private GitHub release assets** on `barnscarter-ops/agent-memory`, tag
+`x870e-kit-2026-08-17`. That removed the kit's dependency on the SN7100, which
+was still physically in the Z690.
+
+Re-downloaded to `C:\Workspace\Active\x870e-usb-kit\` on the X870E and verified
+**9/9** against the release's own SHA256 digests; all four executables signed
+`Valid` (AMD, NVIDIA, Samsung, Microsoft). The four originally-staged files
+hash-match `MANIFEST.md` exactly, so the release is a byte-faithful copy.
+
+```
+01-BIOS\    mb_bios_x870e-aorus-elite-wifi7_8arpl323_f12.zip   15.9 MB
+02-chipset\ amd_software_8.07.16.1035.exe                      77.7 MB
+03-gpu\     595.97-...-dch-whql.exe                           913.0 MB
+04-network\ mb_driver_654 (2.5GbE LAN) / 3701 (Wi-Fi) / 3702 (BT)
+05-storage\ Samsung_Magician_Installer_Official_9.0.1.950.exe 195.1 MB
+06-tools\   mb_driver_612 (audio) / MediaCreationTool_Win11.exe
+```
+
+Pull it on any authenticated machine with:
+
+```powershell
+gh release download --repo barnscarter-ops/agent-memory --pattern "*" --dir <path>
+```
+
+Note `gh release download <tag>` returns "release not found" for this repo, as
+does `gh api .../releases`; omit the tag and pass `--pattern`. Plain `git`
+credentials from Windows Credential Manager also 404 on the releases, tags and
+branches endpoints for this private repo — `gh`'s own token is what works.
 
 **Blocking on the board revision:** GIGABYTE publishes a different BIOS per
 revision (1.0/1.1, 1.2, 1.3) and Q-Flash Plus will write the wrong one. The
@@ -237,21 +288,46 @@ keeping (total usage is 2.29 GB, the rest is `$RECYCLE.BIN` and
 
 ## Current AIWA (source of truth to be migrated)
 
-- HP ProDesk, i5-9500, 32GB DDR4, at **192.168.1.12**
-- 2TB NVMe (WD_BLACK SN770): `pve-root` 96G (32% used), `pve-data` LVM-thin
-  1.67TB (0.12% used), `pve-swap` 8G
-- 500GB SATA (Samsung 840 PRO, ~2013): `/mnt/samsung-sata`, 6% used, hosts
-  the `mav-transfer` Samba share
+> **Corrected 2026-08-17 against the live host.** The figures originally in
+> this section were estimates from a month-old local note and were wrong in
+> every case. `aiwa-transplant/INVENTORY-2026-08-10.md` is the observed record
+> and takes precedence over anything here.
 
-Services (verify — this list may be incomplete):
-RAG on 8181, Prometheus on 9090, Samba on 445, Hermes gateway.
+- HP ProDesk, i5-9500, 32GB DDR4, at **192.168.1.12** — Proxmox VE 9.2.0,
+  pve-manager 9.2.2, kernel 7.0.2-6-pve. Tailscale `100.87.155.47`.
+- 2TB NVMe (WD_BLACK SN770): `pve-root` 96G (**47%** used), `pve-data` LVM-thin
+  1710G (**1.03% ≈ 17.6 GB**, not 0.12%/~2 GB), `pve-swap` 8G
+- 500GB SATA (Samsung 840 PRO, ~2013): `/mnt/samsung-sata`, **NTFS**,
+  **56% used — 266 GB of live data, 211 GB free** (not "6% used"/~470 GB free).
+  Hosts the `mav-transfer` Samba share, `mav-rag/` exports, a Chris backup and
+  a syncthing folder.
+
+**Guests:** 4 LXC containers, zero VMs — 100 `rustdesk`, 101 `orca`,
+102 `hcp-mcp-prod`, 103 `mcc-prod`. All `onboot: 1`.
+
+**Services — the original four-item list badly undersold the host.** It is
+actually 7 Docker containers, 11 custom systemd units (4 Hermes, pacc-registry,
+orca-aiwa, node_exporter, 3 hcp/metrics timers, pm2-root), syncthing, and a
+weekly scraper cron. See `INVENTORY-2026-08-10.md` and
+`HOST-CONFIG-PRESERVE.md` for the full picture.
+
+**Also not captured anywhere until 2026-08-17:** `pm2-root` resurrects the
+SEO-Agents-App services (seo-monitor, supabase-sync, mav-bridge, workers),
+which per the deployment runbook **must** carry `TZ=America/Chicago`. What PM2
+runs, and the env each process holds, has still never been captured — that is
+Phase 0.3b of the backup plan.
 
 ## Hard constraints
 
 Read `C:\Workspace\Active\brain\agent-memory\runbooks\aiwa-deployment.md`
 and any repository runbook **first**.
 
-- Use **Orca** for every AIWA action. Never SSH, SCP, or an ad-hoc remote shell.
+- Use **Orca** for every AIWA action. Never SSH, SCP, or an ad-hoc remote shell
+  **without Carter's explicit approval for that named exception** — that is the
+  runbook's actual wording, and it is the mechanism, not a loophole. Carter
+  granted one such exception on 2026-08-17: the **Proxmox web UI** at
+  `https://192.168.1.12:8006`, for this session, in place of Orca. It is also
+  reachable over Tailscale at `100.87.155.47:8006`.
 - Author and test locally. AIWA is a deployment target, not a workspace.
 - Explicit approval required before **any** live state change: service
   restart, timer/unit action, firewall change, backup restore, credential
@@ -262,14 +338,35 @@ and any repository runbook **first**.
 
 **Preparation only. Do not attempt the cutover.**
 
-The Z690 is still in the daily-driver desktop and won't be free until the AM5
-build lands. **Night 1 — the X870E build — is Friday 2026-08-14**, so that is
-days away, not the week estimated on 08-10. The goal is that when the hardware
-is free, the migration is mechanical with a verified backup behind it.
+### Where this actually stands — 2026-08-17
 
-Note the sequencing pressure this creates: **Night 2 (the backup run) has not
-happened yet**, and nothing should be wiped on AIWA until it has. Night 1
-touches no AIWA state, so Friday is safe to run regardless.
+**Night 1 is done.** The X870E is built, running activated Windows 11 Pro off
+the 9100 PRO, with a clean Device Manager, RDP and Tailscale
+(`cmb-workbench` / `100.124.41.115`) reachable, and the driver kit restaged
+locally. CPU 40°C, boot SSD 35°C.
+
+**But the SN7100 did not move.** Night 1's plan had the 2 TB SN7100 and the
+Realtek 2.5 GbE card coming out of the Z690 that night. Neither happened — as
+of 2026-08-17 the X870E has exactly one disk (the 9100 PRO as `C:`) and one
+NIC (onboard Realtek 2.5GbE at `192.168.1.220`, DHCP). Any part of this
+document or the map that assumes `D:` exists, or that the `10.110.10.x` direct
+link is up, is describing a future state.
+
+This was a deliberate call, not a slip: the Z690 is still a complete working
+machine and therefore the desktop's rollback. It stays intact until the X870E
+has nothing left to prove — the same principle as assumption 5 below, applied
+one layer up. Both parts move in a single teardown, with the HR-10 going on
+the SN7100 in slot 3.
+
+**Night 2 has therefore not happened either**, and nothing should be wiped on
+AIWA until it has. The backup target `D:\aiwa-backups\` does not yet exist.
+Phase 0.5 of the backup plan is the gate that catches this — run it first.
+
+The clock that argues against unlimited prep: AIWA has **no verified off-host
+backup** and runs on a 16,511-hour 840 PRO. If prep stretches, note the core
+set is only ~33 GB and the 9100 PRO has 1793 GB free — Phases 1–3 plus a
+core-set-only pull would give a real off-host copy with no SN7100 involved.
+Only the 266 GB of 840 PRO data genuinely needs `D:`.
 
 Out of scope: GPU passthrough (IOMMU/vfio). Separate session, after the host
 is proven stable.

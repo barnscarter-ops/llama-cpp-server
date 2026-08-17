@@ -103,8 +103,17 @@ driver.
 
 **Phase D — after Windows is stable**
 
-14. Power down, install the SN7100 in its slot with the second HR-10 cooler,
-    boot, confirm it appears as **`D:`** with its data intact.
+14. Power down, install the SN7100 in **slot 3** with the HR-10 cooler (fan to
+    `SYS_FAN3`), boot, confirm it appears as **`D:`** with its data intact.
+
+    > **Corrected 2026-08-17.** The HR-10 does **not** fit on the 9100 PRO in
+    > slot 1 — the AIO takes that clearance. The 9100 PRO runs on the board's
+    > stock M.2 heatsink and idles at 35°C. The HR-10 clears in slot 3, so the
+    > SN7100 gets it, which is the right allocation anyway: that drive takes
+    > the sustained backup writes. `SYS_FAN2` ends up unused.
+    >
+    > As of 2026-08-17 this step has **not** been done — the SN7100 and the
+    > 2.5 GbE card are both still in the Z690.
 15. Run `Get-Volume` and record the letters — Monday's backup plan writes to
     `D:\aiwa-backups\` and explicitly says to verify rather than trust.
 
@@ -130,8 +139,8 @@ CPU_FAN   <- AIO "FAN"  (3 radiator fans)   PWM, quiet curve
 CPU_PUMP  <- AIO "PUMP"                     PWM, leave at 100%
 CPU_OPT   <- AIO "VRM"                      PWM  (ARCTIC specifies PWM here)
 SYS_FAN1  <- fan hub PWM input
-SYS_FAN2  <- M.2 fan, 9100 PRO (4-pin PWM)
-SYS_FAN3  <- M.2 fan, SN7100
+SYS_FAN2  <- (unused — HR-10 does not clear the AIO in slot 1, see note below)
+SYS_FAN3  <- M.2 fan, SN7100 (HR-10 in slot 3)
 D_LED1    <- AIO A-RGB (3-pin 5V only — never the 4-pin 12V header)
 hub F-1   -> rear exhaust   (master port; the only one that reports RPM)
 hub F-2   -> front trio     (case's own splitter)
