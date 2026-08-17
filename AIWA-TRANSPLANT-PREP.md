@@ -48,6 +48,18 @@ Observed and reported by Carter, not verified by me:
   itself not mounted yet
 - AIO had **not** arrived; still scheduled for the 14th
 
+### X870E follow-ups — deferred, non-blocking (2026-08-16)
+
+- The onboard Realtek RTL8922 Wi-Fi driver is still missing. The PC is on wired
+  LAN, so install the official GIGABYTE Wi-Fi package locally when Carter is at
+  the machine; do not retry it remotely during the AIWA cutover.
+- The ChatGPT Chrome computer-use extension still needs to be installed and
+  connected through **Settings → Computer use** before Chrome can be controlled
+  remotely. This is not a cutover gate.
+- Download and install the official AMD X870E chipset package locally once a
+  valid executable is available from AMD or GIGABYTE; automated AMD downloads
+  returned an HTML access-denied page and must not be run.
+
 **No bench stage.** Earlier revisions of this document and the map said to
 build on the motherboard box and drop the finished machine into the case
 afterward. That was written when the case was late. The case arrived on the

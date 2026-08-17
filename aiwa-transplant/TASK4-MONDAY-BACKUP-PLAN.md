@@ -58,6 +58,11 @@ letter this document asserts.
 # 0.1 Confirm Sunday jobs completed clean
 journalctl -u pvescheduler --since "sun 02:30" | grep -i vzdump | tail -20
 ls -lh /var/lib/vz/dump/ | tail -5
+# ^ Read the MODE column, not just the names. Phase 4 reads these files over SMB
+#   as `mavshare` (uid 1000), not as root. If the .zst files are 0600 root:root the
+#   [transplant-ro] share cannot read them and Phase 4 fails with the maintenance
+#   window already open. Fix before the night: chmod 0644 on the dump files, or add
+#   `force user = root` to the temp share stanza in Phase 4.
 # RAG refresh: check hcp export timestamps
 ls -l --time-style=long-iso /mnt/samsung-sata/mav-rag/hcp-exports | tail -5
 
@@ -75,6 +80,17 @@ smartctl -H /dev/nvme0; smartctl -H /dev/sda
 # 0.5 [main PC] confirm drive letters post-Night-1, free space (need ~300 GB), SanDisk present
 Get-Volume | Where-Object DriveLetter | Format-Table DriveLetter, FileSystemLabel, Size, SizeRemaining
 # expect: 2 TB SN7100 as D: with ~1166 GB free. If it is still C:, Night 1 has not run.
+# NOTE 2026-08-17 00:20: verified on the X870E — one disk present (9100 PRO as C:,
+# 1793 GB free). The SN7100 is NOT installed yet. It must go in (M.2 slot 3 — the
+# 4060 Ti blocks slot 2) before this phase means anything.
+
+# 0.6 [main PC] is the 2.5 GbE direct link to AIWA up? Decides the Phase 4 path.
+Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias, IPAddress, PrefixLength
+ping 10.110.10.1
+# Want: this PC on 10.110.10.2/30 (no gateway, no DNS) and AIWA answering on
+# 10.110.10.1. That is the Realtek 2.5 GbE card out of the Z690. If it answers,
+# Phase 4 uses it; if not, Phase 4 falls back to 192.168.1.12 over gigabit.
+# Do not spend the maintenance window troubleshooting this link — settle it now.
 ```
 
 Abort criteria: any SMART FAIL, <30 GB free on AIWA local, <300 GB free on the
@@ -88,12 +104,22 @@ covered by Phase 4.
 
 ```
 vzdump 100 101 102 103 --compress zstd --mode snapshot --storage local \
+  --protected 1 \
   --notes-template "pre-transplant full set {{guestname}}"
 ls -lh /var/lib/vz/dump/*.zst | tail -8
 ```
 
 CT 101 is our Orca access path — snapshot mode backs it up while we're using it;
 that's fine and expected.
+
+**`--protected 1` is not optional.** `/etc/pve/jobs.cfg` carries a weekly vzdump
+of VMID 102 — `sun 03:00`, `keep-last=2`, storage `local`, the same storage this
+phase writes to. When that job next runs (2026-08-23 03:00) it prunes CT 102's
+backups on `local` down to two, and this manual dump is a candidate. Phase 6
+designates the AIWA-local copy as the third copy *and* the task-5 restore source,
+held until cutover succeeds — so if cutover slips past Sunday, that copy silently
+degrades to two copies without anyone noticing. `--protected 1` exempts these
+dumps from retention pruning. The `--notes-template` label does not.
 
 ## Phase 2 — Host-state tarball (~15 min) ⛔ contains one approval item
 
@@ -155,10 +181,18 @@ share. Alternative if declined: stage everything through `mav-transfer`, which
 double-writes 30 GB to the 840 PRO and can't reach the other 840 PRO dirs
 without moving them first.)
 
+**Use the direct link if Phase 0.6 said it was up.** The 266 GB copy is the long
+pole of the night. `192.168.1.12` reaches AIWA over the switch at gigabit;
+`10.110.10.1` is the point-to-point 2.5 GbE link (main PC `10.110.10.2/30` →
+AIWA `vmbr1`/`p2p0`), which exists for exactly this kind of bulk transfer. Same
+share, same credentials, same files — only the host part of the UNC changes, and
+it should take a meaningful bite out of the 45–90 min estimate below. Fall back
+to `192.168.1.12` without hesitation if the link didn't come up.
+
 `[main PC]` pull + verify (robocopy restarts cleanly if interrupted):
 
 ```
-net use T: \\192.168.1.12\transplant-ro /user:mavshare *
+net use T: \\10.110.10.1\transplant-ro /user:mavshare *      # or \\192.168.1.12\ if 0.6 failed
 robocopy T:\var\lib\vz\dump D:\aiwa-backups\20260817 vzdump-lxc-*.tar.zst aiwa-host-state-20260817.tar.gz SHA256SUMS-20260817.txt /Z /J /R:2
 robocopy T:\mnt\samsung-sata D:\aiwa-840pro /E /Z /J /R:2 /XD "hcp-exports"   # exclude regenerable weekly exports? — confirm on the night; ~45–90 min for 266 GB on gigabit
 # verify core set
