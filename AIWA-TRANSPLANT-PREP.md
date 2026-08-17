@@ -130,6 +130,34 @@ reachable" instinct. That drive is also Night 2's backup target.
 `install.wim` exceeds FAT32's 4 GB limit. Use a separate stick for the kit;
 MCT reformats its target.
 
+### Main-PC network cutover capture — observed 2026-08-15
+
+Captured live from the current PC. These are **Windows adapter settings**, not
+properties of the cable or NIC; recreate them on the new Windows install.
+
+| Role | Current adapter | IPv4 configuration | Rule |
+|---|---|---|---|
+| Switch / Internet | `HomeFiber` (Intel I225-V; MAC `58-11-22-30-68-48`) | Static `192.168.1.10/24`; gateway `192.168.1.254`; DNS `8.8.8.8`, `8.8.4.4` | Exactly one wired adapter connects to this LAN. |
+| Direct AIWA link | `AIWA Direct` (Realtek 2.5GbE; MAC `1C-86-0B-3A-48-FB`) | Static `10.110.10.2/30`; **no gateway**; **no DNS** | Direct cable only, peer is AIWA `10.110.10.1/30`. |
+
+AIWA itself remains unchanged: LAN `192.168.1.12/24` via gateway
+`192.168.1.254`; direct link `10.110.10.1/30` with no gateway.
+
+**Network sequence after Windows is working:**
+
+1. For the first Windows boot/install, use the X870E onboard LAN to the switch
+   with DHCP. Do not claim `192.168.1.10` while the old PC is connected.
+2. Once the new PC is stable, fully shut down the old PC and unplug its
+   switch-facing Ethernet cable (or leave it powered off). Move/install the
+   intended NIC hardware and reconnect the two existing cables to their same
+   roles: switch-facing and direct-to-AIWA.
+3. On the new PC, assign the two static configurations from the table above.
+   The switch-facing adapter gets the gateway and DNS; the AIWA-direct adapter
+   gets neither. Disconnect the temporary onboard-LAN cable from the switch.
+4. Verify, in order: `ping 192.168.1.254`; Internet name resolution; `ping
+   192.168.1.12`; then `ping 10.110.10.1`. If direct AIWA ping fails, stop at
+   the cabling/address check; do not alter AIWA.
+
 ### AIO cooler — resolved 2026-08-13, replacement lands Friday AM
 
 The first Liquid Freezer III Pro 360 was delivered as a previously-installed
