@@ -74,6 +74,22 @@ df -h / /var/lib/vz /mnt/samsung-sata
 docker volume ls
 docker system df -v | head -40
 
+# 0.3b PM2 process list + environment — THE BLIND SPOT IN THE HOST INVENTORY
+pm2 list
+pm2 prettylist | head -120      # includes each process's cwd, script, and env
+timedatectl
+# HOST-CONFIG-PRESERVE.md captures `pm2-root` as a single systemd unit, but never
+# recorded *what PM2 resurrects*. Per agent-memory/runbooks/aiwa-deployment.md the
+# SEO-Agents-App services (seo-monitor, supabase-sync, mav-bridge, workers) MUST
+# carry TZ=America/Chicago in their service environment — the scripts use
+# getHours()/getDate() for no-show windows and week_of filing. On a UTC host
+# without the pin, no-show detection shifts 5-6 hours and evening runs file posts
+# under the wrong week. That failure is silent and surfaces days later.
+#
+# Capture this list now so the cutover runbook (task 6) can verify each process
+# comes back with its env intact. Post-restore gate, from the runbook:
+#   node -e "console.log(new Date().toString())"   # must print CST/CDT
+
 # 0.4 SMART quick re-check both drives
 smartctl -H /dev/nvme0; smartctl -H /dev/sda
 
