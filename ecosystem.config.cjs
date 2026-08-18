@@ -58,26 +58,31 @@ module.exports = {
       // Wrapper, not the exe — Windows kill-reliability fix for llama-server
       // above (this entry is the one that hit the 687-restart loop 2026-08-07).
       script: "C:\\Workspace\\Infrastructure\\llama-cpp-server\\launch-llama.cjs",
-      cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan-b10362",
+      cwd: "C:\\Workspace\\Infrastructure\\llama-cpp-server-cuda-b10488",
 
-      env: {
-        // Only load the AMD Vulkan ICD so the R9700 is always index 0.
-        VK_LOADER_DRIVERS_SELECT: "*amd*",
-      },
+      // ── X870E PROFILE (2026-08-18): CUDA on the 4060 Ti 16GB ─────────
+      // The R9700 (and its Vulkan build + Nemotron pairing) moved to the
+      // AIWA candidate with the transplant. Carter's directive 2026-08-18:
+      // NEVER run Nemotron on this machine — its Q4_K_M is 23.7 GB and can
+      // only partial-offload here. This box runs Qwen3.8-27B UD-IQ3_XXS
+      // (11.9 GB, released 2026-08-14, dense, vision-capable) fully
+      // offloaded on the CUDA b10488 build. The Vulkan b10362 dir and the
+      // Nemotron GGUF stay on disk untouched — they are the future AIWA's.
+      env: {},
 
       args: [
-        // Nemotron 3.5 Lightning (2026-08-12): +14% tg, +53% code gen vs Qwen.
-        // --reasoning off is CRITICAL: Nemotron auto-detects thinking mode and
-        // burns 1500+ hidden tokens per request without it. Alias stays
-        // "local-llm" so guardian (GUARDIAN_QUEUE_MODEL) and qwen-submit work
-        // unchanged — the swap is transparent downstream.
-        "C:\\Workspace\\Infrastructure\\llama-cpp-server-vulkan-b10362\\llama-server.exe",
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf",
+        // Qwen3.8-27B UD-IQ3_XXS: newest Qwen dense, full 99-layer offload
+        // on the 4060 Ti (~12 GB weights + KV in 16 GB). Alias stays
+        // "local-llm" so guardian (GUARDIAN_QUEUE_MODEL) and qwen-submit
+        // work unchanged — the swap is transparent downstream.
+        "C:\\Workspace\\Infrastructure\\llama-cpp-server-cuda-b10488\\llama-server.exe",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.8-27B-UD-IQ3_XXS.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        "--ctx-size",   "65536",
+        "--ctx-size",   "32768",
+
         "--parallel",   "1",
         "--jinja",
         "--batch-size",  "2048",
