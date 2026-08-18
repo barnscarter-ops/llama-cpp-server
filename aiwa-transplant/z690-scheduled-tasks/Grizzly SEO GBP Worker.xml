@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Grizzly SEO GBP worker — posts Google Business Profile updates from Carter's interactive session (saved Google login, H: Drive mount, visible browser). Owns the gbp slice; mav-bridge owns facebook/website. Launched hidden via wscript so the console can't be closed by accident; node output goes to logs\gbp-worker.log.</Description>
+    <URI>\Grizzly SEO GBP Worker</URI>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-21-3692995547-1880394738-1435933407-1001</UserId>
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <RestartOnFailure>
+      <Count>999</Count>
+      <Interval>PT1M</Interval>
+    </RestartOnFailure>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+  </Settings>
+  <Triggers>
+    <LogonTrigger>
+      <UserId>CARTERSPC\carte</UserId>
+    </LogonTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2026-07-09T08:00:00-05:00</StartBoundary>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Windows\System32\wscript.exe</Command>
+      <Arguments>//B //Nologo "C:\Workspace\Active\SEO-Agents-App\ops\gbp-worker-launch.vbs"</Arguments>
+      <WorkingDirectory>C:\Workspace\Active\SEO-Agents-App</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

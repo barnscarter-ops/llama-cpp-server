@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>One-shot reminder: replace FB_PAGE_ACCESS_TOKEN with a never-expiring System User page token before the 2026-09-09 data-access expiry. See ~/.claude/scheduled-tasks/fb-page-token-renew/SKILL.md</Description>
+    <URI>\Grizzly FB Page Token Renewal</URI>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-21-3692995547-1880394738-1435933407-1001</UserId>
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <IdleSettings>
+      <Duration>PT10M</Duration>
+      <WaitTimeout>PT1H</WaitTimeout>
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+  </Settings>
+  <Triggers>
+    <TimeTrigger>
+      <StartBoundary>2026-09-07T09:12:00-05:00</StartBoundary>
+    </TimeTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Program Files\nodejs\node.exe</Command>
+      <Arguments>"C:\Workspace\Active\SEO-Agents-App\scripts\fb-boost-ledger.mjs" notify "FB PAGE TOKEN RENEWAL DUE: FB_PAGE_ACCESS_TOKEN data access expires 2026-09-09. Run the fb-page-token-renew scheduled task with Claude to mint a never-expiring System User page token. Boosts + posting break when it lapses."</Arguments>
+      <WorkingDirectory>C:\Workspace\Active\SEO-Agents-App</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
