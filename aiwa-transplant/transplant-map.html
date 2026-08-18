@@ -636,7 +636,7 @@
           <text x="760" y="350" text-anchor="middle" class="mstat">28 GB working set freed up</text>
         </svg>
         </div>
-        <figcaption>The Z690 takes production, restoring from the backups made on Night 2. The ProDesk goes quiet but stays bootable — that's the rollback. Llama serving moves off the X870E onto the R9700 over Tailscale, which is what frees the 28 GB working set on your main machine.</figcaption>
+        <figcaption>The Z690 takes production, restoring from the backups made on Night 2. The ProDesk goes quiet but stays bootable — that's the rollback. <strong>Corrected end state (2026-08-18):</strong> the X870E does NOT stop serving — its 4060 Ti runs the local dev model (Qwen3.6-35B MoE, 80 t/s, 128k ctx) full-time for dev work, local inference, and hermes-pc, while the R9700 in AIWA serves production exclusively. The doctrine is separation: <strong>PC = dev, AIWA = everything live / customer-facing / 24-7</strong> — no cross-machine hopping during live calls, each GPU owned by one tier.</figcaption>
       </figure>
 
       <div class="steps">
