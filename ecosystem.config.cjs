@@ -71,22 +71,29 @@ module.exports = {
       env: {},
 
       args: [
-        // Qwen3.8-27B UD-IQ3_XXS: newest Qwen dense, full 99-layer offload
-        // on the 4060 Ti (~12 GB weights + KV in 16 GB). Alias stays
-        // "local-llm" so guardian (GUARDIAN_QUEUE_MODEL) and qwen-submit
-        // work unchanged — the swap is transparent downstream.
+        // Qwen3.6-35B-A3B UD-IQ3_XXS (MoE, 12.3 GB): tuned sweep 2026-08-18
+        // (benchmarks/qwen36-cuda-4060ti-sweep-20260818-095410.json.*):
+        //   - tg128 ~80 t/s (vs 18 t/s for dense Qwen3.8-27B — MoE wins 4.5x)
+        //   - KV q8_0 costs ~1% and buys 128k ctx: loads at 15.1/16.4 GB
+        //   - ubatch 1024 = 96% of peak prefill (2.7k t/s), safer VRAM at 128k
+        //   - MTP variant REJECTED: +1.8 GB head forces ctx to ~32k — high
+        //     context beats a 1.4x tg bump (and MTP lost on the R9700 too)
+        // Qwen3.8-27B stays on disk for quality/vision one-offs. Alias stays
+        // "local-llm" so guardian and qwen-submit work unchanged.
         "C:\\Workspace\\Infrastructure\\llama-cpp-server-cuda-b10488\\llama-server.exe",
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.8-27B-UD-IQ3_XXS.gguf",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        "--ctx-size",   "32768",
+        "--ctx-size",   "131072",
+        "--cache-type-k", "q8_0",
+        "--cache-type-v", "q8_0",
 
         "--parallel",   "1",
         "--jinja",
         "--batch-size",  "2048",
-        "--ubatch-size", "512",
+        "--ubatch-size", "1024",
         "--cont-batching",
         "--flash-attn",  "on",
         "--reasoning",   "off",
