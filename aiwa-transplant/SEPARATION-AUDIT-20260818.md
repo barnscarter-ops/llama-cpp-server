@@ -29,11 +29,20 @@ time, each with its own rollback.
 | Item | Notes / blockers |
 |---|---|
 | Grizzly SEO Weekly Run + Monitor + Watchdog + Photo Sync + GBP Worker | The flagship 24-7 client automation. Blocker: anything using Playwright with the Windows Chrome profile needs a Linux-compatible auth path on AIWA, or a headless profile migration |
-| Grizzly_HCPCookieCheck / Grizzly_HCPRelogin / HCP Session Relogin | Session keepalive for client CRM — belongs with prod, but rides on the PC's logged-in browser profile today. Investigate CT 102 (hcp-mcp-prod) absorbing it |
-| housecall-pro-mcp | CT 102 on AIWA already exists (hcp-mcp-prod) — reconcile: is the PC task a duplicate, a dev instance, or the real one? |
+| Grizzly_HCPCookieCheck / Grizzly_HCPRelogin / HCP Session Relogin | Session keepalive for client CRM — belongs with prod, but rides on the PC's logged-in browser profile today |
 | ProxmoxBackup-Nightly | Backs up AIWA — after cutover this should be a cron ON the new AIWA (or PBS), not a task on Carter's desktop |
-| agent-os-kernel | If it serves anything 24-7 it belongs on AIWA; if it's the dev kernel it stays. Decide from what connects to it |
-| AgentOS-AI-Tooling-Radar | Periodic scan, not customer-facing — either side works; prefer AIWA to keep the PC quiet |
+
+**Resolved 2026-08-18:**
+
+- **housecall-pro-mcp** — NOT a duplicate of CT 102. Deliberate split, per the
+  task's own description: the PC daemon runs as `carte` because it decrypts
+  the user's Chrome cookies for HCP sessions (moved out of PM2 2026-07-11 —
+  SYSTEM can't decrypt them). CT 102 (`hcp-mcp-prod`) is the Linux prod MCP;
+  the PC daemon is the Windows-bound cookie side. **Stays on the PC** unless
+  HCP auth is reworked.
+- **agent-os (kernel + AI-Tooling-Radar)** — RETIRED, not moved. Carter's
+  call: project superseded by a simpler approach. Both tasks disabled (not
+  deleted); project moved to `C:\Workspace\Archive\agent-os-2026-08\`.
 
 ## Sequencing
 
