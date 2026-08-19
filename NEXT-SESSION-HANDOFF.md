@@ -1,6 +1,50 @@
-# NEXT-SESSION-HANDOFF.md — 2026-08-19 (GLM-4.7-Flash cutover)
+# NEXT-SESSION-HANDOFF.md — 2026-08-19 (GLM-4.7-Flash cutover + PC service restore)
+
+## PC service restore — 2026-08-19 (post X870E rebuild)
+
+All PC-side services restored from the old Z690 drive (D:) and old dump.pm2:
+
+- **pm2 (SYSTEM, PM2_HOME=C:\ProgramData\pm2)** — 9 apps online + saved:
+  llama-guardian, local-llm, pc-actions-daemon (:8901, v0.3.0, 33 actions,
+  token from ecosystem.local.config.cjs), hermes-sandbox-reaper (ARMED),
+  hermes-deadman-sink (:8903), downloads-watcher (DownloadsOrganizer copied
+  from D:\Users\carte), homelab-agent-sensors (:7331), prometheus-sync,
+  maverick-dashboard (:8792).
+- **Boot**: new scheduled task `PM2 Resurrect` (SYSTEM, AtStartup, runs
+  `node pm2 resurrect` via hermes-bundled node). Old box had no such task in
+  the 39 exported XMLs — this is new, deliberate.
+- **windows_exporter**: copied from D:\Program Files, installed as a Windows
+  service, RUNNING on :9182 (triage monitors this).
+- **Hermes profiles**: all 13 restored from D:\Users\carte\AppData\Local\hermes
+  \profiles (claude, council, debugger, executor, grok, mav-room, omp, pi,
+  qwen-worker, researcher, reviewer, scripter, worker). active_profile=omp.
+  Top-level config.yaml model.default restored to glm-5.3/custom:zai-coding
+  (backup: config.yaml.bak-pre-glm-restore-20260819).
+- **qwen-worker profile**: context_length 65536 → 202752; its `qwen3-llama`
+  alias still works (guardian maps legacy aliases → local-llm; verified live
+  through :8080 completion).
+- **Scheduled tasks**: 24/39 Z690 XMLs already re-registered; remaining 15
+  are old-hardware OEM junk (ASUS/SANDISK/StartCN/DVR) — correctly skipped.
+- **Python for daemons**: Python312 (old dump path) re-provisioned with
+  fastapi/uvicorn/psutil/httpx/watchdog — pc-actions-daemon, reaper, sink all
+  run under it via ecosystem `script: python`.
+
+## Known follow-ups
+
+- **AIWA triage + anything referencing CartersPC by Tailscale IP still points
+  at 100.124.216.11 (old box). This box is 100.124.41.115.** Re-point at the
+  AIWA cutover (Night 4+), NOT before — old AIWA is live production.
+- pc-bridge plugin (native Hermes plugin from supervisor repo) not yet
+  re-verified against the restored profiles — supervisor repo is checked out
+  at C:\Workspace\Shared\Agents\Hermes-Supervisor with local mods (memory/
+  HANDOFF.md dirty).
+- gsudo NOT reinstalled on this box (old HANDOFF ops commands reference it);
+  elevated ops currently use scratch .ps1 + Start-Process -Verb runAs.
+- Mav-Room stack: healthy on :8920/:8642/:8921, tailscale serve :18920 live,
+  `Mav-Room Stack` + `Mav-Room Desktop Presence` tasks registered.
 
 ## Current production state
+
 
 - **Model: GLM-4.7-Flash UD-IQ3_XXS (12.9 GB)** — winner of the 2026-08-19
   3-worker debate + full benchmark suite. See
