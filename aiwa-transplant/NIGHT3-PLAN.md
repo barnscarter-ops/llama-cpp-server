@@ -54,7 +54,7 @@ installer runs — same discipline as Night 1's Windows install, same reason.
 
 - Target: the 1 TB SN7100 (it will be the only disk — verify anyway).
 - Default LVM layout is fine for a PoC (`pve-root` + `pve-data` thin).
-- Hostname: **`aiwa-poc`**, NOT `aiwa`. Static IP **`192.168.1.13/24`**,
+- Hostname: **`aiwa-poc`**, NOT `aiwa`. Static IP **`192.168.1.230/24`**,
   gateway `192.168.1.254`. **Never `192.168.1.12` or `.10`** — the ProDesk
   and the X870E hold those. Two hosts with AIWA's identity on one switch is
   the exact failure the fresh-install strategy exists to avoid.
@@ -102,7 +102,7 @@ evidence.
 ## Phase 4 — poke the host, then leave it alone
 
 - `pveversion -v`, `lscpu`, `free -h`, sensors sane, NVMe temps sane.
-- Confirm web UI reachable at `https://192.168.1.13:8006`.
+- Confirm web UI reachable at `https://192.168.1.230:8006`.
 - Do NOT join it to anything, do NOT install Tailscale yet, do NOT start
   recreating services. Identity, Tailscale, and real data belong to Night 4.
 
