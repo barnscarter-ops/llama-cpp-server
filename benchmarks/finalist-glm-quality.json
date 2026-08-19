@@ -1,0 +1,391 @@
+{
+  "model": "glm",
+  "url": "http://127.0.0.1:8099/v1/chat/completions",
+  "humaneval": [
+    {
+      "id": "he-01-two-sum",
+      "pass_": true,
+      "error": "",
+      "raw": "def has_close_elements(numbers: list[float], threshold: float) -> bool:\n    for i in range(len(numbers)):\n        for j in range(i + 1, len(numbers)):\n            if abs(numbers[i] - numbers[j]) < threshold:\n                return True\n    return False",
+      "reasoning": "",
+      "code": "def has_close_elements(numbers: list[float], threshold: float) -> bool:\n    for i in range(len(numbers)):\n        for j in range(i + 1, len(numbers)):\n            if abs(numbers[i] - numbers[j]) < threshold:\n                return True\n    return False",
+      "finish_reason": "stop",
+      "wall": 2.157144784927368,
+      "usage": {
+        "completion_tokens": 58,
+        "prompt_tokens": 81,
+        "total_tokens": 139,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "he-02-parens",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef separate_paren_groups(paren_string: str) -> list[str]:\n    result = []\n    current_group = []\n    depth = 0\n\n    for char in paren_string:\n        if char == '(':\n            depth += 1\n            current_group.append(char)\n        elif char == ')':\n            depth -= 1\n            current_group.append(char)\n            if depth == 0:\n                result.append(''.join(current_group))\n                current_group = []\n        # Ignore whitespace\n\n    return result\n```",
+      "reasoning": "",
+      "code": "def separate_paren_groups(paren_string: str) -> list[str]:\n    result = []\n    current_group = []\n    depth = 0\n\n    for char in paren_string:\n        if char == '(':\n            depth += 1\n            current_group.append(char)\n        elif char == ')':\n            depth -= 1\n            current_group.append(char)\n            if depth == 0:\n                result.append(''.join(current_group))\n                current_group = []\n        # Ignore whitespace\n\n    return result",
+      "finish_reason": "stop",
+      "wall": 3.216248035430908,
+      "usage": {
+        "completion_tokens": 107,
+        "prompt_tokens": 87,
+        "total_tokens": 194,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-03-truncate",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef truncate_number(number: float) -> float:\n    return number - int(number)\n```",
+      "reasoning": "",
+      "code": "def truncate_number(number: float) -> float:\n    return number - int(number)",
+      "finish_reason": "stop",
+      "wall": 0.7985317707061768,
+      "usage": {
+        "completion_tokens": 22,
+        "prompt_tokens": 67,
+        "total_tokens": 89,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-04-below-zero",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef below_zero(operations: list[int]) -> bool:\n    balance = 0\n    for op in operations:\n        balance += op\n        if balance < 0:\n            return True\n    return False\n```",
+      "reasoning": "",
+      "code": "def below_zero(operations: list[int]) -> bool:\n    balance = 0\n    for op in operations:\n        balance += op\n        if balance < 0:\n            return True\n    return False",
+      "finish_reason": "stop",
+      "wall": 1.5711548328399658,
+      "usage": {
+        "completion_tokens": 49,
+        "prompt_tokens": 68,
+        "total_tokens": 117,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-05-mean-abs-dev",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef mean_absolute_deviation(numbers: list[float]) -> float:\n    if not numbers:\n        return 0.0\n    \n    mean = sum(numbers) / len(numbers)\n    absolute_deviations = [abs(num - mean) for num in numbers]\n    return sum(absolute_deviations) / len(numbers)\n```",
+      "reasoning": "",
+      "code": "def mean_absolute_deviation(numbers: list[float]) -> float:\n    if not numbers:\n        return 0.0\n    \n    mean = sum(numbers) / len(numbers)\n    absolute_deviations = [abs(num - mean) for num in numbers]\n    return sum(absolute_deviations) / len(numbers)",
+      "finish_reason": "stop",
+      "wall": 2.0801565647125244,
+      "usage": {
+        "completion_tokens": 70,
+        "prompt_tokens": 62,
+        "total_tokens": 132,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-06-intersperse",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef intersperse(numbers: list[int], delimiter: int) -> list[int]:\n    if not numbers:\n        return []\n    result = []\n    for i in range(len(numbers) - 1):\n        result.append(numbers[i])\n        result.append(delimiter)\n    result.append(numbers[-1])\n    return result\n```",
+      "reasoning": "",
+      "code": "def intersperse(numbers: list[int], delimiter: int) -> list[int]:\n    if not numbers:\n        return []\n    result = []\n    for i in range(len(numbers) - 1):\n        result.append(numbers[i])\n        result.append(delimiter)\n    result.append(numbers[-1])\n    return result",
+      "finish_reason": "stop",
+      "wall": 2.091481924057007,
+      "usage": {
+        "completion_tokens": 68,
+        "prompt_tokens": 70,
+        "total_tokens": 138,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-07-nested-depth",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef parse_nested_parens(paren_string: str) -> list[int]:\n    \"\"\"\n    Given a space-separated list of balanced parenthesis groups,\n    returns a list of the deepest nesting level for each group.\n    \"\"\"\n    result = []\n    \n    for group in paren_string.split():\n        max_depth = 0\n        current_depth = 0\n        \n        for char in group:\n            if char == '(':\n                current_depth += 1\n                if current_depth > max_depth:\n                    max_depth = current_depth\n            elif char == ')':\n                current_depth -= 1\n        \n        result.append(max_depth)\n    \n    return result\n```",
+      "reasoning": "",
+      "code": "def parse_nested_parens(paren_string: str) -> list[int]:\n    \"\"\"\n    Given a space-separated list of balanced parenthesis groups,\n    returns a list of the deepest nesting level for each group.\n    \"\"\"\n    result = []\n    \n    for group in paren_string.split():\n        max_depth = 0\n        current_depth = 0\n        \n        for char in group:\n            if char == '(':\n                current_depth += 1\n                if current_depth > max_depth:\n                    max_depth = current_depth\n            elif char == ')':\n                current_depth -= 1\n        \n        result.append(max_depth)\n    \n    return result",
+      "finish_reason": "stop",
+      "wall": 3.8783979415893555,
+      "usage": {
+        "completion_tokens": 133,
+        "prompt_tokens": 76,
+        "total_tokens": 209,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-08-largest-prime-factor",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef largest_prime_factor(n: int) -> int:\n    largest = 1\n    # Divide by 2 as much as possible to handle the even factor\n    while n % 2 == 0:\n        largest = 2\n        n //= 2\n    \n    # Check odd factors from 3 up to sqrt(n)\n    i = 3\n    while i * i <= n:\n        while n % i == 0:\n            largest = i\n            n //= i\n        i += 2\n    \n    # If the remaining n is a prime greater than 2\n    if n > 2:\n        largest = n\n        \n    return largest\n```",
+      "reasoning": "",
+      "code": "def largest_prime_factor(n: int) -> int:\n    largest = 1\n    # Divide by 2 as much as possible to handle the even factor\n    while n % 2 == 0:\n        largest = 2\n        n //= 2\n    \n    # Check odd factors from 3 up to sqrt(n)\n    i = 3\n    while i * i <= n:\n        while n % i == 0:\n            largest = i\n            n //= i\n        i += 2\n    \n    # If the remaining n is a prime greater than 2\n    if n > 2:\n        largest = n\n        \n    return largest",
+      "finish_reason": "stop",
+      "wall": 4.092508316040039,
+      "usage": {
+        "completion_tokens": 142,
+        "prompt_tokens": 71,
+        "total_tokens": 213,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-09-fib-mod-30",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef fib_mod(n: int, m: int) -> int:\n    def _fib(k: int) -> tuple[int, int]:\n        if k == 0:\n            return (0, 1)\n        else:\n            a, b = _fib(k // 2)\n            c = (a * ((b * 2) % m - a)) % m\n            d = (a * a + b * b) % m\n            if k % 2 == 0:\n                return (c, d)\n            else:\n                return (d, (c + d) % m)\n    \n    return _fib(n)[0]\n```",
+      "reasoning": "",
+      "code": "def fib_mod(n: int, m: int) -> int:\n    def _fib(k: int) -> tuple[int, int]:\n        if k == 0:\n            return (0, 1)\n        else:\n            a, b = _fib(k // 2)\n            c = (a * ((b * 2) % m - a)) % m\n            d = (a * a + b * b) % m\n            if k % 2 == 0:\n                return (c, d)\n            else:\n                return (d, (c + d) % m)\n    \n    return _fib(n)[0]",
+      "finish_reason": "stop",
+      "wall": 4.141320466995239,
+      "usage": {
+        "completion_tokens": 140,
+        "prompt_tokens": 91,
+        "total_tokens": 231,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    },
+    {
+      "id": "he-10-longest-common-prefix",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef longest_common_prefix(strs: list[str]) -> str:\n    if not strs:\n        return \"\"\n    \n    prefix = strs[0]\n    \n    for s in strs[1:]:\n        while not s.startswith(prefix):\n            prefix = prefix[:-1]\n            if not prefix:\n                return \"\"\n    \n    return prefix\n```",
+      "reasoning": "",
+      "code": "def longest_common_prefix(strs: list[str]) -> str:\n    if not strs:\n        return \"\"\n    \n    prefix = strs[0]\n    \n    for s in strs[1:]:\n        while not s.startswith(prefix):\n            prefix = prefix[:-1]\n            if not prefix:\n                return \"\"\n    \n    return prefix",
+      "finish_reason": "stop",
+      "wall": 2.153141736984253,
+      "usage": {
+        "completion_tokens": 70,
+        "prompt_tokens": 70,
+        "total_tokens": 140,
+        "prompt_tokens_details": {
+          "cached_tokens": 27
+        }
+      }
+    }
+  ],
+  "workflow_code": [
+    {
+      "id": "wf-01-powershell-spaces",
+      "title": "Fix PowerShell path-with-spaces bug",
+      "prompt": "This PowerShell function fails when the file path contains spaces. Fix it. Return ONLY the corrected function, no explanation.\n\n```powershell\nfunction Get-FileHashSafe {\n    param([string]$Path)\n    $result = cmd.exe /c certutil -hashfile $Path SHA256\n    return $result[1].Trim()\n}\n```",
+      "raw": "```powershell\nfunction Get-FileHashSafe {\n    param([string]$Path)\n    $result = cmd.exe /c certutil -hashfile \"$Path\" SHA256\n    return $result[1].Trim()\n}\n```",
+      "reasoning": "",
+      "stripped": "```powershell\nfunction Get-FileHashSafe {\n    param([string]$Path)\n    $result = cmd.exe /c certutil -hashfile \"$Path\" SHA256\n    return $result[1].Trim()\n}\n```",
+      "finish_reason": "stop",
+      "wall": 1.7089996337890625,
+      "usage": {
+        "completion_tokens": 49,
+        "prompt_tokens": 75,
+        "total_tokens": 124,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-02-refactor",
+      "title": "Refactor a tangled Python function",
+      "prompt": "Refactor this function to be clearer and shorter. Preserve behavior exactly. Return only the refactored function.\n\n```python\ndef process(data):\n    result = []\n    for i in range(len(data)):\n        if data[i] is not None:\n            if isinstance(data[i], str):\n                if len(data[i]) > 0:\n                    result.append(data[i].strip().lower())\n            elif isinstance(data[i], int) or isinstance(data[i], float):\n                if data[i] > 0:\n                    result.append(str(data[i]))\n    return result\n```",
+      "raw": "```python\ndef process(data):\n    result = []\n    for item in data:\n        if isinstance(item, str) and item.strip():\n            result.append(item.strip().lower())\n        elif isinstance(item, (int, float)) and item > 0:\n            result.append(str(item))\n    return result\n```",
+      "reasoning": "",
+      "stripped": "```python\ndef process(data):\n    result = []\n    for item in data:\n        if isinstance(item, str) and item.strip():\n            result.append(item.strip().lower())\n        elif isinstance(item, (int, float)) and item > 0:\n            result.append(str(item))\n    return result\n```",
+      "finish_reason": "stop",
+      "wall": 2.294036626815796,
+      "usage": {
+        "completion_tokens": 64,
+        "prompt_tokens": 119,
+        "total_tokens": 183,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-03-pytest",
+      "title": "Write pytest tests for a function",
+      "prompt": "Write pytest tests for the following function. Cover happy paths, edge cases, and error cases. Return only the test code.\n\n```python\ndef parse_duration(s: str) -> int:\n    '''Parse '1h30m' style strings into seconds. Supports h, m, s. Raises ValueError on invalid.'''\n    import re\n    matches = re.findall(r'(\\d+)([hms])', s)\n    if not matches:\n        raise ValueError(f'invalid duration: {s!r}')\n    mult = dict(h=3600, m=60, s=1)\n    return sum(int(n) * mult[u] for n, u in matches)\n```",
+      "raw": "```python\nimport pytest\n\ndef test_parse_duration_happy_paths():\n    assert parse_duration(\"1h\") == 3600\n    assert parse_duration(\"1m\") == 60\n    assert parse_duration(\"1s\") == 1\n    assert parse_duration(\"1h30m\") == 3600 + 1800\n    assert parse_duration(\"1h30m45s\") == 3600 + 1800 + 45\n    assert parse_duration(\"0h0m0s\") == 0\n    assert parse_duration(\"90m\") == 5400\n    assert parse_duration(\"1h30m0s\") == 5400\n\ndef test_parse_duration_edge_cases():\n    # Leading zeros\n    assert parse_duration(\"01h\") == 3600\n    assert parse_duration(\"001m\") == 60\n    assert parse_duration(\"0001s\") == 1\n    # Large numbers\n    assert parse_duration(\"999h\") == 3596400\n    # Mixed order\n    assert parse_duration(\"30m1h\") == 3600 + 1800\n    assert parse_duration(\"1s1m1h\") == 3661\n\ndef test_parse_duration_error_cases():\n    # Invalid format (no unit)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"1\")\n    # Invalid format (no number)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"h\")\n    # Invalid format (no match)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"1x\")\n    # Invalid format (empty string)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"\")\n    # Invalid format (whitespace)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\" 1h \")\n    # Invalid format (unknown unit)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"1d\")\n```",
+      "reasoning": "",
+      "stripped": "```python\nimport pytest\n\ndef test_parse_duration_happy_paths():\n    assert parse_duration(\"1h\") == 3600\n    assert parse_duration(\"1m\") == 60\n    assert parse_duration(\"1s\") == 1\n    assert parse_duration(\"1h30m\") == 3600 + 1800\n    assert parse_duration(\"1h30m45s\") == 3600 + 1800 + 45\n    assert parse_duration(\"0h0m0s\") == 0\n    assert parse_duration(\"90m\") == 5400\n    assert parse_duration(\"1h30m0s\") == 5400\n\ndef test_parse_duration_edge_cases():\n    # Leading zeros\n    assert parse_duration(\"01h\") == 3600\n    assert parse_duration(\"001m\") == 60\n    assert parse_duration(\"0001s\") == 1\n    # Large numbers\n    assert parse_duration(\"999h\") == 3596400\n    # Mixed order\n    assert parse_duration(\"30m1h\") == 3600 + 1800\n    assert parse_duration(\"1s1m1h\") == 3661\n\ndef test_parse_duration_error_cases():\n    # Invalid format (no unit)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"1\")\n    # Invalid format (no number)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"h\")\n    # Invalid format (no match)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"1x\")\n    # Invalid format (empty string)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"\")\n    # Invalid format (whitespace)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\" 1h \")\n    # Invalid format (unknown unit)\n    with pytest.raises(ValueError, match=\"invalid duration\"):\n        parse_duration(\"1d\")\n```",
+      "finish_reason": "stop",
+      "wall": 12.957623958587646,
+      "usage": {
+        "completion_tokens": 416,
+        "prompt_tokens": 144,
+        "total_tokens": 560,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  ],
+  "workflow_debug": [
+    {
+      "id": "wf-04-stack-trace",
+      "title": "Identify the bug from stack trace",
+      "prompt": "Given this code and stack trace, identify the bug in one sentence and provide the one-line fix.\n\n```python\ndef merge_configs(default: dict, override: dict) -> dict:\n    result = default\n    for k, v in override.items():\n        if isinstance(v, dict) and k in result:\n            result[k] = merge_configs(result[k], v)\n        else:\n            result[k] = v\n    return result\n```\n\nStack trace when called a second time:\n```\nTest: default was mutated by previous merge_configs call.\n  first call:  merge_configs({'a': 1}, {'b': 2}) -> {'a': 1, 'b': 2}   OK\n  second call: merge_configs({'a': 1}, {'c': 3}) -> {'a': 1, 'b': 2, 'c': 3}   FAIL\n  expected: {'a': 1, 'c': 3}\n```",
+      "raw": "Bug: The function mutates the input `default` dictionary by modifying its contents instead of creating a new one.  \nFix: `result = default.copy()` (or `result = default.copy()` before the loop).",
+      "reasoning": "",
+      "stripped": "Bug: The function mutates the input `default` dictionary by modifying its contents instead of creating a new one.  \nFix: `result = default.copy()` (or `result = default.copy()` before the loop).",
+      "finish_reason": "stop",
+      "wall": 2.0609850883483887,
+      "usage": {
+        "completion_tokens": 45,
+        "prompt_tokens": 208,
+        "total_tokens": 253,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-05-concurrency",
+      "title": "Concurrency: what's wrong",
+      "prompt": "Explain what is wrong with this code in 2-3 sentences, then show the fix.\n\n```python\nimport threading\ncounter = 0\ndef worker():\n    global counter\n    for _ in range(100_000):\n        counter += 1\nthreads = [threading.Thread(target=worker) for _ in range(10)]\nfor t in threads: t.start()\nfor t in threads: t.join()\nassert counter == 1_000_000  # sometimes fails\n```",
+      "raw": "The code is wrong because it suffers from a **race condition**. Multiple threads are incrementing the `counter` variable simultaneously without any synchronization, meaning the increments are not atomic and can be lost or overwritten.\n\n**The fix:**\nUse a `threading.Lock` to ensure that only one thread can modify the `counter` at a time.\n\n```python\nimport threading\n\ncounter = 0\nlock = threading.Lock()\n\ndef worker():\n    global counter\n    for _ in range(100_000):\n        with lock:\n            counter += 1\n\nthreads = [threading.Thread(target=worker) for _ in range(10)]\nfor t in threads:\n    t.start()\nfor t in threads:\n    t.join()\n\nassert counter == 1_000_000\n```",
+      "reasoning": "",
+      "stripped": "The code is wrong because it suffers from a **race condition**. Multiple threads are incrementing the `counter` variable simultaneously without any synchronization, meaning the increments are not atomic and can be lost or overwritten.\n\n**The fix:**\nUse a `threading.Lock` to ensure that only one thread can modify the `counter` at a time.\n\n```python\nimport threading\n\ncounter = 0\nlock = threading.Lock()\n\ndef worker():\n    global counter\n    for _ in range(100_000):\n        with lock:\n            counter += 1\n\nthreads = [threading.Thread(target=worker) for _ in range(10)]\nfor t in threads:\n    t.start()\nfor t in threads:\n    t.join()\n\nassert counter == 1_000_000\n```",
+      "finish_reason": "stop",
+      "wall": 4.888420581817627,
+      "usage": {
+        "completion_tokens": 160,
+        "prompt_tokens": 107,
+        "total_tokens": 267,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "id": "wf-06-single-call",
+      "title": "Single correct tool call",
+      "prompt": "What's the weather in Boston in fahrenheit?",
+      "pass_": true,
+      "note": "native",
+      "reasons": [],
+      "got_name": "get_weather",
+      "got_args": {
+        "city": "Boston",
+        "unit": "fahrenheit"
+      },
+      "raw_content": "",
+      "raw_tool_calls": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Boston\",\"unit\":\"fahrenheit\"}"
+          },
+          "id": "ARcPgqP84XrfFDrx590XTLIZZZ9t68mw"
+        }
+      ],
+      "wall": 1.8564143180847168,
+      "usage": {
+        "completion_tokens": 18,
+        "prompt_tokens": 312,
+        "total_tokens": 330,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-07-choose-tool",
+      "title": "Pick correct tool from three",
+      "prompt": "I'm meeting a friend in Tokyo tomorrow. What time is it there right now?",
+      "pass_": true,
+      "note": "native",
+      "reasons": [],
+      "got_name": "get_time",
+      "got_args": {
+        "city": "Tokyo"
+      },
+      "raw_content": "",
+      "raw_tool_calls": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_time",
+            "arguments": "{\"city\":\"Tokyo\"}"
+          },
+          "id": "JId5qJ2e83WDhK6sjGfjJ4zAuApWkj1x"
+        }
+      ],
+      "wall": 0.5084285736083984,
+      "usage": {
+        "completion_tokens": 12,
+        "prompt_tokens": 319,
+        "total_tokens": 331,
+        "prompt_tokens_details": {
+          "cached_tokens": 300
+        }
+      }
+    },
+    {
+      "id": "wf-08-structured",
+      "title": "Structured tool call with enums and arrays",
+      "prompt": "Create an urgent ticket titled 'Prod DB replication stalled' assigned to 'oncall-sre' with tags 'database' and 'urgent-p1'.",
+      "pass_": true,
+      "note": "native",
+      "reasons": [],
+      "got_name": "create_ticket",
+      "got_args": {
+        "title": "Prod DB replication stalled",
+        "priority": "urgent",
+        "assignee": "oncall-sre",
+        "tags": [
+          "database",
+          "urgent-p1"
+        ]
+      },
+      "raw_content": "I'll create an urgent support ticket with the details you provided.",
+      "raw_tool_calls": [
+        {
+          "type": "function",
+          "function": {
+            "name": "create_ticket",
+            "arguments": "{\"title\":\"Prod DB replication stalled\",\"priority\":\"urgent\",\"assignee\":\"oncall-sre\",\"tags\":[\"database\", \"urgent-p1\"]}"
+          },
+          "id": "cnbOIIADVdlpBt5feS9h867Zd07c3hyU"
+        }
+      ],
+      "wall": 2.4352433681488037,
+      "usage": {
+        "completion_tokens": 56,
+        "prompt_tokens": 242,
+        "total_tokens": 298,
+        "prompt_tokens_details": {
+          "cached_tokens": 52
+        }
+      }
+    }
+  ],
+  "summary": {
+    "humaneval_passed": 10,
+    "humaneval_total": 10,
+    "tools_passed": 3,
+    "tools_total": 3
+  }
+}

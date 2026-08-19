@@ -1,0 +1,391 @@
+{
+  "model": "qwen-control",
+  "url": "http://127.0.0.1:8099/v1/chat/completions",
+  "humaneval": [
+    {
+      "id": "he-01-two-sum",
+      "pass_": true,
+      "error": "",
+      "raw": "def has_close_elements(numbers: list[float], threshold: float) -> bool:\n    for i in range(len(numbers)):\n        for j in range(i + 1, len(numbers)):\n            if abs(numbers[i] - numbers[j]) < threshold:\n                return True\n    return False",
+      "reasoning": "",
+      "code": "def has_close_elements(numbers: list[float], threshold: float) -> bool:\n    for i in range(len(numbers)):\n        for j in range(i + 1, len(numbers)):\n            if abs(numbers[i] - numbers[j]) < threshold:\n                return True\n    return False",
+      "finish_reason": "stop",
+      "wall": 2.4325733184814453,
+      "usage": {
+        "completion_tokens": 62,
+        "prompt_tokens": 94,
+        "total_tokens": 156,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "he-02-parens",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef separate_paren_groups(paren_string: str) -> list[str]:\n    groups = []\n    current = []\n    depth = 0\n    for char in paren_string:\n        if char == ' ':\n            continue\n        if char == '(':\n            depth += 1\n            current.append(char)\n        elif char == ')':\n            depth -= 1\n            current.append(char)\n            if depth == 0:\n                groups.append(''.join(current))\n                current = []\n    return groups\n```",
+      "reasoning": "",
+      "code": "def separate_paren_groups(paren_string: str) -> list[str]:\n    groups = []\n    current = []\n    depth = 0\n    for char in paren_string:\n        if char == ' ':\n            continue\n        if char == '(':\n            depth += 1\n            current.append(char)\n        elif char == ')':\n            depth -= 1\n            current.append(char)\n            if depth == 0:\n                groups.append(''.join(current))\n                current = []\n    return groups",
+      "finish_reason": "stop",
+      "wall": 3.782897472381592,
+      "usage": {
+        "completion_tokens": 118,
+        "prompt_tokens": 101,
+        "total_tokens": 219,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-03-truncate",
+      "pass_": true,
+      "error": "",
+      "raw": "def truncate_number(number: float) -> float:\n    return number - int(number)",
+      "reasoning": "",
+      "code": "def truncate_number(number: float) -> float:\n    return number - int(number)",
+      "finish_reason": "stop",
+      "wall": 0.9987564086914062,
+      "usage": {
+        "completion_tokens": 19,
+        "prompt_tokens": 79,
+        "total_tokens": 98,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-04-below-zero",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef below_zero(operations: list[int]) -> bool:\n    balance = 0\n    for op in operations:\n        balance += op\n        if balance < 0:\n            return True\n    return False\n```",
+      "reasoning": "",
+      "code": "def below_zero(operations: list[int]) -> bool:\n    balance = 0\n    for op in operations:\n        balance += op\n        if balance < 0:\n            return True\n    return False",
+      "finish_reason": "stop",
+      "wall": 1.8666908740997314,
+      "usage": {
+        "completion_tokens": 52,
+        "prompt_tokens": 80,
+        "total_tokens": 132,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-05-mean-abs-dev",
+      "pass_": true,
+      "error": "",
+      "raw": "def mean_absolute_deviation(numbers: list[float]) -> float:\n    if not numbers:\n        return 0.0\n    mean = sum(numbers) / len(numbers)\n    return sum(abs(x - mean) for x in numbers) / len(numbers)",
+      "reasoning": "",
+      "code": "def mean_absolute_deviation(numbers: list[float]) -> float:\n    if not numbers:\n        return 0.0\n    mean = sum(numbers) / len(numbers)\n    return sum(abs(x - mean) for x in numbers) / len(numbers)",
+      "finish_reason": "stop",
+      "wall": 1.9365506172180176,
+      "usage": {
+        "completion_tokens": 56,
+        "prompt_tokens": 74,
+        "total_tokens": 130,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-06-intersperse",
+      "pass_": true,
+      "error": "",
+      "raw": "def intersperse(numbers: list[int], delimiter: int) -> list[int]:\n    if not numbers:\n        return []\n    result = []\n    for i, num in enumerate(numbers):\n        if i > 0:\n            result.append(delimiter)\n        result.append(num)\n    return result",
+      "reasoning": "",
+      "code": "def intersperse(numbers: list[int], delimiter: int) -> list[int]:\n    if not numbers:\n        return []\n    result = []\n    for i, num in enumerate(numbers):\n        if i > 0:\n            result.append(delimiter)\n        result.append(num)\n    return result",
+      "finish_reason": "stop",
+      "wall": 2.2649178504943848,
+      "usage": {
+        "completion_tokens": 67,
+        "prompt_tokens": 82,
+        "total_tokens": 149,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-07-nested-depth",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef parse_nested_parens(paren_string: str) -> list[int]:\n    \"\"\"\n    Given a space-separated list of balanced parenthesis groups, return a list of the deepest\n    nesting level for each group.\n    \n    >>> parse_nested_parens('(()()) ((())) () ((())())')\n    [2, 3, 1, 3]\n    \"\"\"\n    groups = paren_string.split()\n    result = []\n    for group in groups:\n        max_depth = 0\n        current_depth = 0\n        for char in group:\n            if char == '(':\n                current_depth += 1\n                if current_depth > max_depth:\n                    max_depth = current_depth\n            elif char == ')':\n                current_depth -= 1\n        result.append(max_depth)\n    return result\n```",
+      "reasoning": "",
+      "code": "def parse_nested_parens(paren_string: str) -> list[int]:\n    \"\"\"\n    Given a space-separated list of balanced parenthesis groups, return a list of the deepest\n    nesting level for each group.\n    \n    >>> parse_nested_parens('(()()) ((())) () ((())())')\n    [2, 3, 1, 3]\n    \"\"\"\n    groups = paren_string.split()\n    result = []\n    for group in groups:\n        max_depth = 0\n        current_depth = 0\n        for char in group:\n            if char == '(':\n                current_depth += 1\n                if current_depth > max_depth:\n                    max_depth = current_depth\n            elif char == ')':\n                current_depth -= 1\n        result.append(max_depth)\n    return result",
+      "finish_reason": "stop",
+      "wall": 5.392436265945435,
+      "usage": {
+        "completion_tokens": 182,
+        "prompt_tokens": 89,
+        "total_tokens": 271,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-08-largest-prime-factor",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef largest_prime_factor(n: int) -> int:\n    largest = -1\n    # Divide out all factors of 2\n    while n % 2 == 0:\n        largest = 2\n        n //= 2\n    # Check odd factors from 3 upwards\n    factor = 3\n    while factor * factor <= n:\n        while n % factor == 0:\n            largest = factor\n            n //= factor\n        factor += 2\n    # If n is still greater than 1, then it's a prime factor\n    if n > 1:\n        largest = n\n    return largest\n```",
+      "reasoning": "",
+      "code": "def largest_prime_factor(n: int) -> int:\n    largest = -1\n    # Divide out all factors of 2\n    while n % 2 == 0:\n        largest = 2\n        n //= 2\n    # Check odd factors from 3 upwards\n    factor = 3\n    while factor * factor <= n:\n        while n % factor == 0:\n            largest = factor\n            n //= factor\n        factor += 2\n    # If n is still greater than 1, then it's a prime factor\n    if n > 1:\n        largest = n\n    return largest",
+      "finish_reason": "stop",
+      "wall": 4.297111511230469,
+      "usage": {
+        "completion_tokens": 142,
+        "prompt_tokens": 83,
+        "total_tokens": 225,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-09-fib-mod-30",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef fib_mod(n: int, m: int) -> int:\n    if m == 1:\n        return 0\n    if n == 0:\n        return 0\n    if n == 1:\n        return 1 % m\n\n    def _fib_pair(k):\n        \"\"\"Returns (F(k), F(k+1)) mod m using fast doubling.\"\"\"\n        if k == 0:\n            return (0, 1)\n        a, b = _fib_pair(k >> 1)\n        # c = F(2k) = F(k) * (2*F(k+1) - F(k))\n        # d = F(2k+1) = F(k)^2 + F(k+1)^2\n        c = (a * ((2 * b - a) % m)) % m\n        d = (a * a + b * b) % m\n        if k & 1:\n            return (d, (c + d) % m)\n        else:\n            return (c, d)\n\n    return _fib_pair(n)[0]\n```",
+      "reasoning": "",
+      "code": "def fib_mod(n: int, m: int) -> int:\n    if m == 1:\n        return 0\n    if n == 0:\n        return 0\n    if n == 1:\n        return 1 % m\n\n    def _fib_pair(k):\n        \"\"\"Returns (F(k), F(k+1)) mod m using fast doubling.\"\"\"\n        if k == 0:\n            return (0, 1)\n        a, b = _fib_pair(k >> 1)\n        # c = F(2k) = F(k) * (2*F(k+1) - F(k))\n        # d = F(2k+1) = F(k)^2 + F(k+1)^2\n        c = (a * ((2 * b - a) % m)) % m\n        d = (a * a + b * b) % m\n        if k & 1:\n            return (d, (c + d) % m)\n        else:\n            return (c, d)\n\n    return _fib_pair(n)[0]",
+      "finish_reason": "stop",
+      "wall": 7.2788405418396,
+      "usage": {
+        "completion_tokens": 248,
+        "prompt_tokens": 104,
+        "total_tokens": 352,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    },
+    {
+      "id": "he-10-longest-common-prefix",
+      "pass_": true,
+      "error": "",
+      "raw": "```python\ndef longest_common_prefix(strs: list[str]) -> str:\n    if not strs:\n        return ''\n    prefix = strs[0]\n    for s in strs[1:]:\n        while not s.startswith(prefix):\n            prefix = prefix[:-1]\n            if not prefix:\n                return ''\n    return prefix\n```",
+      "reasoning": "",
+      "code": "def longest_common_prefix(strs: list[str]) -> str:\n    if not strs:\n        return ''\n    prefix = strs[0]\n    for s in strs[1:]:\n        while not s.startswith(prefix):\n            prefix = prefix[:-1]\n            if not prefix:\n                return ''\n    return prefix",
+      "finish_reason": "stop",
+      "wall": 2.565870523452759,
+      "usage": {
+        "completion_tokens": 77,
+        "prompt_tokens": 81,
+        "total_tokens": 158,
+        "prompt_tokens_details": {
+          "cached_tokens": 23
+        }
+      }
+    }
+  ],
+  "workflow_code": [
+    {
+      "id": "wf-01-powershell-spaces",
+      "title": "Fix PowerShell path-with-spaces bug",
+      "prompt": "This PowerShell function fails when the file path contains spaces. Fix it. Return ONLY the corrected function, no explanation.\n\n```powershell\nfunction Get-FileHashSafe {\n    param([string]$Path)\n    $result = cmd.exe /c certutil -hashfile $Path SHA256\n    return $result[1].Trim()\n}\n```",
+      "raw": "```powershell\nfunction Get-FileHashSafe {\n    param([string]$Path)\n    $result = cmd.exe /c \"certutil -hashfile `\"$Path`\" SHA256\"\n    return $result[1].Trim()\n}\n```",
+      "reasoning": "",
+      "stripped": "```powershell\nfunction Get-FileHashSafe {\n    param([string]$Path)\n    $result = cmd.exe /c \"certutil -hashfile `\"$Path`\" SHA256\"\n    return $result[1].Trim()\n}\n```",
+      "finish_reason": "stop",
+      "wall": 2.2889068126678467,
+      "usage": {
+        "completion_tokens": 59,
+        "prompt_tokens": 89,
+        "total_tokens": 148,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-02-refactor",
+      "title": "Refactor a tangled Python function",
+      "prompt": "Refactor this function to be clearer and shorter. Preserve behavior exactly. Return only the refactored function.\n\n```python\ndef process(data):\n    result = []\n    for i in range(len(data)):\n        if data[i] is not None:\n            if isinstance(data[i], str):\n                if len(data[i]) > 0:\n                    result.append(data[i].strip().lower())\n            elif isinstance(data[i], int) or isinstance(data[i], float):\n                if data[i] > 0:\n                    result.append(str(data[i]))\n    return result\n```",
+      "raw": "```python\ndef process(data):\n    result = []\n    for item in data:\n        if item is None:\n            continue\n        if isinstance(item, str) and item.strip():\n            result.append(item.strip().lower())\n        elif isinstance(item, (int, float)) and item > 0:\n            result.append(str(item))\n    return result\n```",
+      "reasoning": "",
+      "stripped": "```python\ndef process(data):\n    result = []\n    for item in data:\n        if item is None:\n            continue\n        if isinstance(item, str) and item.strip():\n            result.append(item.strip().lower())\n        elif isinstance(item, (int, float)) and item > 0:\n            result.append(str(item))\n    return result\n```",
+      "finish_reason": "stop",
+      "wall": 3.12819504737854,
+      "usage": {
+        "completion_tokens": 81,
+        "prompt_tokens": 137,
+        "total_tokens": 218,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-03-pytest",
+      "title": "Write pytest tests for a function",
+      "prompt": "Write pytest tests for the following function. Cover happy paths, edge cases, and error cases. Return only the test code.\n\n```python\ndef parse_duration(s: str) -> int:\n    '''Parse '1h30m' style strings into seconds. Supports h, m, s. Raises ValueError on invalid.'''\n    import re\n    matches = re.findall(r'(\\d+)([hms])', s)\n    if not matches:\n        raise ValueError(f'invalid duration: {s!r}')\n    mult = dict(h=3600, m=60, s=1)\n    return sum(int(n) * mult[u] for n, u in matches)\n```",
+      "raw": "```python\nimport pytest\nfrom datetime import timedelta\n\n\ndef test_parse_duration_hours():\n    assert parse_duration('1h') == 3600\n\n\ndef test_parse_duration_minutes():\n    assert parse_duration('30m') == 1800\n\n\ndef test_parse_duration_seconds():\n    assert parse_duration('45s') == 45\n\n\ndef test_parse_duration_combined():\n    assert parse_duration('1h30m') == 5400\n\n\ndef test_parse_duration_all_units():\n    assert parse_duration('1h30m45s') == 5445\n\n\ndef test_parse_duration_zero():\n    assert parse_duration('0h0m0s') == 0\n\n\ndef test_parse_duration_large_values():\n    assert parse_duration('100h') == 360000\n\n\ndef test_parse_duration_multiple_same_units():\n    assert parse_duration('1h30m15m') == 5400 + 900\n\n\ndef test_parse_duration_invalid_empty():\n    with pytest.raises(ValueError):\n        parse_duration('')\n\n\ndef test_parse_duration_invalid_no_numbers():\n    with pytest.raises(ValueError):\n        parse_duration('abc')\n\n\ndef test_parse_duration_invalid_invalid_unit():\n    with pytest.raises(ValueError):\n        parse_duration('1x')\n\n\ndef test_parse_duration_invalid_mixed_invalid():\n    with pytest.raises(ValueError):\n        parse_duration('1h30x')\n\n\ndef test_parse_duration_invalid_only_letters():\n    with pytest.raises(ValueError):\n        parse_duration('hours')\n\n\ndef test_parse_duration_invalid_special_chars():\n    with pytest.raises(ValueError):\n        parse_duration('1h30m!')\n\n\ndef test_parse_duration_single_digit():\n    assert parse_duration('1s') == 1\n\n\ndef test_parse_duration_multiple_digits():\n    assert parse_duration('123s') == 123\n\n\ndef test_parse_duration_order_independent():\n    assert parse_duration('30m1h') == 5400\n\n\ndef test_parse_duration_whitespace():\n    with pytest.raises(ValueError):\n        parse_duration('1h 30m')\n\n\ndef test_parse_duration_negative():\n    with pytest.raises(ValueError):\n        parse_duration('-1h')\n```",
+      "reasoning": "",
+      "stripped": "```python\nimport pytest\nfrom datetime import timedelta\n\n\ndef test_parse_duration_hours():\n    assert parse_duration('1h') == 3600\n\n\ndef test_parse_duration_minutes():\n    assert parse_duration('30m') == 1800\n\n\ndef test_parse_duration_seconds():\n    assert parse_duration('45s') == 45\n\n\ndef test_parse_duration_combined():\n    assert parse_duration('1h30m') == 5400\n\n\ndef test_parse_duration_all_units():\n    assert parse_duration('1h30m45s') == 5445\n\n\ndef test_parse_duration_zero():\n    assert parse_duration('0h0m0s') == 0\n\n\ndef test_parse_duration_large_values():\n    assert parse_duration('100h') == 360000\n\n\ndef test_parse_duration_multiple_same_units():\n    assert parse_duration('1h30m15m') == 5400 + 900\n\n\ndef test_parse_duration_invalid_empty():\n    with pytest.raises(ValueError):\n        parse_duration('')\n\n\ndef test_parse_duration_invalid_no_numbers():\n    with pytest.raises(ValueError):\n        parse_duration('abc')\n\n\ndef test_parse_duration_invalid_invalid_unit():\n    with pytest.raises(ValueError):\n        parse_duration('1x')\n\n\ndef test_parse_duration_invalid_mixed_invalid():\n    with pytest.raises(ValueError):\n        parse_duration('1h30x')\n\n\ndef test_parse_duration_invalid_only_letters():\n    with pytest.raises(ValueError):\n        parse_duration('hours')\n\n\ndef test_parse_duration_invalid_special_chars():\n    with pytest.raises(ValueError):\n        parse_duration('1h30m!')\n\n\ndef test_parse_duration_single_digit():\n    assert parse_duration('1s') == 1\n\n\ndef test_parse_duration_multiple_digits():\n    assert parse_duration('123s') == 123\n\n\ndef test_parse_duration_order_independent():\n    assert parse_duration('30m1h') == 5400\n\n\ndef test_parse_duration_whitespace():\n    with pytest.raises(ValueError):\n        parse_duration('1h 30m')\n\n\ndef test_parse_duration_negative():\n    with pytest.raises(ValueError):\n        parse_duration('-1h')\n```",
+      "finish_reason": "stop",
+      "wall": 13.988067388534546,
+      "usage": {
+        "completion_tokens": 484,
+        "prompt_tokens": 164,
+        "total_tokens": 648,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  ],
+  "workflow_debug": [
+    {
+      "id": "wf-04-stack-trace",
+      "title": "Identify the bug from stack trace",
+      "prompt": "Given this code and stack trace, identify the bug in one sentence and provide the one-line fix.\n\n```python\ndef merge_configs(default: dict, override: dict) -> dict:\n    result = default\n    for k, v in override.items():\n        if isinstance(v, dict) and k in result:\n            result[k] = merge_configs(result[k], v)\n        else:\n            result[k] = v\n    return result\n```\n\nStack trace when called a second time:\n```\nTest: default was mutated by previous merge_configs call.\n  first call:  merge_configs({'a': 1}, {'b': 2}) -> {'a': 1, 'b': 2}   OK\n  second call: merge_configs({'a': 1}, {'c': 3}) -> {'a': 1, 'b': 2, 'c': 3}   FAIL\n  expected: {'a': 1, 'c': 3}\n```",
+      "raw": "The bug is that `result` references the original `default` dictionary instead of a copy, causing the input dictionary to be mutated.\n\nFix: `result = default.copy()`",
+      "reasoning": "",
+      "stripped": "The bug is that `result` references the original `default` dictionary instead of a copy, causing the input dictionary to be mutated.\n\nFix: `result = default.copy()`",
+      "finish_reason": "stop",
+      "wall": 2.524976968765259,
+      "usage": {
+        "completion_tokens": 37,
+        "prompt_tokens": 224,
+        "total_tokens": 261,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-05-concurrency",
+      "title": "Concurrency: what's wrong",
+      "prompt": "Explain what is wrong with this code in 2-3 sentences, then show the fix.\n\n```python\nimport threading\ncounter = 0\ndef worker():\n    global counter\n    for _ in range(100_000):\n        counter += 1\nthreads = [threading.Thread(target=worker) for _ in range(10)]\nfor t in threads: t.start()\nfor t in threads: t.join()\nassert counter == 1_000_000  # sometimes fails\n```",
+      "raw": "The code suffers from a race condition because multiple threads increment the shared `counter` variable concurrently without synchronization. The `counter += 1` operation is not atomic, leading to lost updates when threads read and write the value simultaneously.\n\n**Fix:** Use a `threading.Lock` to ensure mutual exclusion during the increment operation.\n\n```python\nimport threading\ncounter = 0\nlock = threading.Lock()\n\ndef worker():\n    global counter\n    for _ in range(100_000):\n        with lock:\n            counter += 1\n\nthreads = [threading.Thread(target=worker) for _ in range(10)]\nfor t in threads:\n    t.start()\nfor t in threads:\n    t.join()\nassert counter == 1_000_000\n```",
+      "reasoning": "",
+      "stripped": "The code suffers from a race condition because multiple threads increment the shared `counter` variable concurrently without synchronization. The `counter += 1` operation is not atomic, leading to lost updates when threads read and write the value simultaneously.\n\n**Fix:** Use a `threading.Lock` to ensure mutual exclusion during the increment operation.\n\n```python\nimport threading\ncounter = 0\nlock = threading.Lock()\n\ndef worker():\n    global counter\n    for _ in range(100_000):\n        with lock:\n            counter += 1\n\nthreads = [threading.Thread(target=worker) for _ in range(10)]\nfor t in threads:\n    t.start()\nfor t in threads:\n    t.join()\nassert counter == 1_000_000\n```",
+      "finish_reason": "stop",
+      "wall": 5.624491214752197,
+      "usage": {
+        "completion_tokens": 175,
+        "prompt_tokens": 129,
+        "total_tokens": 304,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "id": "wf-06-single-call",
+      "title": "Single correct tool call",
+      "prompt": "What's the weather in Boston in fahrenheit?",
+      "pass_": true,
+      "note": "native",
+      "reasons": [],
+      "got_name": "get_weather",
+      "got_args": {
+        "city": "Boston",
+        "unit": "fahrenheit"
+      },
+      "raw_content": "",
+      "raw_tool_calls": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Boston\",\"unit\":\"fahrenheit\"}"
+          },
+          "id": "scSK6aUWlroX1UetH1J1f7ZPmVdjwxER"
+        }
+      ],
+      "wall": 3.8979122638702393,
+      "usage": {
+        "completion_tokens": 39,
+        "prompt_tokens": 424,
+        "total_tokens": 463,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "wf-07-choose-tool",
+      "title": "Pick correct tool from three",
+      "prompt": "I'm meeting a friend in Tokyo tomorrow. What time is it there right now?",
+      "pass_": true,
+      "note": "native",
+      "reasons": [],
+      "got_name": "get_time",
+      "got_args": {
+        "city": "Tokyo"
+      },
+      "raw_content": "",
+      "raw_tool_calls": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_time",
+            "arguments": "{\"city\":\"Tokyo\"}"
+          },
+          "id": "T27BQhyO3P3bxHjXnknkj23VL6WFadHO"
+        }
+      ],
+      "wall": 1.0013391971588135,
+      "usage": {
+        "completion_tokens": 27,
+        "prompt_tokens": 431,
+        "total_tokens": 458,
+        "prompt_tokens_details": {
+          "cached_tokens": 402
+        }
+      }
+    },
+    {
+      "id": "wf-08-structured",
+      "title": "Structured tool call with enums and arrays",
+      "prompt": "Create an urgent ticket titled 'Prod DB replication stalled' assigned to 'oncall-sre' with tags 'database' and 'urgent-p1'.",
+      "pass_": true,
+      "note": "native",
+      "reasons": [],
+      "got_name": "create_ticket",
+      "got_args": {
+        "title": "Prod DB replication stalled",
+        "priority": "urgent",
+        "assignee": "oncall-sre",
+        "tags": [
+          "database",
+          "urgent-p1"
+        ]
+      },
+      "raw_content": "",
+      "raw_tool_calls": [
+        {
+          "type": "function",
+          "function": {
+            "name": "create_ticket",
+            "arguments": "{\"title\":\"Prod DB replication stalled\",\"priority\":\"urgent\",\"assignee\":\"oncall-sre\",\"tags\":[\"database\", \"urgent-p1\"]}"
+          },
+          "id": "4w50ih6VBsb3OwI0eYMM8CMCLokyg1v8"
+        }
+      ],
+      "wall": 4.397730588912964,
+      "usage": {
+        "completion_tokens": 75,
+        "prompt_tokens": 354,
+        "total_tokens": 429,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "humaneval_passed": 10,
+    "humaneval_total": 10,
+    "tools_passed": 3,
+    "tools_total": 3
+  }
+}

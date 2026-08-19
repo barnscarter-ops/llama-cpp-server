@@ -71,24 +71,28 @@ module.exports = {
       env: {},
 
       args: [
-        // Qwen3.6-35B-A3B UD-IQ3_XXS (MoE, 12.3 GB): tuned sweep 2026-08-18
-        // (benchmarks/qwen36-cuda-4060ti-sweep-20260818-095410.json.*):
-        //   - tg128 ~80 t/s (vs 18 t/s for dense Qwen3.8-27B — MoE wins 4.5x)
-        //   - KV q8_0 costs ~1% and buys 128k ctx: loads at 15.1/16.4 GB
-        //   - ubatch 1024 = 96% of peak prefill (2.7k t/s), safer VRAM at 128k
-        //   - MTP variant REJECTED: +1.8 GB head forces ctx to ~32k — high
-        //     context beats a 1.4x tg bump (and MTP lost on the R9700 too)
-        // Qwen3.8-27B stays on disk for quality/vision one-offs. Alias stays
-        // "local-llm" so guardian and qwen-submit work unchanged.
+        // GLM-4.7-Flash UD-IQ3_XXS (MoE 31B-A3B, 12.9 GB): CUTOVER 2026-08-19
+        // after 3-worker debate + full bench (benchmarks/4060ti-finalist-report-2026-08-19.md):
+        //   - tg128 90.1 t/s (Qwen3.6 IQ3 control: 82.9) | pp2048 2787 t/s
+        //   - HumanEval 10/10, tools 3/3, workflow wall 17.0s vs Qwen 19.4s
+        //   - KV f16 REQUIRED: q8_0 KV fails context creation on deepseek2
+        //     arch (b10488 bug); f16 also beats q8_0 on tg for ALL bench models.
+        //     NEVER mix K/V quant types (catastrophic slow path).
+        //   - ctx 202752: full native context, verified to load at 15,856/16,380
+        //     MiB post-restart (627 MiB desktop overhead, display on iGPU).
+        //     MLA/slabbed KV: VRAM flat 65k→202k.
+        //   - Sampler: repeat-penalty 1.0 + min-p 0.01 MANDATORY (loops without).
+        // ROLLBACK: point --model back to Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf,
+        // restore q8_0 KV + ctx 131072, drop the sampler flags (kept on disk).
         "C:\\Workspace\\Infrastructure\\llama-cpp-server-cuda-b10488\\llama-server.exe",
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\GLM-4.7-Flash-UD-IQ3_XXS.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        "--ctx-size",   "131072",
-        "--cache-type-k", "q8_0",
-        "--cache-type-v", "q8_0",
+        "--ctx-size",   "202752",
+        "--cache-type-k", "f16",
+        "--cache-type-v", "f16",
 
         "--parallel",   "1",
         "--jinja",
@@ -97,6 +101,8 @@ module.exports = {
         "--cont-batching",
         "--flash-attn",  "on",
         "--reasoning",   "off",
+        "--repeat-penalty", "1.0",
+        "--min-p",      "0.01",
       ],
 
       exec_mode: "fork",

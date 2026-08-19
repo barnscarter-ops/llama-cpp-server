@@ -1,179 +1,63 @@
-# Next Session Handoff — post-Q5_K_M-cutover tasks
+# NEXT-SESSION-HANDOFF.md — 2026-08-19 (GLM-4.7-Flash cutover)
 
-> Historical Qwen/Q5 incident notes follow. The section below is the current
-> operational source of truth as of 2026-08-14.
+## Current production state
 
-## Current state (verified 2026-08-14)
+- **Model: GLM-4.7-Flash UD-IQ3_XXS (12.9 GB)** — winner of the 2026-08-19
+  3-worker debate + full benchmark suite. See
+  `benchmarks/4060ti-finalist-report-2026-08-19.md` for the complete data.
+- **Config**: ctx 202752 (full native), KV f16, ubatch 1024 / batch 2048,
+  `--repeat-penalty 1.0 --min-p 0.01` (MANDATORY — loops without),
+  `--reasoning off`, alias `local-llm`, port 8081 via guardian on 8080.
+- **VRAM at 202k**: 15,856-15,900 MiB / 16,380 with display on iGPU and
+  desktop overhead ~600 MiB. MLA KV: VRAM is flat from 65k→202k.
+- Verified live 2026-08-19: health OK on 8081 + 8080, completion test passed.
 
-- Production identity is **`local-llm`**, served by PM2 behind
-  **`llama-guardian`**. The retired `qwen3-llama-vulkan` PM2 entry was removed
-  after a private `C:\ProgramData\pm2\dump.pm2` rollback backup.
-- The active GGUF is `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` on
-  the R9700 Vulkan build, with alias `local-llm`, 64k context, parallel 1,
-  continuous batching, flash attention, and reasoning disabled.
-- A no-tools Pi request through `llamacpp/local-llm` returned
-  `NEMOTRON_LOCAL_READY`; `/v1/models` advertises `local-llm` while loaded.
-- Guardian and queue use model-neutral names: `local-llm` and `queue_local`.
-  Legacy Qwen model/route IDs remain accepted only as compatibility inputs.
-- Idle reaper is **30 minutes**. It skips active proxy requests and queued
-  work, and polls direct 8081 slots every five seconds to avoid stopping an
-  in-flight direct request.
-- Validation: `python -m pytest qwen-queue/test_guardian_queue.py` passed
-  7/7; Python compile and `node --check ecosystem.config.cjs` passed.
+## What happened this session (2026-08-19)
 
-## Session-close follow-up
+1. 3-worker blind debate (delegate_task variant of multi-agent-debate skill):
+   GLM-4.7-Flash / Cohere North-Mini-Code / gemma-4-26B-A4B finalists,
+   Qwen3.6-35B IQ3_XXS as incumbent control. Run dir:
+   `C:\Workspace\Shared\Agents\debate-4060ti-execution-worker-2026-08-19\`
+2. Benchmarks (all 100% GPU, CUDA b10488):
+   - GLM tg 90.1 / pp 2787 | Qwen tg 82.9 / pp 2826 | Cohere tg 95.4 but
+     247s workflow wall (unsuppressible interleaved thinking = verbose) |
+     gemma 68.7 tg, 7/10 HumanEval (verbosity failures)
+   - Quality: GLM + Qwen 10/10 HumanEval, 3/3 tools; GLM workflow wall 17.0s
+3. Infra repairs during the run:
+   - **b10488 build was broken** — `llama-common.dll` missing since the
+     Aug-18 refresh (prod llama-server would have crash-looped). Repaired
+     from official b10488 release zip.
+   - **Defender false-positive** on llama.cpp DLLs (Wacatac.H!ml):
+     added exclusion `D:\Workspace\Infrastructure` (elevated). If DLLs go
+     missing again after build refreshes, check Defender history first.
+   - Display moved to AMD iGPU + per-app GPU prefs → ~600 MiB desktop
+     overhead (was ~1100).
+   - **pm2 global CLI was wiped** by an npm update (orphan daemon remained).
+     Reinstalled via `npm install -g pm2`. CLI requires
+     `PM2_HOME=C:\ProgramData\pm2` (elevated for control ops). Cutover
+     script: `C:\Users\carte\scratch\pm2-glm-cutover.ps1`.
+4. Models on disk: GLM (prod), Qwen3.6-35B IQ3_XXS (rollback only),
+   Nemotron Q4_K_M + Qwen3.6 Q4_K_M + Qwen3.8-27B (AIWA earmarked / predate
+   debate). Cohere + gemma deleted.
+5. Rebooted all → 202k ctx verified at 524 MiB free.
 
-- Keep `dump.pm2` untracked; it can include PM2 environment data. The repo
-  `.gitignore` explicitly excludes it.
-- Commit and push the model-neutral migration on `main`; no additional
-  service action is required for the 30-minute reaper setting.
+## Gotchas for next session
 
-Written 2026-08-06 (~09:20) after the Q5_K_M requant + guardian hardening
-session. Prior context: R9700-SWAP-HANDOFF.md (cutover) and git log
-e93d5f1..a4cae79 (this session's three commits).
+- **KV quant on GLM**: q8_0 KV fails context creation (b10488 deepseek2 arch
+  bug). f16 KV only. f16 also measured faster than q8_0 on this GPU for all
+  bench models — do not "optimize" to q8_0.
+- **Never mix --cache-type-k/--cache-type-v quant types** (e.g. f16+q8_0):
+  hits a catastrophic slow path (~15x pp loss, 25-35% tg loss).
+- **GLM sampler**: without `--repeat-penalty 1.0 --min-p 0.01` GLM loops.
+  With it: 10/10 HumanEval. Do not remove.
+- llama-bench in b10488 does not accept `-c` (auto-sizes ctx).
+- pm2: args changes require `pm2 delete` + re-add (not restart). Check for
+  orphaned llama-server.exe after delete/stop.
+- npm updates can silently wipe the global pm2 CLI — daemon keeps running
+  from a ghost path. Symptom: `pm2: command not found` but processes fine.
 
-## Current state (verified 2026-08-06 ~19:09)
+## Open items
 
-- Production **running**: `qwen3-llama-vulkan` + `llama-guardian` (pm2 save done).
-  Q5_K_M, alias `local-llm`, 64k ctx, f16 KV, **ub512 / b2048 / flash-attn on**
-  (Vulkan sweep winner). SI driver `oem56`/`u0200492` @ 32.0.22042.14002.
-- Boot 18:33:42 after full TDR stack (TDR 60/60/120/10, MemoryCompression False,
-  phantom NVIDIA + Adrenalin residuals purged). Canary + 9-config sweep: **zero**
-  new WATCHDOG / no 1001/41 this boot. Leave soaking; watch idle-unload pattern.
-- Depth-realistic bench (32k): **pp 2260.7 / tg 111.9** (ub512). Old empty-ctx
-  3258/134 not comparable. Table: `benchmarks/vulkan-tuning-sweep.md`.
-- Quality (earlier): HumanEval 9/10 + tools 3/3 @ 16k; ppl Q5 5.87 vs IQ3 6.20.
-- Guardian: 45s stop→start cooldown, 60 min idle. Loopback :8080 still Hermes SMS.
-- Repo: main ahead of origin; push when ready.
-
-## 2026-08-06 TDR investigation — READ FIRST (updated ~18:25)
-
-### Root cause (confirmed)
-
-**Bugcheck `VIDEO_TDR_FAILURE (0x00000116)` with faulting driver `amdkmdag.sys`
-(AMD WDDM kernel).** WER event 1019 names amdkmdag on every crash. Live
-kernel WATCHDOG dumps under `C:\Windows\LiveKernelReports\WATCHDOG\` line
-up with the BSODs. Latest dump `WATCHDOG-20260806-1809.dmp` contains the
-string `llama-server`.
-
-Mechanism: the AMD driver stalls past Windows TDR recovery; when recovery
-fails the box hard-crashes (0x116). Default `TdrDelay=2s` / `TdrDdiDelay=5s`
-is far too aggressive for 25GB VRAM map/unmap and long Vulkan compute on
-this RDNA4 card.
-
-### Crash timeline (all four 0x116 today)
-
-| # | WATCHDOG / BSOD local | Trigger context |
-|---|----------------------|-----------------|
-| 1 | 08:33 / reboot 08:34 | Second llama-server during VRAM churn |
-| 2 | 09:27 / reboot 09:28 | Idle after large unload (no llama process) |
-| 3 | 11:52 / reboot 11:54 | ~29 min after clean idle stop at 11:23 — MMAgent fix was **not** sufficient |
-| 4 | 18:09 / reboot 18:10 | Mid-inference (~116–120 t/s, length-retry storm); dump has `llama-server` |
-
-Boot now: **2026-08-06 18:10:40**. Minidumps: `080626-15046/15281/15125/17343-01.dmp`.
-
-### Fixes applied (full stack 2026-08-06 ~18:30)
-
-1. **`Disable-MMAgent -mc`** (MemoryCompression = False) — keep it.
-2. **TDR registry** (needs reboot to arm the timeouts):
-   - `TdrDelay=60`, `TdrDdiDelay=60`, `TdrLimitTime=120`, `TdrLimitCount=10`
-   - Backup: `%TEMP%\tdr-reg-backup-20260806-182107.txt`
-3. **Phantom NVIDIA removed:**
-   - Device `PCI\VEN_10DE&DEV_2805...` removed via `pnputil /remove-device`
-   - Display package `oem52.inf` (`nv_dispsi.inf` 32.0.16.1062) deleted
-   - NVIDIA Vulkan ICD unregistered (AMD ICD only)
-   - `NvContainerLocalSystem`, `nvagent`, `NVDisplay.ContainerLocalSystem` → Disabled
-   - CUDA `llama-server.exe` binary left in repo for rollback path (no NVIDIA GPU)
-4. **Adrenalin residuals purged:** oem66–69 at **32.0.31035.1003**
-   (amdocl/amdogl/amdvlk/amdwin) deleted from driver store.
-5. **SI package installed:** official
-   `260309a-200492c-aib.zip` (SI Driver for R9700). **Important:** its
-   `u0200492.inf` DriverVer is **32.0.22042.14002** — same kernel bits as the
-   WU driver already in use. SI Setup exit 0. No newer SI kernel than WU for
-   this SKU. Do **not** install Adrenalin 26.7.1 (idle DPM bug).
-
-### Still present risk factors (if TDR recurs after reboot)
-
-- Same `amdkmdag` version as before the SI package (by design — AMD ships it).
-  Stability bets are TDR timeouts + multi-GPU cleanup, not a newer binary.
-- Intel UHD still present (fine). Display via RDP + AMD/Intel.
-- If still 0x116: keep model loaded (disable idle unload), WinDbg minidumps,
-  power-limit / ASPM experiments.
-
-### Verification protocol (after reboot)
-
-1. Confirm registry still 60/60/120/10.
-2. Confirm MemoryCompression still False.
-3. Note newest WATCHDOG name before any llama start.
-4. `gsudo` pm2 start `qwen3-llama-vulkan` only (one instance). Wait for healthy 8081.
-5. One short completion via guardian/Tailscale IP.
-6. Controlled unload (`pm2 stop qwen3-llama-vulkan`), wait ≥60s, reload.
-7. Pass = zero new files in `LiveKernelReports\WATCHDOG\` and no event 1001/41.
-8. Only then re-enable long-running prod / sweeps.
-
-## Hard rules (one violation = hard reboot, learned 2026-08-06)
-
-- **NEVER run two llama-server instances on the R9700.** Never hand-launch
-  outside PM2/guardian. A second server loading while VRAM churned TDR'd
-  amdkmdag.sys (bugcheck 0x116) and hard-crashed the box mid-session.
-- Leave ~1 min between big model unload/load. The guardian now enforces
-  this; don't bypass it in manual/bench work — for A/B model benches, run
-  models strictly sequentially with a sleep between (see Task 2 note).
-- Stay on the WU base driver (32.0.22042.14002, oem56.inf). No Adrenalin.
-- Community fallback if TDRs recur under normal ops: disable Windows memory
-  compression (`Disable-MMAgent -mc`, elevated, reboot; reversible with
-  Enable-MMAgent). Several AMD/Windows llama.cpp users report it fixed all
-  stability issues. Not applied yet — prod has been stable without it.
-
-## Environment gotchas (unchanged, still bite)
-
-- PM2 needs elevation: `gsudo -d "pwsh -NoProfile -File <script>"` with
-  PM2_HOME=C:\ProgramData\pm2. Write .ps1 to a scratch dir — inline quoting
-  through gsudo mangles. env/args changes need pm2 delete + re-add, not
-  restart. After stop/delete, check for orphaned llama-server.exe.
-- Loopback 127.0.0.1:8080 = Hermes qwen-worker SMS adapter, NOT the
-  guardian. Test guardian via Tailscale 100.124.216.11:8080 (see Task 3).
-- Qwen3.6 with small max_tokens: finish_reason=length with all tokens in
-  reasoning_content and content="". Use max_tokens≥4096 (16k for benches),
-  or chat_template_kwargs {"enable_thinking": false} per request.
-
-## Task 1 — DONE (Q5_K_M requant, this session)
-
-## Task 2 — DONE (Vulkan tuning sweep Q5_K_M, 2026-08-06 ~19:00)
-
-Applied to `qwen3-llama-vulkan`: ub512, b2048, flash-attn on, f16 KV.
-Larger ubatch/batch slower; fa off tanks; q4/q8 KV not worth prefill hit.
-`tune-vulkan.ps1` hardened: refuse if prod up, AMD ICD pin, 60s cool between
-loads. `--parallel` >1 still open (guardian generation_lock assumes 1 slot).
-
-## Task 3 — port 8080 overlap (guardian vs Hermes SMS)
-
-Unchanged from last handoff. Hermes `qwen-worker` SMS adapter binds
-127.0.0.1:8080; guardian binds 0.0.0.0:8080; Windows routes loopback to
-Hermes. Works today only because MCC uses the Tailscale IP. Fix: move the
-Hermes SMS adapter port (config under
-`C:\Users\carte\AppData\Local\hermes\profiles\qwen-worker\`). Coordinate
-with Carter first — that gateway is live (sms/buzz/api_server connected).
-
-## Task 4 — NVIDIA cleanup + 4060 Ti plan (mostly done / backburner)
-
-- Phantom NVIDIA device + oem52 display package + Vulkan ICD removed (2026-08-06).
-  NvContainer services Disabled. **Keep** CUDA `llama-server.exe` for rollback.
-- 4060 Ti rack plan: still ask Carter first; do not act.
-
-## Task 5 — reasoning-token budget hardening (new, from this session)
-
-The guardian's seed-nudge retry on finish_reason=length is a bandaid.
-Agreed direction, not yet built:
-1. Guardian enforces a max_tokens floor (~4096) on proxied completions so
-   naive callers can't starve the answer phase.
-2. Document/adopt `chat_template_kwargs: {"enable_thinking": false}` for
-   interactive consumers (MCC simple queries, qwen-submit fast paths).
-Note: llama.cpp `--reasoning-budget` only supports 0/-1 — no token-capped
-thinking, so per-request routing is the only middle ground.
-
-## Also open (not this repo)
-
-- Push main to origin when ready.
-- AIWA `aiwa-prod-102` (.14): Orca runtime port 6768 down (ping OK, SSH up).
-  Investigate via Orca only, per AIWA runbook.
+- gemma-4-12B Q6_K + vision + MTP (Worker C's dark horse, unbenched).
+- Granite 4.0-h-small (Worker C candidate, unbenched).
+- "Qwen3.6-14B/12B" GGUFs on HF are heretic merges — do not use.
