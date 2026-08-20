@@ -52,22 +52,27 @@ everything reachable via the switch survives.
    - `mav-transfer/` — **47 GB (measured)** — Samba share + LXC 100 mp0 bind mount
    - `mav-rag/` — **498 MB measured** (hcp-exports ingest tree, screenshots)
    The rest (Chris backup, WW, sync/, SOPDEV01) is skipped — media/archive per
-   Carter. 47+ GB does NOT fit comfortably on pve-root (85 G free, Saturday's
-   dumps need ~10 G) → carve a thin LV. ⛔ **mkfs is agent-blocked — Carter
-   pastes this one** (real usage = only what's written; 300 G virtual from the
-   794 G pool):
+   Carter. 47+ GB does NOT fit comfortably on pve-root (62 G free after llama
+   staging; Saturday's dumps need ~10 G) → carve a thin LV. ⛔ **mkfs is
+   agent-blocked — Carter pastes this one** (real usage = only what's written;
+   300 G virtual from the 794 G pool):
    ```
-   lvcreate --thin -V 300G -n stage pve/data
-   mkfs.ext4 /dev/pve/stage
-   mkdir -p /mnt/stage
-   echo '/dev/pve/stage /mnt/stage ext4 defaults,nofail 0 2' >> /etc/fstab
-   mount /mnt/stage && mkdir -p /mnt/stage/samsung-sata /mnt/stage/llama/models
+   lvcreate --thin -V 300G -n samsung-stage pve/data
+   mkfs.ext4 /dev/pve/samsung-stage
+   mkdir -p /mnt/samsung-stage
+   echo '/dev/pve/samsung-stage /mnt/samsung-stage ext4 defaults,nofail 0 2' >> /etc/fstab
+   mount /mnt/samsung-stage
    ```
-   Then scp the two trees to `/mnt/stage/samsung-sata/` from
-   `C:\aiwa-840pro\` (skip `sync/`, `WW/`, `SOPDEV01-ChrisBackup/`).
-   **DONE 2026-08-20 (partially):** `/mnt/stage/llama/` created on pve-root;
-   Vulkan stack + llama build + model already staged (step 5). The 47 GB
-   mav-transfer still needs the LV above.
+   ⚠️ Mount point is `/mnt/samsung-stage`, **NOT `/mnt/stage`** — `/mnt/stage`
+   already holds the llama build + 25.5 GB model on pve-root; mounting the LV
+   there would shadow (hide) them and break Gate 4.
+   Then the agent scps `mav-transfer/` (47 GB) from `C:\aiwa-840pro\` to
+   `/mnt/samsung-stage/` (skip `sync/`, `WW/`, `SOPDEV01-ChrisBackup/`) and
+   moves the already-staged mav-rag onto the LV → one staging root.
+   **DONE 2026-08-20 (partially):** `/mnt/stage/llama/` on pve-root (build +
+   model, step 5) and `/mnt/stage/samsung-sata/mav-rag/` — **499 MB staged,
+   incl. a `qdrant-data/` dir found living on the 840 PRO** (would have been
+   orphaned at retirement). The 47 GB mav-transfer still needs the LV above.
 4. **Write the Z690 .link files ahead of time** (MAC-identified, per
    `X870E-NETWORK-CUTOVER.md` — never by name):
    - `lan0` = Intel I225-V onboard, `58:11:22:30:68:48` (currently `nic0` on the PoC)
@@ -149,8 +154,9 @@ Still at .230/`aiwa-poc` — identity swap comes after, in Gate 3.
 ```
 # 2.0 bind-mount target MUST exist before first CT start (Night 3 lesson):
 mkdir -p /mnt/samsung-sata
-cp -a /root/stage-samsung-sata/mav-transfer /mnt/samsung-sata/
-cp -a /root/stage-samsung-sata/mav-rag /mnt/samsung-sata/     # hcp-exports ingest tree
+cp -a /mnt/samsung-stage/mav-transfer /mnt/samsung-sata/
+cp -a /mnt/samsung-stage/mav-rag /mnt/samsung-sata/     # hcp-exports ingest tree
+# (if mav-rag was never moved onto the LV, it's at /mnt/stage/samsung-sata/mav-rag)
 # ownership must match uid 1000 (mavshare) — the tarball /etc/passwd restores later;
 # chown -R 1000:1000 /mnt/samsung-sata/mav-transfer for now, verify after user restore
 
