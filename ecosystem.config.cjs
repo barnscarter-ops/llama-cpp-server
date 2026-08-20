@@ -90,7 +90,13 @@ module.exports = {
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        "--ctx-size",   "202752",
+        // ctx 202752 → 49152 (2026-08-20): the 202k slab was verified with the
+        // display on the iGPU (627 MiB overhead). The desktop now composites on
+        // the 4060 Ti (~509 MiB), the slab no longer fits, and the driver
+        // sysmem-spills — tg cratered 90 → ~24-35 t/s (guardian probe-fail
+        // loop). KV slab is flat 65k→202k, so reclaiming VRAM requires going
+        // below 65k. ROLLBACK: restore 202752 once display is back on the iGPU.
+        "--ctx-size",   "49152",
         "--cache-type-k", "f16",
         "--cache-type-v", "f16",
 
