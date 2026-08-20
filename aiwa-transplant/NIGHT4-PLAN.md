@@ -47,6 +47,9 @@ everything reachable via the switch survives.
 2. **Verify Night 2 artifacts on the X870E**: `C:\aiwa-backups\20260817\` (4
    vzdumps + host tarball) — spot-check SHA256 against `SHA256SUMS-20260817.txt`;
    `C:\aiwa-840pro\` present (source for the service-dir restore).
+   **DONE 2026-08-20** — sha256sum -c: all 5 artifacts **OK** (4 CT dumps +
+   host tarball). Note: the sums file carries 2 stale lines for old Aug 9/16
+   CT-102 dumps that were deleted — harmless; the Aug 17 dump on disk verifies.
 3. **Stage the 840 PRO service dirs** — the only /mnt/samsung-sata content that
    is *not* media and *not* covered by Google Drive:
    - `mav-transfer/` — **47 GB (measured)** — Samba share + LXC 100 mp0 bind mount
