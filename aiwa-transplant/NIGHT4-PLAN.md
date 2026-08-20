@@ -69,10 +69,13 @@ everything reachable via the switch survives.
    Then the agent scps `mav-transfer/` (47 GB) from `C:\aiwa-840pro\` to
    `/mnt/samsung-stage/` (skip `sync/`, `WW/`, `SOPDEV01-ChrisBackup/`) and
    moves the already-staged mav-rag onto the LV → one staging root.
-   **DONE 2026-08-20 (partially):** `/mnt/stage/llama/` on pve-root (build +
-   model, step 5) and `/mnt/stage/samsung-sata/mav-rag/` — **499 MB staged,
-   incl. a `qdrant-data/` dir found living on the 840 PRO** (would have been
-   orphaned at retirement). The 47 GB mav-transfer still needs the LV above.
+   **DONE 2026-08-20 — ALL of step 3 complete:**
+   - LV `samsung-stage` carved (300 G thin, 0% → 47 G used), Carter ran the
+     one blocked line, fstab'd + mounted at `/mnt/samsung-stage` (295 G avail).
+   - `mav-transfer/` — **47 G copied and verified** on the LV.
+   - `mav-rag/` — **499 MB staged, incl. a `qdrant-data/` dir found living on
+     the 840 PRO** (would have been orphaned at retirement).
+   - `/mnt/stage/llama/` (build + model) stays on pve-root — 62 G still free.
 4. **Write the Z690 .link files ahead of time** (MAC-identified, per
    `X870E-NETWORK-CUTOVER.md` — never by name):
    - `lan0` = Intel I225-V onboard, `58:11:22:30:68:48` (currently `nic0` on the PoC)
