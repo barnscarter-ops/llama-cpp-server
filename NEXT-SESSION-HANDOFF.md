@@ -29,11 +29,20 @@ All PC-side services restored from the old Z690 drive (D:) and old dump.pm2:
   fastapi/uvicorn/psutil/httpx/watchdog — pc-actions-daemon, reaper, sink all
   run under it via ecosystem `script: python`.
 
+## Night 4 (AIWA cutover) — SCHEDULED Sat 2026-08-22 evening
+
+Full runbook: `aiwa-transplant/NIGHT4-PLAN.md` (written 2026-08-19). Prep
+session Thu/Fri evening (~1–2 h, read-only + staging: soak check, verify
+C:\aiwa-backups\20260817, stage mav-transfer + hcp-exports dirs to the PoC,
+write Z690 .link files, stage llama Vulkan build). Open: SN770 — plan says
+don't move it (ProDesk = intact rollback), confirm on the night. AIWA triage
+PC_HOST re-point (100.124.216.11 → this box) happens at Gate 3 of cutover.
+
 ## Known follow-ups
 
 - **AIWA triage + anything referencing CartersPC by Tailscale IP still points
   at 100.124.216.11 (old box). This box is 100.124.41.115.** Re-point at the
-  AIWA cutover (Night 4+), NOT before — old AIWA is live production.
+  AIWA cutover (Night 4 Gate 3), NOT before — old AIWA is live production.
 - pc-bridge plugin (native Hermes plugin from supervisor repo) not yet
   re-verified against the restored profiles — supervisor repo is checked out
   at C:\Workspace\Shared\Agents\Hermes-Supervisor with local mods (memory/
