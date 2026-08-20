@@ -49,26 +49,51 @@ everything reachable via the switch survives.
    `C:\aiwa-840pro\` present (source for the service-dir restore).
 3. **Stage the 840 PRO service dirs** — the only /mnt/samsung-sata content that
    is *not* media and *not* covered by Google Drive:
-   - `mav-transfer/` — Samba share + LXC 100 mp0 bind mount
-   - `mav-rag/hcp-exports/` — ingest dir for hcp-catalog-sync, hcp-estimates-sync,
-     and the weekly hcp-scraper cron
-   Confirm sizes under `C:\aiwa-840pro\`, decide the rest is skipped (Chris
-   backup, WW, sync/, SOPDEV01 — media/archive per Carter). scp to the PoC host
-   into `/root/stage-samsung-sata/` (do NOT mount anything yet).
+   - `mav-transfer/` — **47 GB (measured)** — Samba share + LXC 100 mp0 bind mount
+   - `mav-rag/` — **498 MB measured** (hcp-exports ingest tree, screenshots)
+   The rest (Chris backup, WW, sync/, SOPDEV01) is skipped — media/archive per
+   Carter. 47+ GB does NOT fit comfortably on pve-root (85 G free, Saturday's
+   dumps need ~10 G) → carve a thin LV. ⛔ **mkfs is agent-blocked — Carter
+   pastes this one** (real usage = only what's written; 300 G virtual from the
+   794 G pool):
+   ```
+   lvcreate --thin -V 300G -n stage pve/data
+   mkfs.ext4 /dev/pve/stage
+   mkdir -p /mnt/stage
+   echo '/dev/pve/stage /mnt/stage ext4 defaults,nofail 0 2' >> /etc/fstab
+   mount /mnt/stage && mkdir -p /mnt/stage/samsung-sata /mnt/stage/llama/models
+   ```
+   Then scp the two trees to `/mnt/stage/samsung-sata/` from
+   `C:\aiwa-840pro\` (skip `sync/`, `WW/`, `SOPDEV01-ChrisBackup/`).
+   **DONE 2026-08-20 (partially):** `/mnt/stage/llama/` created on pve-root;
+   Vulkan stack + llama build + model already staged (step 5). The 47 GB
+   mav-transfer still needs the LV above.
 4. **Write the Z690 .link files ahead of time** (MAC-identified, per
    `X870E-NETWORK-CUTOVER.md` — never by name):
    - `lan0` = Intel I225-V onboard, `58:11:22:30:68:48` (currently `nic0` on the PoC)
    - `p2p0` = Realtek card, `1C-86-0B-3A-48-FB` (arrives during Gate 1)
    `/etc/network/interfaces` then restores unchanged (vmbr0 .12/24 on lan0,
    vmbr1 10.110.10.1/30 on p2p0).
-5. **Stage llama for the R9700 on the PoC** (build ≠ service; keep the soak
-   clean): llama.cpp Vulkan build, the picked GGUF (confirm path + flags with
-   Carter — models on disk on the X870E incl. AIWA-earmarked Nemotron Q4_K_M /
-   Qwen3.6 Q4_K_M / Qwen3.8-27B), systemd unit written but **not enabled**.
-   Sampler flags carry over from the tuning; **KV-cache setting does NOT** —
-   the 4060 Ti law (f16 KV always) was measured on CUDA and the historical R9700
-   Vulkan finding was the opposite (q8_0 KV won). Plan a 10-min `llama-bench`
-   on the night, not a re-debate.
+5. **Stage llama for the R9700 on the PoC** — **DONE 2026-08-20**:
+   - Vulkan userspace installed (mesa-vulkan-drivers); R9700 enumerates as
+     **AMD Radeon Graphics (RADV GFX1201)** — confirmed via vulkaninfo.
+   - llama.cpp **b10488 ubuntu-vulkan** build in `/mnt/stage/llama/llama-b10488/`.
+   - Model staged: **NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf**
+     (25.5 GB; source sha256 `b520a899…a9158`, verify on the PoC after scp).
+   - **The pick is documented** (git `1d97b3f` + ecosystem at `b0f23af`):
+     Nemotron 3.5 Lightning 30B-A3B Q4_K_M, ctx 65536, f16 KV, ubatch **512**
+     (TDR-sweep winner; the "ubatch 1024" header comment is stale — args are
+     truth), batch 2048, flash-attn on, `--reasoning off` CRITICAL (burns
+     1500+ hidden tokens/req without it), parallel 1, `--jinja`, no MTP
+     (tested, net-slower on Vulkan). Build must be ≥ b10362 for
+     `nemotron_h_moe` (b10488 ✓). Linux: no VK ICD pinning needed (single
+     AMD ICD) — the `VK_LOADER_DRIVERS_SELECT=*amd*` trick was for the old
+     Windows dual-ICD box. systemd unit: write in prep session, **not
+     enabled** (keeps the soak clean).
+   - Linux driver reality: this box runs RADV (mesa), the old Windows install
+     ran AMDVLK/Adrenalin — the Adrenalin idle-VRAM-evict bug is a Windows
+     driver issue and does not apply, but expect tg numbers to differ from
+     the old Windows baseline (152 t/s). Night-of: bench proof below.
 6. **X870E prep**: note which slot the Realtek card is in; plan the shutdown.
 7. **Customer-facing check**: confirm no live voice call / active SMS session is
    expected Sat evening; the window takes voice-pipecat, hermes-customer-sms,
@@ -205,9 +230,16 @@ config still targets old CartersPC `100.124.216.11` → change to
 ## Gate 4 — R9700 llama + end-to-end verify ⛔
 
 ```
-# 4.1 KV sanity (10 min, NOT a re-debate): llama-bench f16 vs q8_0 KV on this
-#     Vulkan/RDNA build — pick the winner, note it in the observed doc
-# 4.2 start the pre-staged unit with the picked model + tuned sampler flags
+# 4.1 bench proof on the PoC/staged build (10 min): load + 25 reps. Expect tg
+#     in the 130-160 t/s class (Windows AMDVLK baseline was 152; RADV may vary).
+#     KV is f16 per the tuned config — no KV sweep needed; the historical
+#     "q8_0 KV wins on R9700" was Windows AMDVLK, and the tuned Nemotron sweep
+#     already measured q8_0 KV = no gain or slight regression.
+cd /mnt/stage/llama/llama-b10488
+VK_DRIVER_FILES=$(ls /usr/share/vulkan/icd.d/radeon_icd.*.json) ./llama-bench \
+  -m ../models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf \
+  -ngl 99 -fa 1 -p 512 -n 128 -r 3
+# 4.2 start the pre-staged unit with the tuned args
 systemctl start llama-server (or compose, per prep step 5)
 # 4.3 verify t/s + one completion through whatever fronts it
 ```

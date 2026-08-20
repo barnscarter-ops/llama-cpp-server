@@ -1,0 +1,38 @@
+# llama-server on new AIWA (Z690) — Night 4 Gate 4
+# Tuned config from git 1d97b3f / ecosystem @ b0f23af (R9700 Vulkan prod).
+# Install: scp to aiwa:/etc/systemd/system/llama-server.service
+# NOT enabled at cutover prep — enable only after soak decision.
+[Unit]
+Description=llama-server (Nemotron 3.5 Lightning 30B-A3B Q4_K_M, R9700 Vulkan)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# single AMD ICD on this host (RADV) — no VK_LOADER_DRIVERS_SELECT pin needed
+WorkingDirectory=/mnt/stage/llama/llama-b10488
+ExecStart=/mnt/stage/llama/llama-b10488/llama-server \
+  --model /mnt/stage/llama/models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf \
+  --host 0.0.0.0 \
+  --port 8090 \
+  --alias local-llm \
+  --gpu-layers 99 \
+  --ctx-size 65536 \
+  --parallel 1 \
+  --jinja \
+  --batch-size 2048 \
+  --ubatch-size 512 \
+  --cont-batching \
+  --flash-attn on \
+  --reasoning off
+# --reasoning off is CRITICAL (burns 1500+ hidden tokens/req without it).
+# No MTP/spec decode — tested net-slower on Vulkan. No KV quant flags = f16.
+# Port 8090: internal; guardian/proxy fronting moves to AIWA later or clients
+# hit this directly — decide at Gate 4. Old Windows prod used guardian :8080.
+Restart=on-failure
+RestartSec=5
+# memory ceiling: 25.5G model + ctx; host has 64G
+MemoryMax=40G
+
+[Install]
+WantedBy=multi-user.target
