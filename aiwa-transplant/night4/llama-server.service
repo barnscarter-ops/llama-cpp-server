@@ -9,7 +9,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# single AMD ICD on this host (RADV) — no VK_LOADER_DRIVERS_SELECT pin needed
+# single AMD ICD on this host (RADV) — no VK_LOADER_DRIVERS_SELECT pin needed;
+# only set VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json if the
+# Intel iGPU ICD ever interferes (llvmpipe/intel entries exist alongside).
 WorkingDirectory=/mnt/stage/llama/llama-b10488
 ExecStart=/mnt/stage/llama/llama-b10488/llama-server \
   --model /mnt/stage/llama/models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf \

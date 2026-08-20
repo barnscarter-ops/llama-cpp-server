@@ -72,6 +72,9 @@ everything reachable via the switch survives.
    `X870E-NETWORK-CUTOVER.md` — never by name):
    - `lan0` = Intel I225-V onboard, `58:11:22:30:68:48` (currently `nic0` on the PoC)
    - `p2p0` = Realtek card, `1C-86-0B-3A-48-FB` (arrives during Gate 1)
+   **DONE 2026-08-20** — staged on the PoC at `/root/night4-staging/`
+   (`10-lan0.link`, `11-p2p0.link`). Gate 3 = copy into
+   `/etc/systemd/network/` + `networkctl reload` + `ifreload -a`.
    `/etc/network/interfaces` then restores unchanged (vmbr0 .12/24 on lan0,
    vmbr1 10.110.10.1/30 on p2p0).
 5. **Stage llama for the R9700 on the PoC** — **DONE 2026-08-20**:
@@ -230,13 +233,14 @@ config still targets old CartersPC `100.124.216.11` → change to
 ## Gate 4 — R9700 llama + end-to-end verify ⛔
 
 ```
-# 4.1 bench proof on the PoC/staged build (10 min): load + 25 reps. Expect tg
-#     in the 130-160 t/s class (Windows AMDVLK baseline was 152; RADV may vary).
-#     KV is f16 per the tuned config — no KV sweep needed; the historical
-#     "q8_0 KV wins on R9700" was Windows AMDVLK, and the tuned Nemotron sweep
-#     already measured q8_0 KV = no gain or slight regression.
+# 4.1 BENCH PROOF PASSED 2026-08-20 on the PoC (aiwa-poc, soak config):
+#     pp512 2176.4 ± 13.9 | tg128 141.4 ± 1.4   (Windows AMDVLK baseline: 152)
+#     arch loads clean in b10488 on Linux RADV; VRAM 17.1 GB after bench run.
+#     Night-of: re-run as a smoke test only (2 min), or skip if time-pressed.
+#     Note: RADV shows "matrix cores: none" → pp ~30% under Windows AMDVLK.
+#     If prefill ever matters, AMD's proprietary ICD is the fallback lever.
 cd /mnt/stage/llama/llama-b10488
-VK_DRIVER_FILES=$(ls /usr/share/vulkan/icd.d/radeon_icd.*.json) ./llama-bench \
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json ./llama-bench \
   -m ../models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf \
   -ngl 99 -fa 1 -p 512 -n 128 -r 3
 # 4.2 start the pre-staged unit with the tuned args
