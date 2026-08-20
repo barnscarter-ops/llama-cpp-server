@@ -31,12 +31,27 @@ All PC-side services restored from the old Z690 drive (D:) and old dump.pm2:
 
 ## Night 4 (AIWA cutover) — SCHEDULED Sat 2026-08-22 evening
 
-Full runbook: `aiwa-transplant/NIGHT4-PLAN.md` (written 2026-08-19). Prep
-session Thu/Fri evening (~1–2 h, read-only + staging: soak check, verify
-C:\aiwa-backups\20260817, stage mav-transfer + hcp-exports dirs to the PoC,
-write Z690 .link files, stage llama Vulkan build). Open: SN770 — plan says
-don't move it (ProDesk = intact rollback), confirm on the night. AIWA triage
-PC_HOST re-point (100.124.216.11 → this box) happens at Gate 3 of cutover.
+Full runbook: `aiwa-transplant/NIGHT4-PLAN.md` (written 2026-08-19).
+**PREP IS COMPLETE as of 2026-08-20** — nothing left before Saturday:
+
+- Soak: PoC clean (up since 08-19, SMART PASSED).
+- Night-2 artifacts verified: all 5 files in `C:\aiwa-backups\20260817\`
+  sha256 OK (2 stale lines in the sums file are harmless).
+- Staging LV `samsung-stage` (300G thin) mounted at `/mnt/samsung-stage`;
+  `mav-transfer/` **47 G copied + verified**, `mav-rag/` 499 MB incl.
+  `qdrant-data/` (found orphaned-on-840-PRO; would have been lost).
+- llama b10488 ubuntu-vulkan + Nemotron 3.5 Lightning 30B-A3B Q4_K_M
+  (sha-verified) staged at `/mnt/stage/llama/`; **bench PROOF PASSED on the
+  PoC's R9700: tg128 141.4 / pp512 2176** (prod baseline 140–152) — Gate 4 is
+  a smoke test only.
+- Z690 NIC `.link` files pre-written, staged at `/root/night4-staging/`.
+- systemd unit drafted: `aiwa-transplant/night4/llama-server.service`.
+
+Open on the night (all Carter): Samba mavshare password (Gate 3), SN770
+confirm-leave (ProDesk = intact rollback), CT 200 destroy-or-keep call.
+AIWA triage PC_HOST re-point (100.124.216.11 → this box) happens at Gate 3.
+Timeline: Gate 0 18:30 backups w/ services up → downtime 19:50 → verified
+by ~23:00. Rollback at any gate = power off Z690, power on ProDesk.
 
 ## Known follow-ups
 
