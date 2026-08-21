@@ -73,12 +73,24 @@ by ~23:00. Rollback at any gate = power off Z690, power on ProDesk.
 - **Model: GLM-4.7-Flash UD-IQ3_XXS (12.9 GB)** — winner of the 2026-08-19
   3-worker debate + full benchmark suite. See
   `benchmarks/4060ti-finalist-report-2026-08-19.md` for the complete data.
-- **Config**: ctx 202752 (full native), KV f16, ubatch 1024 / batch 2048,
-  `--repeat-penalty 1.0 --min-p 0.01` (MANDATORY — loops without),
-  `--reasoning off`, alias `local-llm`, port 8081 via guardian on 8080.
-- **VRAM at 202k**: 15,856-15,900 MiB / 16,380 with display on iGPU and
-  desktop overhead ~600 MiB. MLA KV: VRAM is flat from 65k→202k.
-- Verified live 2026-08-19: health OK on 8081 + 8080, completion test passed.
+- **Config**: KV f16, ubatch 1024 / batch 2048, `--repeat-penalty 1.0 --min-p 0.01`
+  (MANDATORY — loops without), `--reasoning off`, alias `local-llm`, port 8081
+  via guardian on 8080. **ctx is 49152 (NOT 202752)** as of 2026-08-20 — see
+  note below; restore to 202752 after the display swap.
+- **Display is on the 4060 Ti** (~509 MiB desktop overhead), which is why ctx
+  was cut 202752 → 49152 (the 202k slab no longer fits; driver sysmem-spills
+  and tg cratered ~90 → ~24-35). **TODO (Carter, in progress): move display
+  back to the iGPU, then restore `--ctx-size 202752` in ecosystem.config.cjs**
+  (rollback note is in that file's local-llm args block).
+- **Guardian GPU-probe false-positive FIXED 2026-08-21 (commit 178f422).**
+  The probe threshold (40 t/s) was calibrated for the R9700/Vulkan and was
+  false-flagging a healthy 4060 Ti + GLM as "CPU fallback", so guardian
+  `pm2 stop`-ped llama on every cold start (agents saw "starts then stops").
+  Fix: threshold 40 → 20, probe `max_tokens` 24 → 128 with a longer prompt so
+  it measures steady-state (~84 t/s) instead of 2-token overhead. Verified:
+  cold start now probes OK (83.8 t/s) and leaves llama up.
+- Verified live 2026-08-21: cold start → probe OK (83.8 t/s) → completion
+  returned "pong" through :8080. Guardian pid restarted to pick up the fix.
 
 ## What happened this session (2026-08-19)
 
