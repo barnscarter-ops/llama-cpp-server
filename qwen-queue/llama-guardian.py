@@ -112,10 +112,14 @@ HEALTH_POLL_S = 1                 # how often to poll while waiting
 # ICD can wedge while Device Manager still shows the R9700 healthy. llama then
 # silently falls back to CPU, loads fine, answers /v1/health 200 — and serves
 # ~10 t/s. A health check cannot see this, so after every successful start we
-# time a tiny generation: the R9700 does 120-140 t/s, CPU ~10. The threshold
-# sits well between. Set to 0 to disable the probe.
-GPU_PROBE_MIN_TPS = float(os.environ.get("GUARDIAN_GPU_PROBE_MIN_TPS", "40"))
-GPU_PROBE_TIMEOUT_S = 30          # CPU worst case: ~20 gen tokens at 10 t/s + prompt
+# time a short generation. Threshold RECALIBRATED 2026-08-21 for the 4060 Ti
+# CUDA + GLM-4.7-Flash: healthy GPU is ~60-90 t/s steady-state, CPU fallback
+# ~10. The old R9700 threshold of 40 was too tight — the probe's fixed
+# per-generation overhead (~25ms) flapped a 2-token reply right at 40, so a
+# healthy start read 24-40 and was falsely stopped. 20 sits cleanly between
+# CPU ~10 and even VRAM-pressured GPU ~24+. Set to 0 to disable the probe.
+GPU_PROBE_MIN_TPS = float(os.environ.get("GUARDIAN_GPU_PROBE_MIN_TPS", "20"))
+GPU_PROBE_TIMEOUT_S = 30          # CPU worst case: ~128 gen tokens at 10 t/s + prompt (~13s)
 
 PM2_APP = "local-llm"              # PM2 process name for llama-server (R9700 Vulkan build)
 
@@ -398,8 +402,8 @@ async def _gpu_placement_ok(reason: str) -> bool:
         return True
     payload = {
         "model": QUEUE_MODEL_ALIAS,
-        "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
-        "max_tokens": 24,
+        "messages": [{"role": "user", "content": "Write the numbers 1 through 50, one per line."}],
+        "max_tokens": 128,
         "stream": False,
     }
     try:
