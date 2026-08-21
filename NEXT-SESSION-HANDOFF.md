@@ -4,7 +4,7 @@
 
 All PC-side services restored from the old Z690 drive (D:) and old dump.pm2:
 
-- **pm2 (SYSTEM, PM2_HOME=C:\ProgramData\pm2)** — 9 apps online + saved:
+- **pm2 (Carter, PM2_HOME=C:\ProgramData\pm2)** — 9 apps online + saved:
   llama-guardian, local-llm, pc-actions-daemon (:8901, v0.3.0, 33 actions,
   token from ecosystem.local.config.cjs), hermes-sandbox-reaper (ARMED),
   hermes-deadman-sink (:8903), downloads-watcher (DownloadsOrganizer copied
@@ -62,10 +62,16 @@ by ~23:00. Rollback at any gate = power off Z690, power on ProDesk.
   re-verified against the restored profiles — supervisor repo is checked out
   at C:\Workspace\Shared\Agents\Hermes-Supervisor with local mods (memory/
   HANDOFF.md dirty).
-- gsudo NOT reinstalled on this box (old HANDOFF ops commands reference it);
-  elevated ops currently use scratch .ps1 + Start-Process -Verb runAs.
+- gsudo v2.6.1 is installed (`C:\Program Files\gsudo\Current`). Prefer
+  forward slashes in `gsudo ... -File D:/path` — backslashes get stripped
+  and the command exits 127.
 - Mav-Room stack: healthy on :8920/:8642/:8921, tailscale serve :18920 live,
   `Mav-Room Stack` + `Mav-Room Desktop Presence` tasks registered.
+- **presence-actions** (`D:\Workspace\Infrastructure\presence-actions\`):
+  generalized home/away dispatcher. Task `Presence Watcher` (pwsh 7, ONLOGON).
+  First action `swap-display` (SMS once on home) reminds Carter to move the
+  display to iGPU then restore llama ctx 202752. SMS path proven 2026-08-21.
+  Do not host this in pm2. Skill: `home-presence-actions`.
 
 ## Current production state
 
