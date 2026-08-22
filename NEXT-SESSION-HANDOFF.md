@@ -1,149 +1,65 @@
-# NEXT-SESSION-HANDOFF.md — 2026-08-19 (GLM-4.7-Flash cutover + PC service restore)
+# NEXT-SESSION-HANDOFF — Night 4 cutover (Gate 1 start)
 
-## PC service restore — 2026-08-19 (post X870E rebuild)
+**Repo:** `D:\Workspace\Infrastructure\llama-cpp-server` `main` origin **`e8c82de`**
+**Runbook:** `aiwa-transplant/NIGHT4-PLAN.md` (2026-08-22 overlay at top **wins**)
+**Night-of card:** `aiwa-transplant/NIGHT4-NEXT.md`
+**Doctrine:** `C:\Workspace\Active\brain\knowledge\local-llm-architecture.md`
 
-All PC-side services restored from the old Z690 drive (D:) and old dump.pm2:
+Carter is ready to begin the cutover. **This session did not start Gate 1.** Next agent starts Gate 1 after Carter says go (he already said he is ready — treat that as go unless he paused).
 
-- **pm2 (Carter, PM2_HOME=C:\ProgramData\pm2)** — 9 apps online + saved:
-  llama-guardian, local-llm, pc-actions-daemon (:8901, v0.3.0, 33 actions,
-  token from ecosystem.local.config.cjs), hermes-sandbox-reaper (ARMED),
-  hermes-deadman-sink (:8903), downloads-watcher (DownloadsOrganizer copied
-  from D:\Users\carte), homelab-agent-sensors (:7331), prometheus-sync,
-  maverick-dashboard (:8792).
-- **Boot**: new scheduled task `PM2 Resurrect` (SYSTEM, AtStartup, runs
-  `node pm2 resurrect` via hermes-bundled node). Old box had no such task in
-  the 39 exported XMLs — this is new, deliberate.
-- **windows_exporter**: copied from D:\Program Files, installed as a Windows
-  service, RUNNING on :9182 (triage monitors this).
-- **Hermes profiles**: all 13 restored from D:\Users\carte\AppData\Local\hermes
-  \profiles (claude, council, debugger, executor, grok, mav-room, omp, pi,
-  qwen-worker, researcher, reviewer, scripter, worker). active_profile=omp.
-  Top-level config.yaml model.default restored to glm-5.3/custom:zai-coding
-  (backup: config.yaml.bak-pre-glm-restore-20260819).
-- **qwen-worker profile**: context_length 65536 → 202752; its `qwen3-llama`
-  alias still works (guardian maps legacy aliases → local-llm; verified live
-  through :8080 completion).
-- **Scheduled tasks**: 24/39 Z690 XMLs already re-registered; remaining 15
-  are old-hardware OEM junk (ASUS/SANDISK/StartCN/DVR) — correctly skipped.
-- **Python for daemons**: Python312 (old dump path) re-provisioned with
-  fastapi/uvicorn/psutil/httpx/watchdog — pc-actions-daemon, reaper, sink all
-  run under it via ecosystem `script: python`.
+## Closed this session (verified)
 
-## Night 4 (AIWA cutover) — SCHEDULED Sat 2026-08-22 evening
+- Gate 0 **done ~11:30 CDT**. Protected snapshot vzdumps 100–103 + host tarball. SMART PASSED SN770 + 840 PRO.
+- Copies **checksum-OK in three places:** ProDesk `/var/lib/vz/dump/`, `C:\aiwa-backups\20260822\`, PoC `/var/lib/vz/dump/`.
+- Docker on ProDesk: down ~5 min for tar, **7/7 back**. CTs 100–103 still running at handoff. `.12:8006` still open.
+- `mavshare` proven on live `\\192.168.1.12\Proxmox`. Mapping not left connected.
+- **NIC correction:** Realtek `1C-86-0B-3A-48-FB` is PC `AIWA Direct` `10.110.10.2`. **Stays in the X870E.** Night 4 “move it to the 690” was a mix-up with ProDesk `p2p0` (`10.110.10.1`). Gate 1 is ProDesk-off **only**. No 870 shutdown, no card pull.
+- Gate 4 is **keep CT 210**, not host Q4 `:8090`. Repair from `690-routing/` if `.240` dies.
+- At handoff: `http://192.168.1.240:8080` = `nemotron-3.5-lightning-30b-a3b` Q5_K_M 131k, health ok. (Local LLM Board did a live swap earlier today; walk-away clerk restored.)
 
-Full runbook: `aiwa-transplant/NIGHT4-PLAN.md` (written 2026-08-19).
-**PREP IS COMPLETE as of 2026-08-20** — nothing left before Saturday:
+## Locked (Carter)
 
-- Soak: PoC clean (up since 08-19, SMART PASSED).
-- Night-2 artifacts verified: all 5 files in `C:\aiwa-backups\20260817\`
-  sha256 OK (2 stale lines in the sums file are harmless).
-- Staging LV `samsung-stage` (300G thin) mounted at `/mnt/samsung-stage`;
-  `mav-transfer/` **47 G copied + verified**, `mav-rag/` 499 MB incl.
-  `qdrant-data/` (found orphaned-on-840-PRO; would have been lost).
-- llama b10488 ubuntu-vulkan + Nemotron 3.5 Lightning 30B-A3B Q4_K_M
-  (sha-verified) staged at `/mnt/stage/llama/`; **bench PROOF PASSED on the
-  PoC's R9700: tg128 141.4 / pp512 2176** (prod baseline 140–152) — Gate 4 is
-  a smoke test only.
-- Z690 NIC `.link` files pre-written, staged at `/root/night4-staging/`.
-- systemd unit drafted: `aiwa-transplant/night4/llama-server.service`.
+1. SN770 stays in ProDesk.
+2. Voice / customer-SMS on hold — stop anytime.
+3. CT 200 stays **stopped** (do not destroy). **Never destroy 210.**
+4. `mavshare` password known (Explorer / `net use` succeeded).
+5. Card `1C-86-…` stays in the 870.
 
-Open on the night (all Carter): Samba mavshare password (Gate 3), SN770
-confirm-leave (ProDesk = intact rollback), CT 200 destroy-or-keep call.
-AIWA triage PC_HOST re-point (100.124.216.11 → this box) happens at Gate 3.
-Timeline: Gate 0 18:30 backups w/ services up → downtime 19:50 → verified
-by ~23:00. Rollback at any gate = power off Z690, power on ProDesk.
+## Gate 0 artifacts (sha256)
 
-## Known follow-ups
+```
+587c2a709f5b318941785a738be120d924d872a4b7e2f0802d45eb122a66560a  vzdump-lxc-100-2026_08_22-11_14_32.tar.zst
+856c840809144d76954a444ec01968f4781ecb1266ef0b0f57dc457408ca414c  vzdump-lxc-101-2026_08_22-11_14_44.tar.zst
+f66aea6e8ba81a160645daf62db7f268ac5c8685caa0c85b82b83d93dd41404d  vzdump-lxc-102-2026_08_22-11_15_07.tar.zst
+70aa1d0b7ef194d8bc4a9de5506fea331b801c4eefe767d1dd4e003d76a9b697  vzdump-lxc-103-2026_08_22-11_15_37.tar.zst
+91264ddc40b31035c7e7fe4177f51a07ed38cb567f8084f80434704cf3fd5f8b  aiwa-host-state-20260822.tar.gz
+```
 
-- **AIWA triage + anything referencing CartersPC by Tailscale IP still points
-  at 100.124.216.11 (old box). This box is 100.124.41.115.** Re-point at the
-  AIWA cutover (Night 4 Gate 3), NOT before — old AIWA is live production.
-- pc-bridge plugin (native Hermes plugin from supervisor repo) not yet
-  re-verified against the restored profiles — supervisor repo is checked out
-  at C:\Workspace\Shared\Agents\Hermes-Supervisor with local mods (memory/
-  HANDOFF.md dirty).
-- gsudo v2.6.1 is installed (`C:\Program Files\gsudo\Current`). Prefer
-  forward slashes in `gsudo ... -File D:/path` — backslashes get stripped
-  and the command exits 127.
-- Mav-Room stack: healthy on :8920/:8642/:8921, tailscale serve :18920 live,
-  `Mav-Room Stack` + `Mav-Room Desktop Presence` tasks registered.
-- **presence-actions** (`D:\Workspace\Infrastructure\presence-actions\`):
-  generalized home/away dispatcher. Task `Presence Watcher` (pwsh 7, ONLOGON).
-  First action `swap-display` (SMS once on home) reminds Carter to move the
-  display to iGPU then restore llama ctx 202752. SMS path proven 2026-08-21.
-  Do not host this in pm2. Skill: `home-presence-actions`.
+## Start here (Gate 1)
 
-## Current production state
+Announce on `C:\Workspace\Active\brain\WORKBOARD.md` first.
 
+On **ProDesk** (`ssh -i ~/.ssh/id_ed25519_proxmox root@10.110.10.1` or `.12`):
 
-- **Model: GLM-4.7-Flash UD-IQ3_XXS (12.9 GB)** — winner of the 2026-08-19
-  3-worker debate + full benchmark suite. See
-  `benchmarks/4060ti-finalist-report-2026-08-19.md` for the complete data.
-- **Config**: KV f16, ubatch 1024 / batch 2048, `--repeat-penalty 1.0 --min-p 0.01`
-  (MANDATORY — loops without), `--reasoning off`, alias `local-llm`, port 8081
-  via guardian on 8080. **ctx is 49152 (NOT 202752)** as of 2026-08-20 — see
-  note below; restore to 202752 after the display swap.
-- **Display is on the 4060 Ti** (~509 MiB desktop overhead), which is why ctx
-  was cut 202752 → 49152 (the 202k slab no longer fits; driver sysmem-spills
-  and tg cratered ~90 → ~24-35). **TODO (Carter, in progress): move display
-  back to the iGPU, then restore `--ctx-size 202752` in ecosystem.config.cjs**
-  (rollback note is in that file's local-llm args block).
-- **Guardian GPU-probe false-positive FIXED 2026-08-21 (commit 178f422).**
-  The probe threshold (40 t/s) was calibrated for the R9700/Vulkan and was
-  false-flagging a healthy 4060 Ti + GLM as "CPU fallback", so guardian
-  `pm2 stop`-ped llama on every cold start (agents saw "starts then stops").
-  Fix: threshold 40 → 20, probe `max_tokens` 24 → 128 with a longer prompt so
-  it measures steady-state (~84 t/s) instead of 2-token overhead. Verified:
-  cold start now probes OK (83.8 t/s) and leaves llama up.
-- Verified live 2026-08-21: cold start → probe OK (83.8 t/s) → completion
-  returned "pong" through :8080. Guardian pid restarted to pick up the fix.
+```
+pct stop 100 101 102 103      # verify all four down
+qm list                       # expect empty
+tailscale down
+shutdown -h now
+```
 
-## What happened this session (2026-08-19)
+From X870E: confirm `192.168.1.12` and `10.110.10.1` stop answering. Then Gate 2 on **aiwa-poc** `192.168.1.230` (dumps already there).
 
-1. 3-worker blind debate (delegate_task variant of multi-agent-debate skill):
-   GLM-4.7-Flash / Cohere North-Mini-Code / gemma-4-26B-A4B finalists,
-   Qwen3.6-35B IQ3_XXS as incumbent control. Run dir:
-   `C:\Workspace\Shared\Agents\debate-4060ti-execution-worker-2026-08-19\`
-2. Benchmarks (all 100% GPU, CUDA b10488):
-   - GLM tg 90.1 / pp 2787 | Qwen tg 82.9 / pp 2826 | Cohere tg 95.4 but
-     247s workflow wall (unsuppressible interleaved thinking = verbose) |
-     gemma 68.7 tg, 7/10 HumanEval (verbosity failures)
-   - Quality: GLM + Qwen 10/10 HumanEval, 3/3 tools; GLM workflow wall 17.0s
-3. Infra repairs during the run:
-   - **b10488 build was broken** — `llama-common.dll` missing since the
-     Aug-18 refresh (prod llama-server would have crash-looped). Repaired
-     from official b10488 release zip.
-   - **Defender false-positive** on llama.cpp DLLs (Wacatac.H!ml):
-     added exclusion `D:\Workspace\Infrastructure` (elevated). If DLLs go
-     missing again after build refreshes, check Defender history first.
-   - Display moved to AMD iGPU + per-app GPU prefs → ~600 MiB desktop
-     overhead (was ~1100).
-   - **pm2 global CLI was wiped** by an npm update (orphan daemon remained).
-     Reinstalled via `npm install -g pm2`. CLI requires
-     `PM2_HOME=C:\ProgramData\pm2` (elevated for control ops). Cutover
-     script: `C:\Users\carte\scratch\pm2-glm-cutover.ps1`.
-4. Models on disk: GLM (prod), Qwen3.6-35B IQ3_XXS (rollback only),
-   Nemotron Q4_K_M + Qwen3.6 Q4_K_M + Qwen3.8-27B (AIWA earmarked / predate
-   debate). Cohere + gemma deleted.
-5. Rebooted all → 202k ctx verified at 524 MiB free.
+## Gate 2–4 traps (do not re-derive)
 
-## Gotchas for next session
+- Bind-mount `/mnt/samsung-sata` **before** first CT start (`cp -a` from `/mnt/samsung-stage/`).
+- `pct destroy 200` only if Carter revisits — currently **keep stopped**. Never 210.
+- Gate 3: install **only** `10-lan0.link` (I225-V `58:11:22:30:68:48`). **Do not** install `11-p2p0.link` (pins the 870’s MAC). vmbr0 → `.12`. No vmbr1 tonight. Drop `[proxmox-root]`. Re-point triage `PC_HOST` → `100.124.41.115`. `smbpasswd` only if samba restore fails.
+- Gate 4: `curl http://192.168.1.240:8080/health` + `/v1/models`. Do not start `aiwa-transplant/night4/llama-server.service`.
+- Rollback: Z690 off, ProDesk on. Do not ping-pong.
+- `pkill -f llama-server` self-kills — use `[l]lama-server` after `systemctl stop`.
+- Do not steal `.12` while ProDesk is up. Do not dual llama-server.
 
-- **KV quant on GLM**: q8_0 KV fails context creation (b10488 deepseek2 arch
-  bug). f16 KV only. f16 also measured faster than q8_0 on this GPU for all
-  bench models — do not "optimize" to q8_0.
-- **Never mix --cache-type-k/--cache-type-v quant types** (e.g. f16+q8_0):
-  hits a catastrophic slow path (~15x pp loss, 25-35% tg loss).
-- **GLM sampler**: without `--repeat-penalty 1.0 --min-p 0.01` GLM loops.
-  With it: 10/10 HumanEval. Do not remove.
-- llama-bench in b10488 does not accept `-c` (auto-sizes ctx).
-- pm2: args changes require `pm2 delete` + re-add (not restart). Check for
-  orphaned llama-server.exe after delete/stop.
-- npm updates can silently wipe the global pm2 CLI — daemon keeps running
-  from a ghost path. Symptom: `pm2: command not found` but processes fine.
+## Do not redo
 
-## Open items
-
-- gemma-4-12B Q6_K + vision + MTP (Worker C's dark horse, unbenched).
-- Granite 4.0-h-small (Worker C candidate, unbenched).
-- "Qwen3.6-14B/12B" GGUFs on HF are heretic merges — do not use.
+Gate 0 dumps, mavshare test, “move the 870 Realtek,” host Q4 llama bring-up, SN770 move, CT 210 destroy.

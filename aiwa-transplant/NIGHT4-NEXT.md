@@ -47,7 +47,7 @@ from the host tarball. `smbpasswd -a mavshare` is only the backup if that fails.
 
 | Gate | Window | Agent vs Carter |
 |---|---|---|
-| 0 final dumps on ProDesk | 18:30–19:50 | Orca on **production CT 101 / host**. scp off via **10.110.10.1** before the card moves. docker stop only ~5 min for host tarball. |
+| 0 final dumps on ProDesk | **DONE ~11:30 CDT** | Three checksum-OK copies. Docker 7/7 back. |
 | 1 ProDesk down (no card move) | 19:50–20:15 | Carter physical: CTs stop, tailscale down, ProDesk `shutdown -h now`. Confirm `.12` and `10.110.10.1` dead. **Leave the 870's Realtek in the 870.** |
 | 2 restore CTs 100–103 on `.230` | 20:15–20:50 | bind-mount `/mnt/samsung-sata` **before** first start. Destroy **200** only if Carter said so. **Never 210.** |
 | 3 identity → `.12` + host config | 20:50–22:20 | `.link` files already at `/root/night4-staging/`. No wholesale `/etc`. Drop `[proxmox-root]`. Re-point triage `PC_HOST` → `100.124.41.115`. |
