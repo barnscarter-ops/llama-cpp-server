@@ -28,17 +28,25 @@ unless Carter says go early. This overlay supersedes Gate 4 as written on
 | Cutover dumps | **not yet** — only fallback `C:\aiwa-backups\20260817\` (~8.9 GB). Dest staged: `C:\aiwa-backups\20260822\` (C: 1457 GB free) |
 | 840 PRO tree on X870E | `C:\aiwa-840pro\` still has `mav-transfer/` + `mav-rag/` (PoC already has copies on `/mnt/samsung-stage`) |
 
-### X870E NICs (identify by MAC — pull only the add-in card)
+### X870E NICs — card stays (locked 2026-08-22, Carter)
 
-| Adapter | MAC | IP | Gate 1 |
+The add-in Realtek `1C-86-0B-3A-48-FB` is the **PC-side** `AIWA Direct`
+(`10.110.10.2/30`). Night 1 already moved it Z690→X870E; Night 3 recorded
+"the Realtek card lives in the X870E now" and the PoC is onboard-only.
+**Do not pull it tonight.** Night 4's "X870E → Z690" line mixed this MAC up
+with ProDesk `p2p0` (`10.110.10.1`, ProDesk MACs `a0:10:a3:a8:0e:e1`/`:e2`).
+
+| Adapter | MAC | IP | Tonight |
 |---|---|---|---|
-| `HomeFiber` (X870E onboard Realtek) | `10-FF-E0-8A-A0-49` | `192.168.1.10/24` gw `.254` | **stays** |
-| `AIWA Direct` (add-in Realtek) | `1C-86-0B-3A-48-FB` | `10.110.10.2/30` no gw/DNS | **moves to Z690** — Windows location **PCI bus 16, device 0** |
-| Z690 onboard Intel I225-V | `58-11-22-30-68-48` | PoC `nic0` / future `lan0` | already in the Z690 |
+| `HomeFiber` (X870E onboard Realtek) | `10-FF-E0-8A-A0-49` | `192.168.1.10/24` gw `.254` | stays |
+| `AIWA Direct` (add-in Realtek, ex-690) | `1C-86-0B-3A-48-FB` | `10.110.10.2/30` no gw/DNS | **stays in the 870** |
+| Z690 onboard Intel I225-V | `58-11-22-30-68-48` | PoC `nic0` / future `lan0` `.12` | already in the Z690; **only NIC on new AIWA tonight** |
+| ProDesk p2p NIC | `a0:10:a3:a8:0e:e1` or `:e2` | `10.110.10.1/30` | **stays in ProDesk** (rollback intact) |
 
-After the card is out of the X870E: delete the stale `AIWA Direct` adapter
-config (10.110.10.2/30). X870E stays on `HomeFiber` only. The point-to-point
-link returns when the card is seated in the Z690 and Gate 3 brings up `p2p0`.
+When ProDesk powers off, `10.110.10.1` goes quiet. X870E still reaches new
+AIWA via the switch (`.10` ↔ `.12`). Do **not** install staged
+`11-p2p0.link` for `1C-86-…` — that MAC is not in the 690. Recreating p2p
+later would move the **ProDesk** NIC, not this card.
 
 ### Llama: CT 210 is already production — do not "bring up" the soak Q4
 
@@ -88,18 +96,18 @@ SN7100 has 794 GB thin free; CTs (~18 G) + 840-PRO service dirs (~small) + docke
 (~9 G) + model(s) fit easily. After soak, moving the SN770 in as bulk storage is
 a calm follow-up with its own window. Carter confirms on the night.
 
-## What moves physically (only one part)
+## What moves physically (nothing, tonight)
 
 | Part | From → To | When |
 |---|---|---|
-| Realtek 2.5GbE card (`1C-86-0B-3A-48-FB`) | X870E → Z690 | during Gate 1 (X870E rebooted) |
-| SN770 2 TB | **nowhere (recommended)** | post-soak, separate window |
+| Realtek 2.5GbE (`1C-86-0B-3A-48-FB`) | **nowhere — stays in X870E** | already in the PC from Night 1 |
+| SN770 2 TB | nowhere | post-soak, separate window |
 | 840 PRO | nowhere — retires in the ProDesk | — |
+| ProDesk p2p NIC | nowhere | rollback intact; optional post-soak if p2p is rebuilt |
 
-X870E after the pull: keeps `HomeFiber` (onboard, 192.168.1.10). Delete the stale
-`AIWA Direct` adapter config (10.110.10.2/30) after the card is out. The
-point-to-point link dies with the card — it was a bulk-transfer optimization;
-everything reachable via the switch survives.
+Gate 1 is **ProDesk power-off only**. No X870E shutdown, no card pull.
+The 10.110.10.x link was a bulk-transfer optimization; after ProDesk is down,
+everything needed is on the switch.
 
 ## Pre-flight prep — Thu 08-20 / Fri 08-21 evenings (~1–2 h, read-only + staging)
 
@@ -143,12 +151,12 @@ everything reachable via the switch survives.
 4. **Write the Z690 .link files ahead of time** (MAC-identified, per
    `X870E-NETWORK-CUTOVER.md` — never by name):
    - `lan0` = Intel I225-V onboard, `58:11:22:30:68:48` (currently `nic0` on the PoC)
-   - `p2p0` = Realtek card, `1C-86-0B-3A-48-FB` (arrives during Gate 1)
-   **DONE 2026-08-20** — staged on the PoC at `/root/night4-staging/`
-   (`10-lan0.link`, `11-p2p0.link`). Gate 3 = copy into
-   `/etc/systemd/network/` + `networkctl reload` + `ifreload -a`.
-   `/etc/network/interfaces` then restores unchanged (vmbr0 .12/24 on lan0,
-   vmbr1 10.110.10.1/30 on p2p0).
+   - `p2p0` = Realtek `1C-86-0B-3A-48-FB` was staged — **DO NOT install**.
+     That MAC stays in the X870E. Tonight AIWA is lan0-only.
+   **DONE 2026-08-20** — files at `/root/night4-staging/` (`10-lan0.link`,
+   `11-p2p0.link`). Gate 3 copies **only** `10-lan0.link`. vmbr0 becomes
+   `.12/24` on lan0. Leave vmbr1/p2p0 unconfigured until a real AIWA-side
+   NIC exists (ProDesk card, post-soak — not this night).
 5. **Stage llama for the R9700 on the PoC** — **DONE 2026-08-20**:
    - Vulkan userspace installed (mesa-vulkan-drivers); R9700 enumerates as
      **AMD Radeon Graphics (RADV GFX1201)** — confirmed via vulkaninfo.
@@ -210,9 +218,8 @@ shutdown -h now
 
 - Verify from the X870E: `192.168.1.12` and `10.110.10.1` stop answering. One
   identity on the wire, proven.
-- Pull the Realtek card from the X870E (brief X870E shutdown), install in the
-  Z690. X870E reboots on `HomeFiber` only.
-- ProDesk: powered off, **nothing removed** (per recommendation), = rollback.
+- **Do not pull any NIC.** X870E keeps `HomeFiber` + `AIWA Direct`. Z690 stays
+  onboard Intel to the switch. ProDesk stays intact (rollback).
 
 ## Gate 2 — restore the four CTs onto the new host ⛔
 
@@ -257,11 +264,12 @@ Order matters. Selective restore — never untar the old `/etc` wholesale.
 
 ```
 rm /etc/systemd/network/*nic0*   # drop the PoC-era pin if present
-# install prepared .link files: lan0=I225-V (58:11:22:30:68:48), p2p0=Realtek (1C:86:0B:3A:48:FB)
+# install ONLY 10-lan0.link (I225-V 58:11:22:30:68:48). Do NOT install 11-p2p0.link
+#   — that MAC is the X870E AIWA Direct card, still in this PC.
 # edit /etc/network/interfaces: vmbr0 192.168.1.230 → 192.168.1.12/24 gw .254 (lan0)
-#                              vmbr1 10.110.10.1/30 (p2p0)
+#                              leave vmbr1/p2p0 out (no NIC for it tonight)
 hostnamectl set-hostname aiwa && sed -i s/aiwa-poc/aiwa/ /etc/hosts
-ifreload -a && ip -br a          # verify .12 AND 10.110.10.1
+ifreload -a && ip -br a          # verify .12 on lan0; do not expect 10.110.10.1
 ```
 
 Do NOT restore old `/etc/pve` — CTs restored by dump already wrote their own
