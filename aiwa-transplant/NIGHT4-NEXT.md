@@ -4,13 +4,13 @@
 
 Prep verified **10:29 CDT**. Scheduled start **~18:30**. Do not steal `192.168.1.12`.
 
-## Right now (pre-Gate-0)
+## Right now — Gate 0 DONE (2026-08-22 ~11:30 CDT)
 
-- ProDesk `.12` = production. PoC `.230` = soak host. Llama `.240` = **Nemotron clerk, healthy**.
-- Cutover dumps **not taken**. Dest folder exists: `C:\aiwa-backups\20260822\`. Fallback: `C:\aiwa-backups\20260817\`.
-- Card to pull from X870E: `AIWA Direct` MAC `1C-86-0B-3A-48-FB`, PCI bus 16. `HomeFiber` stays.
-- SN770: **leave in ProDesk**.
-- Llama: **keep CT 210**. Never install `night4/llama-server.service`. Repair from `690-routing/`.
+- Cutover set **taken, copied, checksum-OK** in three places: ProDesk `/var/lib/vz/dump/`, `C:\aiwa-backups\20260822\`, PoC `/var/lib/vz/dump/`.
+- ProDesk still production: CTs 100–103 running, docker 7/7 up (restarted ~5 min for host tar).
+- PoC: CT 200 stopped, CT 210 running. Llama `.240` not touched this gate.
+- Fallback remains `C:\aiwa-backups\20260817\`.
+- Next: **go Gate 1** (Carter physical: ProDesk down, pull Realtek `1C-86-0B-3A-48-FB` PCI bus 16).
 
 ## Locked (Carter, 2026-08-22)
 
@@ -18,7 +18,7 @@ Prep verified **10:29 CDT**. Scheduled start **~18:30**. Do not steal `192.168.1
 2. Voice / customer-SMS on hold — stop anytime.
 3. CT 200 stays **stopped** (not destroyed).
 4. `mavshare`: **proven** (`net use \\192.168.1.12\Proxmox /user:mavshare` succeeded). Mapping not left connected.
-5. Still waiting: **go Gate 0**.
+5. Gate 0 **done**. Waiting: **go Gate 1**.
 
 ## Test `mavshare` now (do this in your own terminal)
 
@@ -52,6 +52,16 @@ from the host tarball. `smbpasswd -a mavshare` is only the backup if that fails.
 | 2 restore CTs 100–103 on `.230` | 20:15–20:50 | bind-mount `/mnt/samsung-sata` **before** first start. Destroy **200** only if Carter said so. **Never 210.** |
 | 3 identity → `.12` + host config | 20:50–22:20 | `.link` files already at `/root/night4-staging/`. No wholesale `/etc`. Drop `[proxmox-root]`. Re-point triage `PC_HOST` → `100.124.41.115`. |
 | 4 llama + e2e | 22:20–23:00 | `curl .240 /health` + `/v1/models`. If dead, re-apply `690-routing/`. Then the map's service checks. |
+
+## Gate 0 artifacts (sha256)
+
+```
+587c2a709f5b318941785a738be120d924d872a4b7e2f0802d45eb122a66560a  vzdump-lxc-100-2026_08_22-11_14_32.tar.zst
+856c840809144d76954a444ec01968f4781ecb1266ef0b0f57dc457408ca414c  vzdump-lxc-101-2026_08_22-11_14_44.tar.zst
+f66aea6e8ba81a160645daf62db7f268ac5c8685caa0c85b82b83d93dd41404d  vzdump-lxc-102-2026_08_22-11_15_07.tar.zst
+70aa1d0b7ef194d8bc4a9de5506fea331b801c4eefe767d1dd4e003d76a9b697  vzdump-lxc-103-2026_08_22-11_15_37.tar.zst
+91264ddc40b31035c7e7fe4177f51a07ed38cb567f8084f80434704cf3fd5f8b  aiwa-host-state-20260822.tar.gz
+```
 
 Rollback: Z690 off, ProDesk on. After identity swap, same, and do not ping-pong.
 

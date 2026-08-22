@@ -68,7 +68,7 @@ WORKBOARD first. Do not steal `.12`. Do not dual llama-server.
 2. Voice / customer-SMS gateways are on hold — **safe to stop anytime**; no live customers.
 3. CT 200 **stays stopped** (do not destroy). Still never touch 210.
 4. Samba `mavshare`: **proven** on live `\\192.168.1.12\Proxmox` (`net use` succeeded). Same password at Gate 3. Restore `/var/lib/samba/private` from the host tarball first; `smbpasswd -a mavshare` only if that mount fails.
-5. Say **go Gate 0** to start dumps.
+5. Gate 0 **done** 2026-08-22 ~11:30 CDT (dumps + host tar, 3 copies, docker 7/7 back). Waiting **go Gate 1**.
 
 ## Doctrine reminders
 
