@@ -1,0 +1,51 @@
+{
+  "request": {
+    "model": "nemotron-3.5-lightning-30b-a3b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the capital of France? Reply with the city name only."
+      }
+    ],
+    "max_tokens": 256,
+    "temperature": 0
+  },
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Paris"
+        }
+      }
+    ],
+    "created": 1787376339,
+    "model": "nemotron-3.5-lightning-30b-a3b",
+    "system_fingerprint": "b1-a302733",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 2,
+      "prompt_tokens": 30,
+      "total_tokens": 32,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "id": "chatcmpl-v3SEXNdMWKwp73E1ZswrMXuw7Sb4yFrs",
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 30,
+      "prompt_ms": 1565.388,
+      "prompt_per_token_ms": 52.1796,
+      "prompt_per_second": 19.164577727694347,
+      "predicted_n": 2,
+      "predicted_ms": 20.231,
+      "predicted_per_token_ms": 20.231,
+      "predicted_per_second": 49.429093964707626,
+      "draft_n": 3,
+      "draft_n_accepted": 3
+    }
+  }
+}

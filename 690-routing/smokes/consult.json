@@ -1,0 +1,52 @@
+{
+  "request": {
+    "model": "qwen3.8-27b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Why must a local Nemotron clerk be served with --reasoning off for agentic tool use at ~29k context? Answer in at most five sentences."
+      }
+    ],
+    "max_tokens": 2048,
+    "temperature": 0.7
+  },
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Because Nemotron\u2019s reasoning mode emits long chain-of-thought text before acting, which consumes much of the ~29k-token budget already used by the system prompt, tool schemas, and history. That can truncate or delay the tool-call block, making agentic parsing unreliable or causing context overflow. With `--reasoning off`, the clerk produces direct, tool-call-oriented output, preserving KV-cache space and keeping latency predictable. It is a practical serving constraint for tight-context agentic loops, not a fundamental prohibition on tool use.",
+          "reasoning_content": "We need to answer user's question: \"Why must a local Nemotron clerk be served with --reasoning off for agentic tool use at ~29k context? Answer in at most five sentences.\"\n\nWe need infer? \"local Nemotron clerk\" likely model? Nemotron? \"clerk\" maybe role? \"served with --reasoning off for agentic tool use at ~29k context\". Need explain why reasoning off. Maybe because at ~29k context, local Nemotron has limited context window? Or reasoning tokens consume context and degrade tool-call reliability? Need answer <=5 sentences. Need likely specific: local Nemotron clerk (maybe an LLM server?) must be served with --reasoning off for agentic tool use at ~29k context because reasoning mode adds hidden/extended chain-of-thought that blows context budget and causes truncation/timeout, and tool use needs direct structured output. Need be concise.\n\nLet's parse: \"local Nemotron clerk\" maybe a local Llama Nemotron? \"served with --reasoning off\" maybe vLLM? For agentic tool use at ~29k context. Why must be served with --reasoning off? Could be due to Nemotron's reasoning tokens are not compatible with tool calling? Or reasoning mode increases output length and consumes KV cache, causing context overflow around 29k. Maybe \"clerk\" is a local agent that uses tools; at ~29k context, if reasoning enabled, model's internal reasoning consumes context and leaves insufficient room for tool schemas/history, causing failures. Need maybe mention \"Nemotron 8B?\" Let's think.\n\nNemotron is NVIDIA model. There is \"nvidia/Llama-3.1-Nemotron-70B-Instruct-HF\"? It may have a \"reasoning\" parameter? Some serving frameworks have --reasoning flag? Maybe \"local Nemotron clerk\" is from a specific setup? The phrase \"clerk\" could be a role in some agentic system (e.g., \"Nemotron clerk\" in an app). \"served with --reasoning off\" maybe a command-line flag in a local server (e.g., \"llm-server --reasoning off\"). At ~29k context, why must reasoning be off? Could be because reasoning mode changes tokenizer/stop behavior? Let's search memory.\n\nNemotron models have \"reasoning\" capabilities? NVIDIA's \"Nemotron\" maybe includes \"reasoning\" and \"instruction\" variants. In vLLM, there is a \"reasoning_parser\" for models like DeepSeek R1? \"--reasoning\" maybe in \"llama.cpp\"? For agentic tool use at ~29k context, local Nemotron clerk must be served with --reasoning off because reasoning tokens can exceed max context and cause tool calls to be malformed. Need answer in at most 5 sentences.\n\nCould be trick: \"must\" is too strong; answer: It isn't an absolute requirement; it's a workaround. At ~29k context, enabling reasoning makes the model emit long chain-of-thought before tool calls, consuming tokens and KV cache, increasing latency, and risking truncation or malformed JSON. Disabling reasoning keeps outputs short and tool-call-focused, preserving context for system prompt, tool schemas, and conversation history. If the local server's context window is near its limit, --reasoning off is the practical way to make agentic loops reliable. Need maybe mention \"Nemotron clerk\" specifically? \"local Nemotron clerk\" maybe a model acting as a clerk in an agent; it needs to parse tool calls.\n\nNeed ensure <=5 sentences. Could be 3 sentences.\n\nPotential final:\n\"Because Nemotron\u2019s reasoning mode emits long chain-of-thought text before acting, which eats into the ~29k-token budget already filled by system prompt, tool schemas, and history. That can truncate or delay the tool-call block, making agentic parsing unreliable or causing context overflow. With --reasoning off, the clerk answers directly in tool-call format, preserving KV-cache space and keeping loops fast. It is a practical serving constraint, not a fundamental limit of tool use.\" Four sentences.\n\nNeed maybe \"must\" answer: \"It must be served with --reasoning off because...\" Good.\n\nNeed no citations. Ensure at most five sentences. final only.\n"
+        }
+      }
+    ],
+    "created": 1787376400,
+    "model": "qwen3.8-27b",
+    "system_fingerprint": "b1-a302733",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 1022,
+      "prompt_tokens": 85,
+      "total_tokens": 1107,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "id": "chatcmpl-iXzqWU9Wzbzeweoa01oKZ9n7e26lc36J",
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 85,
+      "prompt_ms": 5111.791,
+      "prompt_per_token_ms": 60.138717647058826,
+      "prompt_per_second": 16.62822286748421,
+      "predicted_n": 1022,
+      "predicted_ms": 23262.571,
+      "predicted_per_token_ms": 22.784104799216454,
+      "predicted_per_second": 43.8902475569016,
+      "draft_n": 1284,
+      "draft_n_accepted": 596
+    }
+  }
+}
