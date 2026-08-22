@@ -67,7 +67,7 @@ WORKBOARD first. Do not steal `.12`. Do not dual llama-server.
 1. SN770 **stays in the ProDesk** the whole night (rollback intact).
 2. Voice / customer-SMS gateways are on hold — **safe to stop anytime**; no live customers.
 3. CT 200 **stays stopped** (do not destroy). Still never touch 210.
-4. Samba `mavshare`: test **now** on live ProDesk (see NIGHT4-NEXT). Gate 3 restores `/var/lib/samba/private` from the host tarball first; `smbpasswd -a mavshare` only if that mount fails.
+4. Samba `mavshare`: **proven** on live `\\192.168.1.12\Proxmox` (`net use` succeeded). Same password at Gate 3. Restore `/var/lib/samba/private` from the host tarball first; `smbpasswd -a mavshare` only if that mount fails.
 5. Say **go Gate 0** to start dumps.
 
 ## Doctrine reminders

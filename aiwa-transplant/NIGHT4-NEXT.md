@@ -17,7 +17,7 @@ Prep verified **10:29 CDT**. Scheduled start **~18:30**. Do not steal `192.168.1
 1. SN770 stays in the ProDesk.
 2. Voice / customer-SMS on hold — stop anytime.
 3. CT 200 stays **stopped** (not destroyed).
-4. `mavshare`: prove it on live ProDesk before Gate 0 (commands below).
+4. `mavshare`: **proven** (`net use \\192.168.1.12\Proxmox /user:mavshare` succeeded). Mapping not left connected.
 5. Still waiting: **go Gate 0**.
 
 ## Test `mavshare` now (do this in your own terminal)
