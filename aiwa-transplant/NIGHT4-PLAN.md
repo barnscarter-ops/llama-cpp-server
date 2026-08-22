@@ -9,6 +9,67 @@ benched, tuned.
 All AIWA-side commands run via Orca on the host, one approval gate at a time (⛔).
 Nothing starts until Carter says go on the night.
 
+## 2026-08-22 night-of overlay — read this first
+
+Prep session ran **10:29 CDT** from `cmb-workbench`. Gate 0 still starts ~18:30
+unless Carter says go early. This overlay supersedes Gate 4 as written on
+2026-08-19 and the soak draft unit in `night4/llama-server.service`.
+
+### Live facts (observed, not assumed)
+
+| Check | Result |
+|---|---|
+| Clock | 2026-08-22 10:29 CDT — ~8 h before scheduled Gate 0 |
+| ProDesk prod | `192.168.1.12:8006` TCP open (identity still here until Gate 3) |
+| Direct link | `10.110.10.1:22` open from X870E `10.110.10.2` — **scp dumps here in Gate 0, before the card moves** |
+| PoC | `192.168.1.230:8006` TCP open (`aiwa-poc`) |
+| 690 llama | `http://192.168.1.240:8080` **healthy**, model `nemotron-3.5-lightning-30b-a3b` Q5_K_M, `n_ctx` 131072 |
+| Box A GLM | guardian `llama_offline` (idle) — leave it; not this night |
+| Cutover dumps | **not yet** — only fallback `C:\aiwa-backups\20260817\` (~8.9 GB). Dest staged: `C:\aiwa-backups\20260822\` (C: 1457 GB free) |
+| 840 PRO tree on X870E | `C:\aiwa-840pro\` still has `mav-transfer/` + `mav-rag/` (PoC already has copies on `/mnt/samsung-stage`) |
+
+### X870E NICs (identify by MAC — pull only the add-in card)
+
+| Adapter | MAC | IP | Gate 1 |
+|---|---|---|---|
+| `HomeFiber` (X870E onboard Realtek) | `10-FF-E0-8A-A0-49` | `192.168.1.10/24` gw `.254` | **stays** |
+| `AIWA Direct` (add-in Realtek) | `1C-86-0B-3A-48-FB` | `10.110.10.2/30` no gw/DNS | **moves to Z690** — Windows location **PCI bus 16, device 0** |
+| Z690 onboard Intel I225-V | `58-11-22-30-68-48` | PoC `nic0` / future `lan0` | already in the Z690 |
+
+After the card is out of the X870E: delete the stale `AIWA Direct` adapter
+config (10.110.10.2/30). X870E stays on `HomeFiber` only. The point-to-point
+link returns when the card is seated in the Z690 and Gate 3 brings up `p2p0`.
+
+### Llama: CT 210 is already production — do not "bring up" the soak Q4
+
+`aiwa-transplant/night4/llama-server.service` is a **dead draft** (host path
+`/mnt/stage/llama`, Q4_K_M, 64k, port **8090**, alias `local-llm`, no MTP).
+Starting it fights CT 210 for the R9700.
+
+Live SoT is git `690-routing/` (origin through `3d2e39e`): systemd unit +
+`swap-qwen-consult.sh` / `swap-nemo-clerk.sh`. Walk-away `:8080` = Nemotron
+clerk, `--reasoning off`. If CT 210 dies in cutover, re-apply those files —
+do not fall back to the Q4 host unit.
+
+`pct destroy 200` in Gate 2 is the **rustdesk evidence** CT. **Never destroy
+210.** `.240` stays the llama IP through the host identity swap to `.12`.
+
+### Orca path tonight
+
+This PC's Orca has no paired AIWA host terminal. Gate 0–3 commands run on
+**ProDesk Orca (CT 101)** while it is up, then on the restored CT 101 / host
+console after Gate 2. Named SSH exception to `aiwa-poc` (`id_ed25519_proxmox`
+@ `192.168.1.230`) is only for CT 210 if llama must be repaired; announce on
+WORKBOARD first. Do not steal `.12`. Do not dual llama-server.
+
+### Confirm on the night (all Carter)
+
+1. SN770 **stays in the ProDesk** (rollback intact) — still the recommendation.
+2. No live voice call / active customer SMS expected in the 19:50–23:00 window.
+3. CT 200: keep stopped until soak vs destroy now.
+4. Samba `mavshare` password ready for Gate 3.3 (`smbpasswd` does not copy).
+5. Say **go Gate 0** to start dumps. Nothing below this overlay runs before that.
+
 ## Doctrine reminders
 
 - PC (X870E, `cmb-workbench` 192.168.1.10 / 100.124.41.115) = dev. AIWA = live.
@@ -167,7 +228,10 @@ cp -a /mnt/samsung-stage/mav-rag /mnt/samsung-sata/     # hcp-exports ingest tre
 # chown -R 1000:1000 /mnt/samsung-sata/mav-transfer for now, verify after user restore
 
 # 2.1 drop the PoC evidence CT (its job is done) — or keep stopped until soak ends
-pct destroy 200 --purge        # ⛔ Carter's call
+pct destroy 200 --purge        # ⛔ Carter's call — this is rustdesk evidence, NOT llama
+# NEVER pct destroy 210. CT 210 llama-vulkan is live production inference.
+# After restores: pct list must still show 210 running; curl .240 /v1/models
+# must still be nemotron-3.5-lightning-30b-a3b.
 
 # 2.2 restore all four from the 2026_08_22 dumps
 pct restore 100 /var/lib/vz/dump/vzdump-lxc-100-2026_08_22_*.tar.zst --storage local-lvm
@@ -242,26 +306,38 @@ off-LAN client (phone).
 config still targets old CartersPC `100.124.216.11` → change to
 `cmb-workbench` / `100.124.41.115`. This is the moment it was deferred for.
 
-## Gate 4 — R9700 llama + end-to-end verify ⛔
+## Gate 4 — R9700 llama (keep CT 210) + end-to-end verify ⛔
+
+**Do not `systemctl start` a host `llama-server` and do not install
+`aiwa-transplant/night4/llama-server.service`.** That file is the 08-20 soak
+draft (Q4_K_M @ `/mnt/stage/llama`, port 8090, 64k, no MTP). Live llama is
+already **CT 210** at `http://192.168.1.240:8080`.
+
+SoT if the CT must be repaired: `690-routing/llama-server.service` +
+`690-routing/swap-*.sh` (same bytes as `/opt/llama/` inside the CT).
 
 ```
-# 4.1 BENCH PROOF PASSED 2026-08-20 on the PoC (aiwa-poc, soak config):
-#     pp512 2176.4 ± 13.9 | tg128 141.4 ± 1.4   (Windows AMDVLK baseline: 152)
-#     arch loads clean in b10488 on Linux RADV; VRAM 17.1 GB after bench run.
-#     Night-of: re-run as a smoke test only (2 min), or skip if time-pressed.
-#     Note: RADV shows "matrix cores: none" → pp ~30% under Windows AMDVLK.
-#     If prefill ever matters, AMD's proprietary ICD is the fallback lever.
-cd /mnt/stage/llama/llama-b10488
-VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json ./llama-bench \
-  -m ../models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf \
-  -ngl 99 -fa 1 -p 512 -n 128 -r 3
-# 4.2 start the pre-staged unit with the tuned args
-systemctl start llama-server (or compose, per prep step 5)
-# 4.3 verify t/s + one completion through whatever fronts it
+# 4.1 prove the clerk survived Gates 0–3 (required)
+curl -sS --max-time 5 http://192.168.1.240:8080/health
+curl -sS --max-time 5 http://192.168.1.240:8080/v1/models
+# expect: status ok, id nemotron-3.5-lightning-30b-a3b, n_ctx 131072, ftype Q5_K
+# from PoC/host: pct status 210  → running
+#                lxc-attach -n 210 -- systemctl is-active llama-server  → active
+
+# 4.2 IF .240 is dead — restore from git, never from the Q4 host unit
+#   scp 690-routing/{llama-server.service,swap-*.sh} onto CT 210
+#   install unit to /etc/systemd/system/, scripts to /opt/llama/, chmod +x
+#   systemctl daemon-reload && systemctl enable --now llama-server
+#   pkill trap: pkill -f llama-server self-kills — use [l]lama-server after systemctl stop
+# announce any llama restart on WORKBOARD first. one model at a time.
+
+# 4.3 optional 2-min bench — SKIP unless llama looks wrong. 08-20 soak already
+#     proved RADV on this card (Q4 tg128 141.4). Do not retune flags tonight.
 ```
 
 End-to-end checks (the map's "verify one cutover call succeeds"):
 
+- [ ] `http://192.168.1.240:8080` clerk alias `nemotron-3.5-lightning-30b-a3b` (CT 210; not a host :8090 Q4)
 - [ ] voice-pipecat answers a test call
 - [ ] hermes-customer-sms sends/receives a test message
 - [ ] mav-console reachable via tailscale :3000 AND LAN :3010
@@ -311,5 +387,6 @@ End-to-end checks (the map's "verify one cutover call succeeds"):
 - No restoring CTs 102/103 on any host while prod CTs run (the PoC rule).
 - No wholesale /etc restore — the selective list above is the whole point of
   the fresh-install strategy.
-- Don't "optimize" llama flags on the night beyond the KV sanity check —
-  the sampler set is tuned; leave it.
+- Don't "optimize" llama flags on the night beyond proving CT 210 is still
+  the clerk — the clerk/consult set is already tuned; leave it.
+- Don't install or start `aiwa-transplant/night4/llama-server.service` on the host.
