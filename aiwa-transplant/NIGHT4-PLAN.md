@@ -62,13 +62,13 @@ console after Gate 2. Named SSH exception to `aiwa-poc` (`id_ed25519_proxmox`
 @ `192.168.1.230`) is only for CT 210 if llama must be repaired; announce on
 WORKBOARD first. Do not steal `.12`. Do not dual llama-server.
 
-### Confirm on the night (all Carter)
+### Locked 2026-08-22 (Carter)
 
-1. SN770 **stays in the ProDesk** (rollback intact) — still the recommendation.
-2. No live voice call / active customer SMS expected in the 19:50–23:00 window.
-3. CT 200: keep stopped until soak vs destroy now.
-4. Samba `mavshare` password ready for Gate 3.3 (`smbpasswd` does not copy).
-5. Say **go Gate 0** to start dumps. Nothing below this overlay runs before that.
+1. SN770 **stays in the ProDesk** the whole night (rollback intact).
+2. Voice / customer-SMS gateways are on hold — **safe to stop anytime**; no live customers.
+3. CT 200 **stays stopped** (do not destroy). Still never touch 210.
+4. Samba `mavshare`: test **now** on live ProDesk (see NIGHT4-NEXT). Gate 3 restores `/var/lib/samba/private` from the host tarball first; `smbpasswd -a mavshare` only if that mount fails.
+5. Say **go Gate 0** to start dumps.
 
 ## Doctrine reminders
 

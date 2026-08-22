@@ -12,13 +12,36 @@ Prep verified **10:29 CDT**. Scheduled start **~18:30**. Do not steal `192.168.1
 - SN770: **leave in ProDesk**.
 - Llama: **keep CT 210**. Never install `night4/llama-server.service`. Repair from `690-routing/`.
 
-## Carter says these before Gate 0
+## Locked (Carter, 2026-08-22)
 
-1. SN770 stays (recommended).
-2. No live voice / customer SMS in 19:50–23:00.
-3. CT 200 keep-stopped vs destroy.
-4. `mavshare` password in hand for Gate 3.
-5. **go Gate 0**.
+1. SN770 stays in the ProDesk.
+2. Voice / customer-SMS on hold — stop anytime.
+3. CT 200 stays **stopped** (not destroyed).
+4. `mavshare`: prove it on live ProDesk before Gate 0 (commands below).
+5. Still waiting: **go Gate 0**.
+
+## Test `mavshare` now (do this in your own terminal)
+
+Share is live: `[Proxmox]` → `/mnt/samsung-sata/mav-transfer`, user `mavshare`.
+TCP 445 is open on **both** `192.168.1.12` and `10.110.10.1`. Windows has **no**
+saved mavshare credential. Do **not** open `[proxmox-root]` — that share is
+guest/root and proves nothing.
+
+In **your** PowerShell or cmd (the `*` prompts; password never hits agent logs):
+
+```
+net use P: \\192.168.1.12\Proxmox /user:mavshare *
+dir P:\
+net use P: /delete
+```
+
+Direct-link fallback if LAN auth acts weird: `\\10.110.10.1\Proxmox`.
+
+Pass = folder listing. Fail = `53` (name) or `86`/`1326` (wrong password).
+`C:\aiwa-840pro\mav-transfer` is a file copy and does **not** test Samba.
+
+After Gate 3, the same password should work if `/var/lib/samba/private` restored
+from the host tarball. `smbpasswd -a mavshare` is only the backup if that fails.
 
 ## Order (⛔ each gate)
 
