@@ -16,10 +16,14 @@ Runbook: `NIGHT4-PLAN.md`. Gate 0 dumps: `C:\aiwa-backups\20260822\`.
 
 ## Follow-ups (soak, not re-cutover)
 
-- Voice docker failed Gate 4
-- Syncthing IDs ok; peers not up yet
-- Samba `mavshare` needs auth from Windows against the new host
-- Pair Orca to the live identity
+- Samba `mavshare` from Workbench: `net use Z: \\192.168.1.12\Proxmox /user:mavshare /persistent:yes` (prompts for password; guest is blocked)
+- Voice docker failed Gate 4 (optional; practice stack)
+- Pair Orca to live `aiwa` if not already
+- SN770 stays in the ProDesk until a later window
 - Session J (Mav Room fabric → AIWA Tailscale) still after soak **and** Carter go
+
+**Disregard:** rustdesk client reconnect (backup-of-backup, never used); Syncthing (learning leftover).
+
+Hermes PC bridge (gateway, pc-sms, customer-sms model URL, triage) is Workbench Tailscale `100.124.41.115:8901` — not old CartersPC `100.124.216.11`. pc-sms Twilio `+14698741546` (inbound proven). Customer SMS `+14698963862` is a different allowlist.
 
 Do not power the ProDesk on while `.12` is live. Rollback is: Z690 off, then ProDesk on.

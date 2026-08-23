@@ -14,10 +14,12 @@ treat `.230` / `aiwa-poc` as the live host. Do not start Gate 1.
 
 ## Soak leftovers (not a second cutover)
 
-- Voice docker failed Gate 4
-- Syncthing peers not up (IDs ok)
-- Samba `mavshare` auth from Windows against the new host
+- Samba: `net use Z: \\192.168.1.12\Proxmox /user:mavshare /persistent:yes`
+- Voice docker (optional)
 - Pair Orca to live `aiwa`
+- SN770 still in ProDesk
+
+Disregard rustdesk + Syncthing. PC bridge is Workbench `100.124.41.115:8901`.
 
 ## Do not
 
