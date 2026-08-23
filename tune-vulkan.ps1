@@ -35,11 +35,11 @@ if ($Device) { $env:GGML_VK_VISIBLE_DEVICES = $Device }  # legacy override, avoi
 
 # Refuse to run while prod is serving — a second llama-server loading during
 # VRAM churn hard-crashed the box (amdkmdag.sys bugcheck 0x116, 2026-08-06).
-# NOTE: loopback 8080 is the Hermes qwen-worker SMS adapter, NOT the guardian
-# (guardian binds 0.0.0.0 and Windows routes loopback to Hermes). Probe the
-# guardian via the Tailscale IP; probe llama-server via loopback 8081.
-$guardianUp = Test-NetConnection -ComputerName 100.124.216.11 -Port 8080 -InformationLevel Quiet -WarningAction SilentlyContinue
-if ($guardianUp) { throw "llama-guardian is listening on 100.124.216.11:8080 — stop it via PM2 first. NEVER sweep alongside prod." }
+# NOTE (2026-08-22, post-Night4): guardian now runs on THIS box (Workbench) at
+# 0.0.0.0:8080 — the old CartersPC Tailscale probe (100.124.216.11) is retired.
+# Probe the guardian via loopback 8080; probe llama-server via loopback 8081.
+$guardianUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 8080 -InformationLevel Quiet -WarningAction SilentlyContinue
+if ($guardianUp) { throw "llama-guardian is listening on 127.0.0.1:8080 — stop it via PM2 first. NEVER sweep alongside prod." }
 $llamaUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 8081 -InformationLevel Quiet -WarningAction SilentlyContinue
 if ($llamaUp) { throw "Port 8081 is listening — stop local-llm via PM2 first." }
 if (Get-Process llama-server -ErrorAction SilentlyContinue) {
