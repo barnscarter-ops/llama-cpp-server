@@ -8,6 +8,7 @@ One model at a time on the R9700 (`http://192.168.1.240:8080`). Boot default is 
 - **pkill trap:** `pkill -f llama-server` self-kills. Use `pkill -f '[l]lama-server'` and only after `systemctl stop` if the clerk unit is running.
 - **Announce** any llama restart on `C:\Workspace\Active\brain\WORKBOARD.md` first.
 - **Night 4 / CT rebuild:** live copies on CT 210 can die; keep the same bytes in this `690-routing/` git tree (`barnscarter-ops/llama-cpp-server`). Gate 4 is **keep/repair CT 210**, not the stale host unit in `aiwa-transplant/night4/llama-server.service`.
+- **Manager merge (PLAN READY):** do not rewrite these scripts. Plan: repo-root `PLAN.md` / `D:\Workspace\Active\WindowsApps\LocalLlmBoard\PLAN.md`. Pickup: repo-root `HANDOFF.md`.
 
 ## Session 4 smokes (2026-08-22)
 

@@ -15,8 +15,8 @@ Sessions 1–4 of `690-routing/PLAN.md` ran live on CT 210. Walk-away:
 
 Do not re-diagnose MacBridge. Do not re-run the split. `pkill -f llama-server` still self-kills — use `[l]lama-server` after `systemctl stop`.
 
-## Next (not this repo)
+## Next (not 690-routing sessions)
 
-Carter took over **Local LLM Board** Research+Plan: Orca tab `LocalLLM-Board — orchestrator` (`term_92f96e6d`), repo `C:\Workspace\Active\WindowsApps\LocalLlmBoard`. Pipeline: parallel-build-handoff, **stop after PLAN.md**. Brief: `ORCHESTRATOR-BRIEF.md`.
+Clerk/consult split is **done**. Do not re-run Sessions 1–4.
 
-Night 4 AIWA cutover still later today (~15h+ from this close). CT 210 scripts can die in cutover — git copy here is SoT.
+**Local-model-manager merge is PLAN READY.** Pickup: repo-root `HANDOFF.md` + `PLAN.md` (pointer) and `D:\Workspace\Active\WindowsApps\LocalLlmBoard\PLAN.md`. Do not rewrite these `swap-*.sh`. Night 4 cutover is complete (`aiwa-transplant/NIGHT4-COMPLETE-20260822.md`). CT 210 live scripts can still vanish on rebuild — git copy here is SoT; manager MVP fails closed (no silent recopy).

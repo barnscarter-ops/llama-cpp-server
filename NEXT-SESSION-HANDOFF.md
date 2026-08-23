@@ -1,5 +1,7 @@
 # NEXT-SESSION-HANDOFF — Night 4 complete (2026-08-22)
 
+**Local-model-manager merge (separate workstream):** PLAN READY. Do not start PR1 from this Night 4 file. Use repo-root `HANDOFF.md` + `PLAN.md` and `WindowsApps/LocalLlmBoard/PLAN.md`.
+
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`
 **Evidence:** `aiwa-transplant/NIGHT4-COMPLETE-20260822.md`
 **Doctrine:** `C:\Workspace\Active\brain\knowledge\local-llm-architecture.md`
