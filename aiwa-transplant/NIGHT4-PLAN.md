@@ -1,5 +1,8 @@
 # Night 4 — Cutover plan (AIWA: ProDesk → Z690)
 
+**COMPLETE 2026-08-22** — see [`NIGHT4-COMPLETE-20260822.md`](NIGHT4-COMPLETE-20260822.md).
+This file is the historical runbook. Do not re-run gates.
+
 **Scheduled: Saturday 2026-08-22, evening. Start ~18:30, services verified back by ~23:00.**
 Written 2026-08-19 from the Night 3 PASS (`NIGHT3-OBSERVED-20260819.md`). Decisions
 confirmed by Carter 2026-08-19: date = Sat 08-22 evening; 840 PRO media subset is
