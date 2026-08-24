@@ -2,7 +2,7 @@
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`  
 **Workstream:** Local-model-manager — merge  
-**Status:** **GitHub `main` has PR1–PR3.** Tip `649ee37`. MCC GitHub `main` `26e5eb8`. `FLEET_ROUTER` still **false**. Live guardian/MCC were **not** restarted. Carter proceeded: execute the **Safe order**.
+**Status:** Safe order **executed**. Flag soak **passed**. Tip `47adba3`. MCC disk `26e5eb8`. Live `llama-guardian` has **`FLEET_ROUTER=true`** (uncommitted live ecosystem). Carter proceeded: **PR4 next**. Do not start PR6/PR8.
 
 Night 4 cutover is **complete** and is a different workstream. Soak leftovers stay in `NEXT-SESSION-HANDOFF.md` (Night 4).
 
@@ -17,18 +17,13 @@ PR1–PR3 and PR-MCC are already on GitHub `main`. There is no second GitHub mer
 
 | Layer | llama-guardian | MCC |
 |---|---|---|
-| GitHub `main` | **done** `649ee37` | **done** `26e5eb8` (PR #9) |
-| Disk | **done** (`C:\Workspace\Infrastructure\llama-cpp-server`) | **not yet** — `C:\Workspace\Active\MCC` behind 3, dirty |
-| Running process | **not yet** — PM2 ~2 days, `watch` off. Live seats is 503 `llama_offline`; health has no `seats`. | **not yet** — `llama-status.mjs` still `/v1/models` |
+| GitHub `main` | **done** `47adba3` | **done** `26e5eb8` (PR #9) |
+| Disk | **done** + uncommitted `FLEET_ROUTER: "true"` in `ecosystem.config.cjs` | **done** `26e5eb8`; dirty files kept |
+| Running process | **done** — PM2 id 20, `FLEET_ROUTER=true`. seats 200; health has seats | disk ready; Windows `mav-console` not running (not started) |
 
-## Safe order (execute this)
+## Safe order (executed 2026-08-23)
 
-Announce WORKBOARD before PM2 / MCC restart. Flag stays **false** until step 4.
-
-1. Restart **llama-guardian** (PM2). Disk already has merged code.
-2. Update live MCC folder to GitHub `main` without wiping dirty files; restart MCC so status uses `/__guardian/health` `llama_up`.
-3. Verify live: `GET /__guardian/seats` **200**; health has `seats.aiwa` / `seats.workbench`; `/v1/models` still GLM-shaped.
-4. Then `FLEET_ROUTER=true`, restart guardian, soak. No PR4 until soak.
+1–4 done. Flag on. Soak passed. Clerk POST pong, GLM stayed stopped, consult 409. **Next: PR4 only.**
 
 ## What not to redo
 
@@ -42,7 +37,8 @@ Announce WORKBOARD before PM2 / MCC restart. Flag stays **false** until step 4.
 - Call `:8081` from clients
 - Rewrite `690-routing/swap-*.sh`
 - SSH swap from guardian while `FLEET_SWAP_OWNER=false`
-- Enable `FLEET_ROUTER=true` before live guardian **and** MCC pass Safe order step 3
+- Start PR6 / PR8 in the PR4 session
+- Commit live `FLEET_ROUTER=true` to origin unless Carter wants GitHub default true
 - Restart PM2 without WORKBOARD
 - Merge MCC again
 
