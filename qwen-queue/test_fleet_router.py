@@ -18,6 +18,7 @@ from aiohttp.test_utils import TestClient, TestServer
 import fleet_router
 from fleet_router import (
     OccupantCache,
+    fleet_default_seat,
     parse_primary_model_id,
     role_for_aiwa_model_id,
     seat_for_model,
@@ -84,6 +85,28 @@ class SeatForModelTests(unittest.TestCase):
         self.assertEqual("consult", seat_for_model("consult"))
         self.assertEqual("consult", seat_for_model("qwen3.8-27b"))
         self.assertEqual("cloud", seat_for_model("gpt-4o"))
+        self.assertEqual("clerk", seat_for_model(None, default_seat="clerk"))
+        self.assertEqual("clerk", seat_for_model("", default_seat="clerk"))
+
+    def test_fleet_default_seat(self) -> None:
+        backup = {k: os.environ.get(k) for k in ("FLEET_ROUTER", "FLEET_DEFAULT_SEAT")}
+        try:
+            os.environ["FLEET_ROUTER"] = "false"
+            os.environ["FLEET_DEFAULT_SEAT"] = "clerk"
+            self.assertEqual("glm", fleet_default_seat())
+
+            os.environ["FLEET_ROUTER"] = "true"
+            os.environ.pop("FLEET_DEFAULT_SEAT", None)
+            self.assertEqual("clerk", fleet_default_seat())
+
+            os.environ["FLEET_DEFAULT_SEAT"] = "glm"
+            self.assertEqual("glm", fleet_default_seat())
+        finally:
+            for key, value in backup.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_occupant_parse(self) -> None:
         self.assertEqual(
@@ -101,6 +124,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
             k: os.environ.get(k)
             for k in (
                 "FLEET_ROUTER",
+                "FLEET_DEFAULT_SEAT",
                 "AIWA_BASE",
                 "AIWA_PROXY_LOOPBACK_ONLY",
                 "GUARDIAN_QUEUE_DB",
@@ -588,7 +612,66 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         body = await resp.json()
         self.assertEqual("clerk", body["aiwa"]["occupant"])
 
-    async def test_empty_model_stays_glm(self) -> None:
+    async def test_empty_model_omitted_defaults_clerk(self) -> None:
+        self.module.guardian._llama_up = False
+        before_active = self.module.guardian.active_requests
+        before_idle = self.module.guardian.last_request_time
+        self.ensure_calls.clear()
+        self.recording.calls.clear()
+        self.lock.acquire_count = 0
+        fleet_router.occupant_cache.invalidate()
+
+        payload = {"stream": False, "messages": [{"role": "user", "content": "hi"}]}
+        resp = await self.client.post("/v1/chat/completions", json=payload)
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("aiwa-ok", body["choices"][0]["message"]["content"])
+
+        self.assertEqual([], self.ensure_calls)
+        self.assertEqual(0, self.lock.acquire_count)
+        self.assertEqual(before_active, self.module.guardian.active_requests)
+        self.assertEqual(before_idle, self.module.guardian.last_request_time)
+        self.assertEqual([], self._llama_target_calls())
+        self.assertEqual([], self.llama_hits)
+
+        posts = [h for h in self.aiwa_hits if h[0] == "POST"]
+        self.assertEqual(1, len(posts))
+        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+
+    async def test_empty_model_string_defaults_clerk(self) -> None:
+        self.module.guardian._llama_up = False
+        self.ensure_calls.clear()
+        self.recording.calls.clear()
+        self.lock.acquire_count = 0
+        fleet_router.occupant_cache.invalidate()
+
+        payload = {"model": "", "stream": False, "messages": [{"role": "user", "content": "hi"}]}
+        resp = await self.client.post("/v1/chat/completions", json=payload)
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("aiwa-ok", body["choices"][0]["message"]["content"])
+
+        self.assertEqual([], self.ensure_calls)
+        self.assertEqual(0, self.lock.acquire_count)
+        self.assertEqual([], self._llama_target_calls())
+
+        posts = [h for h in self.aiwa_hits if h[0] == "POST"]
+        self.assertEqual(1, len(posts))
+        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+
+    async def test_empty_model_logs_defaulted_model_clerk(self) -> None:
+        fleet_router.occupant_cache.invalidate()
+        payload = {"stream": False, "messages": [{"role": "user", "content": "hi"}]}
+        with self.assertLogs("guardian", level="INFO") as captured:
+            resp = await self.client.post("/v1/chat/completions", json=payload)
+        self.assertEqual(200, resp.status, await resp.text())
+        self.assertTrue(
+            any("defaulted_model=clerk" in line for line in captured.output),
+            captured.output,
+        )
+
+    async def test_empty_model_flag_off_stays_glm(self) -> None:
+        os.environ["FLEET_ROUTER"] = "false"
         self.module.guardian._llama_up = False
 
         async def down():
