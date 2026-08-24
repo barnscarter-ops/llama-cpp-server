@@ -2,7 +2,7 @@
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`  
 **Workstream:** Local-model-manager — merge  
-**Status:** PR2 committed on this branch (`f7cf398`, on top of PR1 `9b2b566`). Not merged to `main`. `FLEET_ROUTER` still false. Next: **PR3** extend `/__guardian/health` with `seats.aiwa` / `seats.workbench`.
+**Status:** PR2 on this branch (`f7cf398` + docs `ef4c15b`, on PR1 `9b2b566`). Pushed, not merged to `main`. `FLEET_ROUTER` still false. Next: **PR3** extend `/__guardian/health` with `seats.aiwa` / `seats.workbench`.
 
 Night 4 cutover is **complete** and is a different workstream. Soak leftovers stay in `NEXT-SESSION-HANDOFF.md` (Night 4). This file is the manager-merge brief.
 
