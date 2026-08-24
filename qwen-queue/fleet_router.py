@@ -71,7 +71,7 @@ def is_loopback_remote(remote: str | None) -> bool:
 
 
 def seat_for_model(model: str | None, *, default_seat: str = "glm") -> str:
-    """Map request model alias → seat. Empty/omitted model maps to GLM (not clerk)."""
+    """Map request model alias → seat. Empty/omitted model returns default_seat."""
     if not model or not str(model).strip():
         return default_seat
     m = str(model).strip().lower()
