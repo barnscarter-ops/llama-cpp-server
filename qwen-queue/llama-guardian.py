@@ -1347,8 +1347,20 @@ async def guardian_health(request: web.Request) -> web.Response:
     PM2 / homelab-agent can hit this to confirm the proxy is alive without
     caring whether llama is currently up. (Llama's health is at /v1/models,
     which proxies through.)
+
+    Unlike /__guardian/seats (cache-only), this probe MAY live-GET llama
+    /v1/health and writes the result into guardian._llama_up so the next
+    cache-only reader (seats, /v1/models) sees current truth. The seats
+    snapshot is embedded under "seats" for one-request fleet status; no
+    queue auth so the public liveness use case keeps working.
     """
     llama_up = await guardian.is_llama_up()
+    guardian._llama_up = bool(llama_up)
+    client = getattr(guardian, "_client", None)
+    if client is not None:
+        occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+    else:
+        occupant, model_id, reachable = "unknown", None, False
     return web.json_response(
         {
             "status": "ok",
@@ -1357,6 +1369,13 @@ async def guardian_health(request: web.Request) -> web.Response:
             "queue": guardian.job_store.summary(),
             "idle_seconds": int(time.time() - guardian.last_request_time),
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "seats": seats_snapshot(
+                occupant=occupant,
+                model_id=model_id,
+                reachable=reachable,
+                llama_up=llama_up,
+                llama_target=guardian.llama_target,
+            ),
         }
     )
 

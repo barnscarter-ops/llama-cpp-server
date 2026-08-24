@@ -149,9 +149,12 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         os.environ["AIWA_BASE"] = str(self.aiwa_server.make_url("")).rstrip("/")
 
         self.llama_hits: list[tuple[str, str]] = []
+        self.llama_health_fail = False
 
         async def llama_health(request: web.Request):
             self.llama_hits.append(("GET", request.path))
+            if self.llama_health_fail:
+                raise web.HTTPServiceUnavailable()
             return web.json_response({"status": "ok"})
 
         async def llama_models(request: web.Request):
@@ -256,6 +259,95 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         }
         payload.update(extra)
         return payload
+
+    async def test_health_includes_seats_clerk_occupant(self) -> None:
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.get("/__guardian/health")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        for key in (
+            "status",
+            "llama_up",
+            "active_requests",
+            "queue",
+            "idle_seconds",
+            "timestamp",
+            "seats",
+        ):
+            self.assertIn(key, body)
+
+        self.assertEqual({"aiwa", "workbench"}, set(body["seats"].keys()))
+        self.assertEqual("clerk", body["seats"]["aiwa"]["occupant"])
+        self.assertEqual(
+            "nemotron-3.5-lightning-30b-a3b", body["seats"]["aiwa"]["model_id"]
+        )
+        self.assertTrue(body["seats"]["aiwa"]["reachable"])
+
+        text = json.dumps(body)
+        self.assertNotIn("qwen3.8-27b", text)
+        self.assertNotIn("consult", text)
+
+        self.assertEqual(body["llama_up"], body["seats"]["workbench"]["llama_up"])
+        self.assertEqual([], self.ensure_calls)
+
+    async def test_health_refreshes_llama_up_cache_then_seats_is_cache_only(self) -> None:
+        self.module.guardian._llama_up = False
+        fleet_router.occupant_cache.invalidate()
+        self.llama_hits.clear()
+        self.recording.calls.clear()
+
+        resp = await self.client.get("/__guardian/health")
+        self.assertEqual(200, resp.status, await resp.text())
+        self.assertTrue(self.module.guardian._llama_up)
+        self.assertTrue(any(p == "/v1/health" for _, p in self.llama_hits))
+
+        self.llama_hits.clear()
+        self.recording.calls.clear()
+        resp = await self.client.get("/__guardian/seats")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertTrue(body["workbench"]["llama_up"])
+        self.assertEqual([], self.llama_hits)
+        self.assertFalse(any(u.endswith("/v1/health") for _, u in self.recording.calls))
+
+    async def test_health_llama_down_still_200_and_flips_cache(self) -> None:
+        self.llama_health_fail = True
+        self.module.guardian._llama_up = True
+        fleet_router.occupant_cache.invalidate()
+        self.llama_hits.clear()
+        self.ensure_calls.clear()
+
+        resp = await self.client.get("/__guardian/health")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("ok", body["status"])
+        self.assertFalse(body["llama_up"])
+        self.assertFalse(self.module.guardian._llama_up)
+        self.assertFalse(body["seats"]["workbench"]["llama_up"])
+        self.assertEqual("llama_offline", body["seats"]["workbench"]["error_code"])
+        self.assertIsNone(body["seats"]["workbench"]["model_id"])
+        self.assertTrue(any(p == "/v1/health" for _, p in self.llama_hits))
+        self.assertEqual([], self.ensure_calls)
+
+    async def test_health_consult_occupant(self) -> None:
+        self.aiwa_occupant_id = "qwen3.8-27b"
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.get("/__guardian/health")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("consult", body["seats"]["aiwa"]["occupant"])
+        self.assertEqual("qwen3.8-27b", body["seats"]["aiwa"]["model_id"])
+
+    async def test_health_served_when_fleet_router_disabled(self) -> None:
+        os.environ["FLEET_ROUTER"] = "false"
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.get("/__guardian/health")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("clerk", body["seats"]["aiwa"]["occupant"])
 
     async def test_clerk_post_while_glm_down_proxies_aiwa(self) -> None:
         self.module.guardian._llama_up = False
