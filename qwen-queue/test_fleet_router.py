@@ -224,6 +224,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
 
         app = web.Application(middlewares=[remote_override])
         app.router.add_get("/__guardian/health", self.module.guardian_health)
+        app.router.add_get("/__guardian/seats", self.module.guardian_seats)
         app.router.add_route("*", "/{tail:.*}", self.module.proxy_handler)
         self.client = TestClient(TestServer(app, host="127.0.0.1"))
         await self.client.start_server()
@@ -395,6 +396,105 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], self._llama_target_calls())
         self.assertEqual([], self.llama_hits)
         self.assertEqual([], self.aiwa_hits)
+
+    async def test_seats_clerk_occupant_no_8081(self) -> None:
+        self.module.guardian._llama_up = False
+        fleet_router.occupant_cache.invalidate()
+        self.recording.calls.clear()
+        self.llama_hits.clear()
+        self.aiwa_hits.clear()
+
+        resp = await self.client.get("/__guardian/seats")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual({"aiwa", "workbench"}, set(body.keys()))
+
+        self.assertEqual("clerk", body["aiwa"]["occupant"])
+        self.assertEqual("nemotron-3.5-lightning-30b-a3b", body["aiwa"]["model_id"])
+        self.assertTrue(body["aiwa"]["reachable"])
+        self.assertEqual(os.environ["AIWA_BASE"], body["aiwa"]["endpoint"])
+
+        text = json.dumps(body)
+        self.assertNotIn("qwen3.8-27b", text)
+        self.assertNotIn("consult", text)
+
+        self.assertFalse(body["workbench"]["llama_up"])
+        self.assertEqual("glm", body["workbench"]["occupant"])
+        self.assertIsNone(body["workbench"]["model_id"])
+        self.assertEqual("llama_offline", body["workbench"]["error_code"])
+
+        self.assertEqual([], self._llama_target_calls())
+        self.assertEqual([], self.llama_hits)
+        models_probes = [u for _, u in self.recording.calls if u.endswith("/v1/models")]
+        self.assertEqual(1, len(models_probes))
+
+    async def test_seats_consult_occupant(self) -> None:
+        self.aiwa_occupant_id = "qwen3.8-27b"
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.get("/__guardian/seats")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("consult", body["aiwa"]["occupant"])
+        self.assertEqual("qwen3.8-27b", body["aiwa"]["model_id"])
+        self.assertTrue(body["aiwa"]["reachable"])
+        self.assertEqual([], self._llama_target_calls())
+        self.assertEqual([], self.llama_hits)
+
+    async def test_seats_llama_up_from_cache_not_live_probe(self) -> None:
+        self.module.guardian._llama_up = True
+        fleet_router.occupant_cache.invalidate()
+        self.recording.calls.clear()
+        self.llama_hits.clear()
+
+        resp = await self.client.get("/__guardian/seats")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertTrue(body["workbench"]["llama_up"])
+        self.assertEqual("glm", body["workbench"]["occupant"])
+        self.assertEqual("local-llm", body["workbench"]["model_id"])
+        self.assertIsNone(body["workbench"]["error_code"])
+        self.assertEqual(
+            f"http://127.0.0.1:{self.llama_server.port}", body["workbench"]["endpoint"]
+        )
+        # llama_up came from the in-process cache: no /v1/health, no 8081 traffic.
+        self.assertEqual([], self._llama_target_calls())
+        self.assertEqual([], self.llama_hits)
+        self.assertFalse(any(u.endswith("/v1/health") for _, u in self.recording.calls))
+
+    async def test_seats_aiwa_unreachable_is_unknown(self) -> None:
+        self.aiwa_models_fail = True
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.get("/__guardian/seats")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("unknown", body["aiwa"]["occupant"])
+        self.assertIsNone(body["aiwa"]["model_id"])
+        self.assertFalse(body["aiwa"]["reachable"])
+        self.assertNotIn("qwen3.8", json.dumps(body))
+        self.assertEqual([], self._llama_target_calls())
+
+    async def test_seats_remote_forbidden(self) -> None:
+        fleet_router.occupant_cache.invalidate()
+        self.aiwa_hits.clear()
+
+        resp = await self.client.get(
+            "/__guardian/seats", headers={"X-Test-Remote": "100.124.41.115"}
+        )
+        self.assertEqual(403, resp.status)
+        body = await resp.json()
+        self.assertEqual("queue_forbidden", body["error"]["code"])
+        self.assertEqual([], self.aiwa_hits)
+
+    async def test_seats_served_when_fleet_router_disabled(self) -> None:
+        os.environ["FLEET_ROUTER"] = "false"
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.get("/__guardian/seats")
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("clerk", body["aiwa"]["occupant"])
 
     async def test_empty_model_stays_glm(self) -> None:
         self.module.guardian._llama_up = False

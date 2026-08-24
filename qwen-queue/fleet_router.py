@@ -168,6 +168,41 @@ def llama_offline_response() -> web.Response:
     return guardian_error(msg, "llama_offline", 503)
 
 
+def seats_snapshot(
+    *,
+    occupant: str,
+    model_id: str | None,
+    reachable: bool,
+    llama_up: bool,
+    llama_target: str,
+) -> dict[str, Any]:
+    """Build the /__guardian/seats document (top-level keys aiwa/workbench).
+
+    Pure — no I/O. Callers feed OccupantCache fields plus the in-process
+    llama_up flag. An AIWA seat only counts when the occupant is a known
+    fleet role; anything else collapses to unknown/unreachable so an
+    unrecognized model id is never advertised as a loaded seat.
+    """
+    aiwa: dict[str, Any] = {
+        "occupant": "unknown",
+        "model_id": None,
+        "reachable": False,
+        "endpoint": aiwa_base(),
+    }
+    if reachable and occupant in {"clerk", "consult"}:
+        aiwa.update(occupant=occupant, model_id=model_id, reachable=True)
+    return {
+        "aiwa": aiwa,
+        "workbench": {
+            "occupant": "glm",
+            "model_id": SERVING_IDS["glm"] if llama_up else None,
+            "llama_up": llama_up,
+            "error_code": None if llama_up else "llama_offline",
+            "endpoint": llama_target,
+        },
+    }
+
+
 def aiwa_wrong_occupant_response(occupant: str, model_id: str | None, wanted: str) -> web.Response:
     shown = model_id or SERVING_IDS.get(occupant, occupant)
     msg = (
