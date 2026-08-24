@@ -50,6 +50,7 @@ from aiohttp import ClientError, ClientTimeout, web
 
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 from fleet_router import (
+    LEGACY_MODEL_ALIASES,
     extract_model_from_body,
     fleet_router_enabled,
     guardian_error,
@@ -140,7 +141,6 @@ QUEUE_DB_PATH = os.environ.get(
 QUEUE_MAX_REQUEST_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
 QUEUE_MAX_RESULT_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_RESULT_BYTES", str(2 * 1024 * 1024)))
 QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
-LEGACY_MODEL_ALIASES = frozenset({"qwen3.6-35b", "qwen3-llama"})
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
@@ -690,9 +690,8 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
          llama — MCC dashboard polls those every ~15s and must not wake GPU.
       3. Active-request accounting — we bump a counter so the idle reaper
          knows not to kill llama mid-generation.
-
-    When FLEET_ROUTER=true, clerk/consult reverse-proxy to AIWA without
-    touching GLM locks/idle/8081; metadata GETs stay GLM-cache-only.
+      4. Fleet seats (clerk/consult) bypass GLM lock/idle; metadata GETs stay
+         GLM-only and gate offline on the in-process `_llama_up` cache.
     """
     # Real work = POST that actually generates tokens. Everything else is
     # metadata (status panel, metrics scrapes, health).
@@ -704,7 +703,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
     prefetched_body: bytes | None = None
 
     if fleet_router_enabled():
-        # Metadata stays GLM-only; use in-process cache — never live-GET 8081 here.
+        # Metadata stays GLM-only; skip live health probe, use `_llama_up` cache.
         if is_glm_metadata_get(request):
             if not guardian._llama_up:
                 return llama_offline_response()

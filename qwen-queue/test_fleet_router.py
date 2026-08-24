@@ -299,6 +299,33 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         # Occupant probe only — no rewrite/proxy to AIWA chat.
         self.assertFalse(any(h[0] == "POST" for h in self.aiwa_hits))
 
+    async def test_consult_post_when_occupant_is_consult(self) -> None:
+        self.module.guardian._llama_up = False
+        self.aiwa_occupant_id = "qwen3.8-27b"
+        before_active = self.module.guardian.active_requests
+        before_idle = self.module.guardian.last_request_time
+        self.aiwa_hits.clear()
+        self.ensure_calls.clear()
+        self.recording.calls.clear()
+        self.lock.acquire_count = 0
+        fleet_router.occupant_cache.invalidate()
+
+        resp = await self.client.post("/v1/chat/completions", json=self._completion("consult"))
+        self.assertEqual(200, resp.status, await resp.text())
+        body = await resp.json()
+        self.assertEqual("aiwa-ok", body["choices"][0]["message"]["content"])
+
+        self.assertEqual([], self.ensure_calls)
+        self.assertEqual(0, self.lock.acquire_count)
+        self.assertEqual(before_active, self.module.guardian.active_requests)
+        self.assertEqual(before_idle, self.module.guardian.last_request_time)
+        self.assertEqual([], self._llama_target_calls())
+        self.assertEqual([], self.llama_hits)
+
+        posts = [h for h in self.aiwa_hits if h[0] == "POST"]
+        self.assertEqual(1, len(posts))
+        self.assertEqual("qwen3.8-27b", posts[0][2]["model"])
+
     async def test_aiwa_timeout_is_503_unreachable(self) -> None:
         self.aiwa_models_delay_s = 3.0
         fleet_router.occupant_cache.invalidate()
