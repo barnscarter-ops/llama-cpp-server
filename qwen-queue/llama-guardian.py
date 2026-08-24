@@ -49,6 +49,7 @@ import aiohttp
 from aiohttp import ClientError, ClientTimeout, web
 
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
+import fleet_router
 from fleet_router import (
     LEGACY_MODEL_ALIASES,
     extract_model_from_body,
@@ -58,6 +59,7 @@ from fleet_router import (
     is_glm_metadata_get,
     llama_offline_response,
     seat_for_model,
+    seats_snapshot,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1359,6 +1361,34 @@ async def guardian_health(request: web.Request) -> web.Response:
     )
 
 
+async def guardian_seats(request: web.Request) -> web.Response:
+    """Fleet seats snapshot (aiwa + workbench) — read-only, never wakes llama.
+
+    Served regardless of FLEET_ROUTER (guardian control route). Workbench
+    state is the in-process `_llama_up` cache only — NEVER is_llama_up(),
+    which live-GETs 8081 /v1/health. The AIWA occupant comes from the shared
+    PR1 OccupantCache (GET AIWA /v1/models, TTL'd), resolved through the
+    fleet_router module so tests can swap the singleton. Auth matches the
+    queue endpoints (loopback or configured bearer).
+    """
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    client = getattr(guardian, "_client", None)
+    if client is not None:
+        occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+    else:
+        occupant, model_id, reachable = "unknown", None, False
+    return web.json_response(
+        seats_snapshot(
+            occupant=occupant,
+            model_id=model_id,
+            reachable=reachable,
+            llama_up=bool(guardian._llama_up),
+            llama_target=guardian.llama_target,
+        )
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  LISTENER WATCHDOG  (keeps port 8080 alive)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1507,6 +1537,7 @@ def make_app() -> web.Application:
     app = web.Application(client_max_size=1024 * 1024 * 100)  # 100MB max request
     # Guardian's own health endpoint. Everything else proxies to llama.
     app.router.add_get("/__guardian/health", guardian_health)
+    app.router.add_get("/__guardian/seats", guardian_seats)
     app.router.add_post("/__guardian/jobs", queue_submit)
     app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
     app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
