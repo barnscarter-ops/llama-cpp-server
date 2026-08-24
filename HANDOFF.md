@@ -1,8 +1,8 @@
-# HANDOFF — Local-model-manager (PR1 on this branch)
+# HANDOFF — Local-model-manager (PR2 on this branch)
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`  
 **Workstream:** Local-model-manager — merge  
-**Status:** PR1 committed on this branch (`9b2b566`). Not merged to `main`. `FLEET_ROUTER` still false. Next: **PR2** `GET /__guardian/seats`.
+**Status:** PR2 committed on this branch (`f7cf398`, on top of PR1 `9b2b566`). Not merged to `main`. `FLEET_ROUTER` still false. Next: **PR3** extend `/__guardian/health` with `seats.aiwa` / `seats.workbench`.
 
 Night 4 cutover is **complete** and is a different workstream. Soak leftovers stay in `NEXT-SESSION-HANDOFF.md` (Night 4). This file is the manager-merge brief.
 
@@ -20,7 +20,7 @@ Session prompt: `NEXT.SESSION.md`
 
 ## Next
 
-**PR2** in `qwen-queue/llama-guardian.py`: `GET /__guardian/seats` from the PR1 occupant cache (`aiwa` / `workbench`). Register **before** catch-all. Do not change OpenAI `GET /v1/models`. Seats handler must not live-GET 8081. Base new work on this branch, not `main`. Cheap implementers: pi-glm5.4 or pi-deepseek, not Grok 4.5.
+**PR3** in `qwen-queue/llama-guardian.py` `guardian_health`: JSON `seats.aiwa` / `seats.workbench`. `llama_up` remains GLM cache. Health may GET 8081 `/v1/health` to refresh cache. No SSH. No GPU probe. OpenAI `/v1/models` stays GLM-shaped. Base new work on this branch, not `main`. Cheap implementers: pi-glm5.4 or pi-deepseek, not Grok 4.5. Do not enable `FLEET_ROUTER=true` until PR1 and PR-MCC are merged onto the boxes that run them.
 
 ## Do not
 
