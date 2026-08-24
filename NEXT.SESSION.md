@@ -1,7 +1,14 @@
 # NEXT.SESSION — Local-model-manager
 
-**Pointer:** `HANDOFF.md` (this repo) and Board `PLAN.md`. Do not fork a second plan.
+**Pointer:** `HANDOFF.md` (this repo) and Board `PLAN.md` + Board `NEXT.SESSION.md` (paste prompt).
 
-**PR1 + PR2 + PR3 + PR-MCC are on `main`.** `FLEET_ROUTER` still false. Live processes not restarted. Next is **not PR4**. Restart guardian + MCC when Carter wants the merged code loaded, then soak. Do not enable the flag until those processes are on this `main`. Do not start PR4/PR6/PR8. Cheap implementers: pi `zai-code/glm-5.2` or deepseek.
+**GitHub `main` has PR1–PR3 + PR-MCC.** `FLEET_ROUTER` still false. Live processes not restarted. Carter proceeded: **execute the Safe order**. Do not merge again.
 
-Related: Night 4 soak leftovers remain in `NEXT-SESSION-HANDOFF.md`. Do not start Mav Room Session J from this workstream.
+## Safe order
+
+1. WORKBOARD, then restart llama-guardian (PM2), flag **false**. Disk already on `main`; process is stale (live seats 503 `llama_offline`).
+2. Pull live MCC `C:\Workspace\Active\MCC` to GitHub `main` without destroying dirty files; restart MCC (`llama_up` from `/__guardian/health`).
+3. Verify live: seats 200, health has `seats.aiwa` / `seats.workbench`, `/v1/models` GLM-shaped.
+4. Then `FLEET_ROUTER=true`, restart guardian, soak. No PR4/PR6/PR8 until soak.
+
+Related: Night 4 leftovers in `NEXT-SESSION-HANDOFF.md`. Do not start Mav Room Session J from this workstream.
