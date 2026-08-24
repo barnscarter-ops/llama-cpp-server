@@ -84,6 +84,16 @@ def seat_for_model(model: str | None, *, default_seat: str = "glm") -> str:
     return "cloud"
 
 
+def fleet_default_seat() -> str:
+    """Empty-model seat. Clerk only when FLEET_ROUTER is on."""
+    if not fleet_router_enabled():
+        return "glm"
+    raw = os.environ.get("FLEET_DEFAULT_SEAT", "clerk").strip().lower()
+    if raw in {"clerk", "glm"}:
+        return raw
+    return "clerk"
+
+
 def parse_primary_model_id(payload: Any) -> str | None:
     """Mirror Board ModelsJson.ParsePrimaryModelId."""
     if not isinstance(payload, dict):

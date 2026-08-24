@@ -56,6 +56,7 @@ import fleet_router
 from fleet_router import (
     LEGACY_MODEL_ALIASES,
     extract_model_from_body,
+    fleet_default_seat,
     fleet_router_enabled,
     guardian_error,
     handle_aiwa_completion,
@@ -870,7 +871,10 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         if is_real_work:
             prefetched_body = await request.read()
             model = extract_model_from_body(prefetched_body)
-            seat = seat_for_model(model)
+            default_seat = fleet_default_seat()
+            if not model or not str(model).strip():
+                log.info("defaulted_model=%s", default_seat)
+            seat = seat_for_model(model, default_seat=default_seat)
             if seat == "cloud":
                 return guardian_error(
                     f"Model '{model}' is not a local fleet seat; use cloud.",

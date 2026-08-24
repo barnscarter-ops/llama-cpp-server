@@ -148,6 +148,7 @@ module.exports = {
       env: {
         HERMES_DECIDER_MODEL: "glm-5.2",
         HERMES_DECIDER_PROVIDER: "custom:zai-coding",
+        FLEET_DEFAULT_SEAT: "clerk",
       },
 
       exec_mode: "fork",
