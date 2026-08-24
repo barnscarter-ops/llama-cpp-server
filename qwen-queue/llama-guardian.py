@@ -49,6 +49,16 @@ import aiohttp
 from aiohttp import ClientError, ClientTimeout, web
 
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
+from fleet_router import (
+    LEGACY_MODEL_ALIASES,
+    extract_model_from_body,
+    fleet_router_enabled,
+    guardian_error,
+    handle_aiwa_completion,
+    is_glm_metadata_get,
+    llama_offline_response,
+    seat_for_model,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONFIG — tune here. All times in seconds unless noted.
@@ -131,7 +141,6 @@ QUEUE_DB_PATH = os.environ.get(
 QUEUE_MAX_REQUEST_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
 QUEUE_MAX_RESULT_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_RESULT_BYTES", str(2 * 1024 * 1024)))
 QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
-LEGACY_MODEL_ALIASES = frozenset({"qwen3.6-35b", "qwen3-llama"})
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
@@ -196,6 +205,10 @@ class Guardian:
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
+
+        # AIWA activity clocks (fleet router). Never used by the GLM idle reaper.
+        self.last_aiwa_activity = 0.0
+        self.last_aiwa_consult_activity = 0.0
 
     @property
     def llama_target(self) -> str:
@@ -677,6 +690,8 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
          llama — MCC dashboard polls those every ~15s and must not wake GPU.
       3. Active-request accounting — we bump a counter so the idle reaper
          knows not to kill llama mid-generation.
+      4. Fleet seats (clerk/consult) bypass GLM lock/idle; metadata GETs stay
+         GLM-only and gate offline on the in-process `_llama_up` cache.
     """
     # Real work = POST that actually generates tokens. Everything else is
     # metadata (status panel, metrics scrapes, health).
@@ -685,9 +700,52 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         and ("/chat/completions" in request.path or "/completions" in request.path)
     )
 
+    prefetched_body: bytes | None = None
+
+    if fleet_router_enabled():
+        # Metadata stays GLM-only; skip live health probe, use `_llama_up` cache.
+        if is_glm_metadata_get(request):
+            if not guardian._llama_up:
+                return llama_offline_response()
+            return await _glm_proxy(
+                request, is_real_work=False, body=None, check_llama_up=False
+            )
+
+        if is_real_work:
+            prefetched_body = await request.read()
+            model = extract_model_from_body(prefetched_body)
+            seat = seat_for_model(model)
+            if seat == "cloud":
+                return guardian_error(
+                    f"Model '{model}' is not a local fleet seat; use cloud.",
+                    "route_cloud",
+                    409,
+                )
+            if seat in {"clerk", "consult"}:
+                return await handle_aiwa_completion(
+                    request,
+                    body=prefetched_body,
+                    seat=seat,
+                    client=guardian._client,
+                    guardian=guardian,
+                )
+            # seat == glm: fall through to existing GLM path with prefetched body.
+
+    return await _glm_proxy(request, is_real_work=is_real_work, body=prefetched_body)
+
+
+async def _glm_proxy(
+    request: web.Request,
+    *,
+    is_real_work: bool,
+    body: bytes | None,
+    check_llama_up: bool = True,
+) -> web.StreamResponse:
+    """Existing GLM-only proxy path (locks, idle bump, length-retry, wake)."""
     # If llama is down: only generation may cold-start it. Probes get a clean
     # offline response so the dashboard shows offline without loading the GGUF.
-    if not await guardian.is_llama_up():
+    # Fleet metadata already consulted guardian._llama_up — skip the live probe.
+    if check_llama_up and not await guardian.is_llama_up():
         if not is_real_work:
             # 503 so MCC getLlamaStatus → state offline (empty 200 list would look "online").
             return web.json_response(
@@ -715,7 +773,8 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
     fwd_headers = {
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }
-    body = await request.read()
+    if body is None:
+        body = await request.read()
     body, model_alias_normalized = normalize_legacy_model_alias(body)
     if model_alias_normalized:
         # The payload length changed, so aiohttp must calculate a fresh value.

@@ -1,8 +1,8 @@
-# HANDOFF — Local-model-manager (PLAN READY)
+# HANDOFF — Local-model-manager (PR1 on this branch)
 
-**Repo:** `D:\Workspace\Infrastructure\llama-cpp-server` `main`  
+**Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`  
 **Workstream:** Local-model-manager — merge  
-**Status:** PLAN READY. Wait for Carter **proceed**, then PR1 here.
+**Status:** PR1 committed on this branch (`9b2b566`). Not merged to `main`. `FLEET_ROUTER` still false. Next: **PR2** `GET /__guardian/seats`.
 
 Night 4 cutover is **complete** and is a different workstream. Soak leftovers stay in `NEXT-SESSION-HANDOFF.md` (Night 4). This file is the manager-merge brief.
 
@@ -20,7 +20,7 @@ Session prompt: `NEXT.SESSION.md`
 
 ## Next
 
-PR1 in `qwen-queue/llama-guardian.py` after proceed. See `PLAN.md` § PR Plan.
+**PR2** in `qwen-queue/llama-guardian.py`: `GET /__guardian/seats` from the PR1 occupant cache (`aiwa` / `workbench`). Register **before** catch-all. Do not change OpenAI `GET /v1/models`. Seats handler must not live-GET 8081. Base new work on this branch, not `main`. Cheap implementers: pi-glm5.4 or pi-deepseek, not Grok 4.5.
 
 ## Do not
 
