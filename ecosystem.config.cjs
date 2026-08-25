@@ -152,6 +152,9 @@ module.exports = {
         // PR6: Board keeps SSH swap ownership until the PR6 cutover flips
         // this to true (never commit "true" — origin default stays "false").
         FLEET_SWAP_OWNER: "false",
+        // PR7: consult idle restore TTL. Merge default 0 (never restore);
+        // enable 1200 only in a watched WORKBOARD session.
+        CONSULT_IDLE_RESTORE_S: "0",
       },
 
       exec_mode: "fork",

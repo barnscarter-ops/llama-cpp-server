@@ -165,6 +165,7 @@ QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
+CONSULT_IDLE_RESTORE_S = int(os.environ.get("CONSULT_IDLE_RESTORE_S", "0"))  # 0 = never restore
 # PR5: Hermes no longer picks seats. When disabled (default) clerk/GLM jobs
 # with a local seat always enqueue; when enabled it may only wait vs reject
 # for capacity and can never fallback_cloud a local seat.
@@ -1211,6 +1212,8 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
         payload["model"] = fleet_router.SERVING_IDS[seat]
         payload["stream"] = False
         guardian.last_aiwa_activity = time.time()
+        if seat == "consult":
+            guardian.last_aiwa_consult_activity = time.time()
         timeout = ClientTimeout(
             total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S
         )
@@ -1659,6 +1662,66 @@ async def idle_reaper(app: web.Application) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  BACKGROUND TASK: CONSULT IDLE RESTORER (AIWA-only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def consult_idle_restorer(app: web.Application) -> None:
+    """Swap AIWA back to clerk after CONSULT_IDLE_RESTORE_S of consult idle.
+
+    TTL 0/unset = task runs but never restores (merge default). Uses the same
+    in-process perform_swap path as POST /__guardian/swap — never a loopback
+    HTTP call. Never touches GLM locks or activity clocks.
+    """
+    ttl = CONSULT_IDLE_RESTORE_S
+    log.info(f"consult idle restorer started — TTL {ttl} s")
+    try:
+        while True:
+            await asyncio.sleep(IDLE_POLL_S)
+            if ttl <= 0:
+                continue
+            client = getattr(guardian, "_client", None)
+            if client is None:
+                continue
+            if aiwa_swap.swap_slot.busy:
+                log.info("consult restore skipped: swap already in flight")
+                continue
+            if guardian.job_store.summary().get("running", 0):
+                continue  # a clerk/consult job holds occupancy
+            occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+            if not reachable or occupant != "consult":
+                continue  # already clerk, unknown, or unreachable
+            if guardian.last_aiwa_consult_activity <= 0.0:
+                guardian.last_aiwa_consult_activity = time.time()  # unknown clock — start counting now
+                continue
+            idle_for = time.time() - guardian.last_aiwa_consult_activity
+            if idle_for < ttl:
+                continue
+            log.info(
+                f"consult idle for {idle_for/60:.1f} min — restoring clerk "
+                f"(threshold {ttl/60:.1f} min)"
+            )
+            resp = await aiwa_swap.perform_swap("clerk", client)
+            status = getattr(resp, "status", None)
+            if status == 200:
+                log.info("consult idle restore: clerk restored")
+            else:
+                body = ""
+                if hasattr(resp, "text"):
+                    try:
+                        body = (await resp.text())[:200]
+                    except Exception:
+                        pass
+                # Expected while FLEET_SWAP_OWNER=false (409 swap_board_owns_ssh):
+                # swallow, retry on the next poll. Never crash the task.
+                log.warning(f"consult idle restore refused ({status}): {body}")
+            guardian.last_aiwa_consult_activity = time.time()  # don't re-fire immediately
+    except asyncio.CancelledError:
+        log.info("consult idle restorer cancelled")
+        raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  HEALTH ENDPOINT (for the guardian itself, not llama)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1855,6 +1918,7 @@ async def on_startup(app: web.Application) -> None:
     app["slot_poller_task"] = asyncio.create_task(slot_activity_poller(app))
     app["enforcer_task"] = asyncio.create_task(enforce_single_llama(app))
     app["reaper_task"] = asyncio.create_task(idle_reaper(app))
+    app["consult_restore_task"] = asyncio.create_task(consult_idle_restorer(app))
     app["queue_worker_task"] = asyncio.create_task(queue_worker(app))
     log.info(
         f"guardian up on {PROXY_HOST}:{PROXY_PORT} → {LLAMA_HOST}:{LLAMA_PORT} "
@@ -1864,10 +1928,10 @@ async def on_startup(app: web.Application) -> None:
 
 async def on_cleanup(app: web.Application) -> None:
     """Clean shutdown — cancel background tasks, close client."""
-    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "queue_worker_task"):
+    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "consult_restore_task", "queue_worker_task"):
         app[t].cancel()
     await asyncio.gather(
-        app["prewarm_task"], app["slot_poller_task"], app["enforcer_task"], app["reaper_task"], app["queue_worker_task"],
+        app["prewarm_task"], app["slot_poller_task"], app["enforcer_task"], app["reaper_task"], app["consult_restore_task"], app["queue_worker_task"],
         return_exceptions=True,
     )
     await guardian._client.close()
