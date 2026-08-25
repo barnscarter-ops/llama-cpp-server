@@ -350,18 +350,17 @@ class HermesDecider:
 
     async def decide(self, context: dict[str, Any], queue: dict[str, int]) -> dict[str, Any]:
         prompt = (
-            "You are the routing decider for a single-slot local coding queue. "
+            "You are the capacity gate for a single-slot local coding queue. "
             "Do not use tools and do not propose code. Return exactly one JSON object with "
-            "route, reason, and priority. route must be one of queue_local, bypass, or "
-            "fallback_cloud. priority must be an integer 0-100. "
-            "Default to queue_local for any concrete coding task \u2014 bugfixes, features, "
-            "refactors, tests, docs, config. Reserve bypass for truly trivial changes "
-            "(a single line, a typo, a rename). Reserve fallback_cloud for work that is "
-            "genuinely architectural, security-sensitive, or needs capabilities the local "
-            "model lacks. The local queue processes jobs in seconds to minutes; do not "
-            "route to cloud merely because one job is running. "
-            "Tasks from automated harnesses (codex, claude, pi, hermes) are pre-scoped by "
-            "their own planning step \u2014 weight their summaries toward queue_local.\n\n"
+            "route, reason, and priority. The GPU seat is already chosen by code from "
+            "request.model; you never pick the model. route must be queue_local or "
+            "bypass only — fallback_cloud is not permitted for local seats. "
+            "priority must be an integer 0-100. "
+            "Return queue_local (wait your turn) for any concrete coding task \u2014 "
+            "bugfixes, features, refactors, tests, docs, config. Return bypass only "
+            "to reject work that is not a bounded local coding task. The local queue "
+            "processes jobs in seconds to minutes; do not reject merely because one "
+            "job is running.\n\n"
             f"Queue snapshot: {json.dumps(queue, separators=(',', ':'))}\n"
             f"Task metadata: {json.dumps(context, separators=(',', ':'))}"
         )
