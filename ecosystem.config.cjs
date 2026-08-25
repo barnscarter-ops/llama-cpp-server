@@ -149,6 +149,9 @@ module.exports = {
         HERMES_DECIDER_MODEL: "glm-5.2",
         HERMES_DECIDER_PROVIDER: "custom:zai-coding",
         FLEET_DEFAULT_SEAT: "clerk",
+        // PR6: Board keeps SSH swap ownership until the PR6 cutover flips
+        // this to true (never commit "true" — origin default stays "false").
+        FLEET_SWAP_OWNER: "false",
       },
 
       exec_mode: "fork",

@@ -52,6 +52,7 @@ import aiohttp
 from aiohttp import ClientError, ClientTimeout, web
 
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
+import aiwa_swap
 import fleet_router
 from fleet_router import (
     LEGACY_MODEL_ALIASES,
@@ -912,6 +913,23 @@ async def queue_cancel(request: web.Request) -> web.Response:
             status=409,
         )
     return web.json_response(guardian.job_store.cancel(job.job_id).as_api())
+
+
+async def guardian_swap(request: web.Request) -> web.Response:
+    """PR6: manager-owned AIWA swap. Same loopback auth as the job queue."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response(
+            {"error": {"message": "Swap body must be valid JSON.", "code": "invalid_swap_target"}},
+            status=400,
+        )
+    to = payload.get("to") if isinstance(payload, dict) else None
+    if not isinstance(to, str):
+        to = ""
+    return await aiwa_swap.perform_swap(to.strip().lower(), getattr(guardian, "_client", None))
 
 
 async def proxy_handler(request: web.Request) -> web.StreamResponse:
@@ -1866,6 +1884,7 @@ def make_app() -> web.Application:
     app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
     app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
     app.router.add_post("/__guardian/sleep", guardian_sleep)
+    app.router.add_post("/__guardian/swap", guardian_swap)
     # Catch-all proxy: any method, any path → llama.
     app.router.add_route("*", "/{tail:.*}", proxy_handler)
     app.on_startup.append(on_startup)
