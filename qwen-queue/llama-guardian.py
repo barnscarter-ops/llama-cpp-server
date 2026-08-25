@@ -7,13 +7,16 @@ This proxy owns port 8080 (where MCC points its local-LLM requests).
 It forwards everything to llama-server, which listens on the
 internal port 8081 (loopback only, not exposed).
 
-Four jobs:
+Five jobs:
   1. STREAMING PROXY — port 8080 → 8081, preserving SSE token streams.
   2. PRE-WARM       — when MCC (3000) comes online, start llama so it's
                       hot before the first real request.
   3. IDLE REAPER    — stop llama after IDLE_TIMEOUT_MIN of no activity.
   4. LOCAL QUEUE    — ask Hermes whether a bounded coding task should enter
                       a durable, single-worker local-model queue.
+  5. RAM GATE       — refuse a cold start while available RAM is below
+                      GUARDIAN_MIN_FREE_RAM_GB (default 8) so a model load
+                      can never push a leaking box into swap.
 
 WHY A PROXY (not a process watcher)
 ===================================
@@ -133,6 +136,20 @@ HEALTH_POLL_S = 1                 # how often to poll while waiting
 GPU_PROBE_MIN_TPS = float(os.environ.get("GUARDIAN_GPU_PROBE_MIN_TPS", "20"))
 GPU_PROBE_TIMEOUT_S = 30          # CPU worst case: ~128 gen tokens at 10 t/s + prompt (~13s)
 
+# RAM safety net for cold starts. 2026-08-24: the 870 sat at 30-31/31 GB with
+# NO llama process running — a kernel NtFC (ntfs.sys FCB) nonpaged-pool leak
+# from Claude Desktop/Cowork on Win11 26200 (anthropics/claude-code #55361).
+# Loading GLM on top (~10 GB mapped GGUF + WDDM backing commit) is what tipped
+# the box into swap and RAM alarms, and a load under RAM pressure has taken
+# 13 min before (see HEALTH_TIMEOUT_S). The load *is* the damage, so refuse it
+# up front: when available physical RAM is below this many GiB the guardian
+# does not start llama, logs why, and answers a friendly 503 (llama_ram_low)
+# instead of the usual "warming" one. Only a reboot frees the leaked pool.
+# A refused pre-warm is not retried — the next real request re-checks.
+# Set to 0 to disable the check.
+MIN_FREE_RAM_GB = float(os.environ.get("GUARDIAN_MIN_FREE_RAM_GB", "8"))
+GIB = 1024 ** 3
+
 PM2_APP = "local-llm"              # PM2 process name for llama-server (R9700 Vulkan build)
 
 # Hermes-decided durable job queue.  It is intentionally loopback-only by
@@ -211,6 +228,14 @@ class Guardian:
         # AIWA activity clocks (fleet router). Never used by the GLM idle reaper.
         self.last_aiwa_activity = 0.0
         self.last_aiwa_consult_activity = 0.0
+
+        # RAM safety net bookkeeping (see MIN_FREE_RAM_GB). Surfaced on
+        # /__guardian/health so an operator can see *why* the model stays down.
+        self.ram_refusals = 0
+        self.last_ram_refusal: dict | None = None
+        # Why the most recent ensure_llama_started() returned False:
+        # "ram_low" | "gpu_placement" | "health_timeout" | None.
+        self.last_start_failure: str | None = None
 
     @property
     def llama_target(self) -> str:
@@ -448,6 +473,104 @@ async def _gpu_placement_ok(reason: str) -> bool:
     return False
 
 
+def _available_ram_bytes() -> int | None:
+    """Physical RAM the OS could hand out right now, or None if unknown.
+
+    Windows: GlobalMemoryStatusEx.ullAvailPhys (Task Manager's "Available").
+    It already excludes leaked nonpaged pool, which is exactly the case this
+    guards against. Elsewhere: /proc/meminfo MemAvailable.
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(status)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullAvailPhys)
+        return None
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def ram_ok_for_cold_start(reason: str) -> tuple[bool, int | None]:
+    """Gate a cold start on available RAM. Returns (allowed, available_bytes).
+
+    A refusal is logged at WARNING with the operator hint, counted, and kept
+    in guardian.last_ram_refusal for /__guardian/health. An unknown reading
+    never blocks — this is a safety net, not a dependency.
+    """
+    if MIN_FREE_RAM_GB <= 0:
+        return True, None
+    available = _available_ram_bytes()
+    if available is None:
+        log.warning(f"RAM check unavailable ({reason}) — allowing cold start")
+        return True, None
+    if available >= MIN_FREE_RAM_GB * GIB:
+        return True, available
+    guardian.ram_refusals += 1
+    guardian.last_ram_refusal = {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "reason": reason,
+        "available_gb": round(available / GIB, 2),
+        "min_free_gb": MIN_FREE_RAM_GB,
+    }
+    log.warning(
+        f"REFUSING cold start ({reason}): {available / GIB:.1f} GB RAM available "
+        f"< {MIN_FREE_RAM_GB:g} GB minimum. Loading the model now would push this box "
+        f"into swap. On the 870 this usually means the NtFC nonpaged-pool leak "
+        f"(Claude Desktop/Cowork) is back — check the Pool Nonpaged Bytes counter; "
+        f"only a reboot frees it. Override: GUARDIAN_MIN_FREE_RAM_GB=0."
+    )
+    return False, available
+
+
+def ram_snapshot() -> dict:
+    """RAM gate status for /__guardian/health."""
+    available = _available_ram_bytes()
+    allowed = (
+        MIN_FREE_RAM_GB <= 0 or available is None or available >= MIN_FREE_RAM_GB * GIB
+    )
+    return {
+        "available_gb": round(available / GIB, 2) if available is not None else None,
+        "min_free_gb": MIN_FREE_RAM_GB,
+        "cold_start_allowed": allowed,
+        "refusals": guardian.ram_refusals,
+        "last_refusal": guardian.last_ram_refusal,
+    }
+
+
+def start_failure_message() -> str:
+    """Human-readable reason for the last failed ensure_llama_started()."""
+    if guardian.last_start_failure == "ram_low":
+        refusal = guardian.last_ram_refusal or {}
+        return (
+            f"Local model was not started: {refusal.get('available_gb')} GB RAM free "
+            f"< {MIN_FREE_RAM_GB:g} GB minimum (GUARDIAN_MIN_FREE_RAM_GB)."
+        )
+    if guardian.last_start_failure == "gpu_placement":
+        return "Local model loaded on CPU fallback and was stopped (GPU placement probe failed)."
+    return "Local model did not become healthy before the queue timeout."
+
+
 async def ensure_llama_started(reason: str) -> bool:
     """Start llama if it's down. Dedups concurrent starts via a lock.
 
@@ -473,6 +596,10 @@ async def ensure_llama_started(reason: str) -> bool:
                 f"llama is already loading ({reason}; pm2 pid={pm2_pid}) — waiting"
             )
         else:
+            allowed, _ = ram_ok_for_cold_start(reason)
+            if not allowed:
+                guardian.last_start_failure = "ram_low"
+                return False
             await _gpu_cooldown(reason)
             log.info(f"starting llama ({reason})...")
             await pm2("start")
@@ -483,11 +610,13 @@ async def ensure_llama_started(reason: str) -> bool:
                 # Serving 10 t/s off a CPU fallback is worse than being down:
                 # every queue job would burn its timeout. Fail loudly instead.
                 await pm2("stop")
+                guardian.last_start_failure = "gpu_placement"
                 return False
             # A guardian may have been alive while llama was idle for hours.
             # Treat a completed cold start (including a pre-warm) as activity
             # so the idle reaper grants the fresh server its full window.
             guardian.last_request_time = time.time()
+            guardian.last_start_failure = None
             log.info(f"llama is up ({reason})")
             return True
         # Stop what we started. Without this, a load that outlives the health
@@ -500,6 +629,7 @@ async def ensure_llama_started(reason: str) -> bool:
             f"stopping the in-flight load so it cannot orphan"
         )
         await pm2("stop")  # pm2() stamps last_stop_time, so cooldown applies
+        guardian.last_start_failure = "health_timeout"
         return False
 
 
@@ -544,6 +674,30 @@ def warming_response(extra=None) -> web.Response:
         },
         status=503,
         headers={"Retry-After": "30"},
+    )
+
+
+def ram_low_response(available_bytes: int | None) -> web.Response:
+    """Friendly 503 when the RAM safety net refused to start the model."""
+    have = f"{available_bytes / GIB:.1f} GB" if available_bytes is not None else "too little"
+    msg = (
+        f"The local model was NOT started: only {have} of RAM is free and it needs "
+        f"{MIN_FREE_RAM_GB:g} GB to load safely. Close memory-heavy apps — or reboot if "
+        f"the kernel nonpaged pool is leaking — then send your request again."
+    )
+    return web.json_response(
+        {
+            "error": {
+                "message": msg,
+                "type": "llama_ram_low",
+                "code": "llama_ram_low",
+                "available_gb": round(available_bytes / GIB, 2) if available_bytes is not None else None,
+                "min_free_gb": MIN_FREE_RAM_GB,
+            },
+            "message": msg,
+        },
+        status=503,
+        headers={"Retry-After": "300"},
     )
 
 
@@ -765,6 +919,12 @@ async def _glm_proxy(
         # Holding the HTTP request for 30–60s of GGUF load usually just produces
         # client timeouts / ugly status codes. Agents/orchestrator/MCC retry once
         # (or the human resends) — by then the local model is ready.
+        allowed, available = ram_ok_for_cold_start("request")
+        if not allowed:
+            # Don't promise "warming" — nothing is loading. The same gate inside
+            # ensure_llama_started() covers the pre-warm and queue paths.
+            guardian.last_start_failure = "ram_low"
+            return ram_low_response(available)
         log.info("cold generation request — starting local model (async start + friendly 503)")
         asyncio.create_task(ensure_llama_started(reason="request"))
         return warming_response()
@@ -930,7 +1090,7 @@ async def run_queued_job(job: QueueJob) -> None:
     try:
         async with guardian.generation_lock:
             if not await ensure_llama_started(reason=f"queue:{job.job_id}"):
-                guardian.job_store.fail(job.job_id, "Local model did not become healthy before the queue timeout.")
+                guardian.job_store.fail(job.job_id, start_failure_message())
                 return
 
             guardian.active_requests += 1
@@ -1368,6 +1528,7 @@ async def guardian_health(request: web.Request) -> web.Response:
             "active_requests": guardian.active_requests,
             "queue": guardian.job_store.summary(),
             "idle_seconds": int(time.time() - guardian.last_request_time),
+            "ram": ram_snapshot(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "seats": seats_snapshot(
                 occupant=occupant,
