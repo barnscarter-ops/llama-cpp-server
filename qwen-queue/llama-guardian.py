@@ -164,6 +164,15 @@ QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
+# PR5: Hermes no longer picks seats. When disabled (default) clerk/GLM jobs
+# with a local seat always enqueue; when enabled it may only wait vs reject
+# for capacity and can never fallback_cloud a local seat.
+def hermes_decider_enabled() -> bool:
+    return os.environ.get("HERMES_DECIDER_ENABLED", "false").strip().lower() in {
+        "true",
+        "1",
+        "yes",
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  LOGGING
@@ -768,15 +777,25 @@ async def _validate_queue_submission(request: web.Request) -> tuple[str, str, di
     if len(json.dumps(completion, separators=(",", ":")).encode("utf-8")) > QUEUE_MAX_REQUEST_BYTES:
         raise ValueError(f"Queued completion exceeds {QUEUE_MAX_REQUEST_BYTES} bytes.")
 
-    # Do not let a caller silently route a queue job to an arbitrary model.
+    # Fleet on: the model field is the caller's seat choice — never rewrite it
+    # to a different GPU. Only fill in an omitted model from the fleet default
+    # (serving id, same table as completions). Fleet off: keep the GLM-only force.
     completion = json.loads(json.dumps(completion))
-    completion["model"] = QUEUE_MODEL_ALIAS
+    if fleet_router_enabled():
+        model = completion.get("model")
+        if not model or not str(model).strip():
+            completion["model"] = fleet_router.SERVING_IDS[fleet_default_seat()]
+    else:
+        completion["model"] = QUEUE_MODEL_ALIAS
     completion["stream"] = False
     return idempotency_key.strip(), source.strip(), decision_context, completion
 
 
 async def queue_submit(request: web.Request) -> web.Response:
-    """Ask Hermes to route a candidate task, then enqueue local-model work if approved."""
+    """Enqueue a job on the seat its request.model names (fleet on).
+
+    Hermes (HERMES_DECIDER_ENABLED, default off) may only wait-vs-reject for
+    capacity and never fallback_cloud a local seat."""
     if not _queue_authorized(request):
         return _queue_forbidden()
     try:
@@ -788,17 +807,77 @@ async def queue_submit(request: web.Request) -> web.Response:
     if existing:
         return web.json_response({"idempotent": True, **existing.as_api()})
 
-    try:
-        decision = await guardian.hermes_decider.decide(context, guardian.job_store.summary())
-    except HermesDecisionError as exc:
-        log.warning(f"Hermes declined to decide queue routing: {exc}")
-        return web.json_response(
-            {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}}, status=503
-        )
+    if fleet_router_enabled():
+        # The code table owns the seat. Hermes (if enabled at all) only gets
+        # wait-vs-reject for capacity.
+        seat = seat_for_model(completion.get("model"))
+        if seat == "cloud":
+            return guardian_error(
+                f"Model '{completion.get('model')}' is not a local fleet seat; use cloud.",
+                "route_cloud",
+                409,
+            )
+        if seat == "consult":
+            client = getattr(guardian, "_client", None)
+            if client is None:
+                return guardian_error("AIWA occupant unknown.", "aiwa_unreachable", 503)
+            occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+            if not reachable or occupant in {None, "", "unknown"}:
+                return guardian_error(
+                    "AIWA is unreachable or occupant is unknown.",
+                    "aiwa_unreachable",
+                    503,
+                )
+            if occupant != "consult":
+                return fleet_router.aiwa_wrong_occupant_response(occupant, model_id, "consult")
 
-    guardian.job_store.log_decision(source, decision, context)
-    if decision["route"] != CANONICAL_LOCAL_ROUTE:
-        return web.json_response({"status": "not_queued", "decision": decision})
+        if not hermes_decider_enabled():
+            decision = {
+                "route": CANONICAL_LOCAL_ROUTE,
+                "reason": "fleet seat from model table; hermes decider disabled",
+                "priority": 50,
+            }
+        else:
+            try:
+                decision = await guardian.hermes_decider.decide(
+                    context, guardian.job_store.summary()
+                )
+            except HermesDecisionError as exc:
+                log.warning(f"Hermes declined to decide queue routing: {exc}")
+                return web.json_response(
+                    {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}},
+                    status=503,
+                )
+            except Exception as exc:  # fail closed on any decider failure
+                log.warning(f"Hermes decider crashed: {exc}")
+                return web.json_response(
+                    {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}},
+                    status=503,
+                )
+            guardian.job_store.log_decision(source, decision, context)
+            if decision["route"] == "fallback_cloud":
+                # Policy: a local seat's mechanical work never goes to cloud.
+                msg = "Hermes may not fallback_cloud a clerk or GLM seat."
+                log.warning(msg)
+                return web.json_response(
+                    {"error": {"message": msg, "code": "hermes_decision_unavailable"}},
+                    status=503,
+                )
+            if decision["route"] != CANONICAL_LOCAL_ROUTE:
+                return web.json_response({"status": "not_queued", "decision": decision})
+    else:
+        try:
+            decision = await guardian.hermes_decider.decide(
+                context, guardian.job_store.summary()
+            )
+        except HermesDecisionError as exc:
+            log.warning(f"Hermes declined to decide queue routing: {exc}")
+            return web.json_response(
+                {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}}, status=503
+            )
+        guardian.job_store.log_decision(source, decision, context)
+        if decision["route"] != CANONICAL_LOCAL_ROUTE:
+            return web.json_response({"status": "not_queued", "decision": decision})
 
     job, created = guardian.job_store.submit(
         idempotency_key=idempotency_key,
@@ -1088,8 +1167,69 @@ async def _glm_proxy(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
+    """Run a clerk/consult job by proxying to AIWA (stream=false).
+
+    Never touches ensure_llama_started, generation_lock or active_requests —
+    those protect the single GLM slot only.
+    """
+    log.info(f"queue running {job.job_id} from {job.source} on AIWA seat {seat}")
+    try:
+        client = getattr(guardian, "_client", None)
+        if client is None:
+            guardian.job_store.fail(job.job_id, "AIWA client unavailable; retry after guardian restart.")
+            return
+        occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+        if not reachable or occupant in {None, "", "unknown"}:
+            guardian.job_store.fail(job.job_id, "AIWA unreachable or occupant unknown; retry later.")
+            return
+        if occupant != seat:
+            guardian.job_store.fail(
+                job.job_id,
+                f"AIWA occupant is {occupant} ({model_id}); {seat} job requires an operator swap.",
+            )
+            return
+        payload = dict(job.request)
+        payload["model"] = fleet_router.SERVING_IDS[seat]
+        payload["stream"] = False
+        guardian.last_aiwa_activity = time.time()
+        timeout = ClientTimeout(
+            total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S
+        )
+        async with client.post(
+            f"{fleet_router.aiwa_base()}/v1/chat/completions", json=payload, timeout=timeout
+        ) as upstream_resp:
+            body = await upstream_resp.read()
+            if len(body) > QUEUE_MAX_RESULT_BYTES:
+                guardian.job_store.fail(
+                    job.job_id,
+                    f"Local-model result exceeded durable queue limit of {QUEUE_MAX_RESULT_BYTES} bytes.",
+                )
+                return
+            text = body.decode(errors="replace")
+            if upstream_resp.status >= 400:
+                guardian.job_store.fail(job.job_id, f"AIWA returned HTTP {upstream_resp.status}: {text[:1200]}")
+                return
+            try:
+                result = json.loads(text)
+            except json.JSONDecodeError:
+                result = {"text": text}
+            guardian.job_store.finish(
+                job.job_id, {"upstream_status": upstream_resp.status, "response": result}
+            )
+            log.info(f"queue succeeded {job.job_id} (aiwa {seat})")
+    except Exception as exc:
+        guardian.job_store.fail(job.job_id, f"AIWA queue job failed: {exc}")
+        log.exception(f"queue worker crashed while running {job.job_id} on AIWA")
+
+
 async def run_queued_job(job: QueueJob) -> None:
     """Run one durable job while holding the same one-slot generation lock."""
+    if fleet_router_enabled() and seat_for_model(job.request.get("model")) in {"clerk", "consult"}:
+        await _run_aiwa_queued_job(
+            job, seat_for_model(job.request.get("model"))
+        )
+        return
     log.info(f"queue running {job.job_id} from {job.source}")
     try:
         async with guardian.generation_lock:
