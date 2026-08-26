@@ -125,6 +125,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
             for k in (
                 "FLEET_ROUTER",
                 "FLEET_DEFAULT_SEAT",
+                "FLEET_SWAP_OWNER",
                 "AIWA_BASE",
                 "AIWA_PROXY_LOOPBACK_ONLY",
                 "GUARDIAN_QUEUE_DB",
@@ -523,7 +524,14 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         resp = await self.client.get("/__guardian/seats")
         self.assertEqual(200, resp.status, await resp.text())
         body = await resp.json()
-        self.assertEqual({"aiwa", "workbench"}, set(body.keys()))
+        self.assertEqual({"aiwa", "workbench", "swap_owner"}, set(body.keys()))
+        self.assertEqual("glm", body["workbench"]["occupant"])
+        self.assertIsNone(body["workbench"]["model_id"])
+        self.assertTrue(
+            isinstance(body["swap_owner"], bool),
+            "seats swap_owner must be a top-level boolean",
+        )
+        self.assertNotIn("swap_owner", body["aiwa"])
 
         self.assertEqual("clerk", body["aiwa"]["occupant"])
         self.assertEqual("nemotron-3.5-lightning-30b-a3b", body["aiwa"]["model_id"])
@@ -535,14 +543,26 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("consult", text)
 
         self.assertFalse(body["workbench"]["llama_up"])
-        self.assertEqual("glm", body["workbench"]["occupant"])
-        self.assertIsNone(body["workbench"]["model_id"])
         self.assertEqual("llama_offline", body["workbench"]["error_code"])
 
         self.assertEqual([], self._llama_target_calls())
         self.assertEqual([], self.llama_hits)
         models_probes = [u for _, u in self.recording.calls if u.endswith("/v1/models")]
         self.assertEqual(1, len(models_probes))
+
+    async def test_swap_owner_flag_flips_boolean(self) -> None:
+        fleet_router.occupant_cache.invalidate()
+        for flag, expected in (("true", True), ("false", False)):
+            os.environ["FLEET_SWAP_OWNER"] = flag
+            resp = await self.client.get("/__guardian/health")
+            self.assertEqual(200, resp.status, await resp.text())
+            body = await resp.json()
+            self.assertIs(expected, body["swap_owner"])
+            resp = await self.client.get("/__guardian/seats")
+            self.assertEqual(200, resp.status, await resp.text())
+            body = await resp.json()
+            self.assertIs(expected, body["swap_owner"])
+            self.assertNotIn("swap_owner", body["aiwa"])
 
     async def test_seats_consult_occupant(self) -> None:
         self.aiwa_occupant_id = "qwen3.8-27b"

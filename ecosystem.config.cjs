@@ -149,11 +149,11 @@ module.exports = {
         HERMES_DECIDER_MODEL: "glm-5.2",
         HERMES_DECIDER_PROVIDER: "custom:zai-coding",
         FLEET_DEFAULT_SEAT: "clerk",
-        // PR6: Board keeps SSH swap ownership until the PR6 cutover flips
-        // this to true (never commit "true" — origin default stays "false").
-        FLEET_SWAP_OWNER: "false",
-        // PR7: consult idle restore TTL. Merge default 0 (never restore);
-        // enable 1200 only in a watched WORKBOARD session.
+        // Origin defaults are true so a delete+start keeps router+swap
+        // ownership. Restore TTL stays 0 except watched sessions.
+        FLEET_ROUTER: "true",
+        FLEET_SWAP_OWNER: "true",
+        // consult idle restore TTL: 0 (never restore) except watched sessions.
         CONSULT_IDLE_RESTORE_S: "0",
       },
 
