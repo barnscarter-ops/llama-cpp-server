@@ -232,14 +232,14 @@ class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
         body = await response.json()
         self.assertEqual("hermes_decision_unavailable", body["error"]["code"])
 
-    async def test_fleet_on_consult_wrong_occupant_409(self) -> None:
+    async def test_fleet_on_consult_while_clerk_is_queued_as_clerk(self) -> None:
         os.environ["FLEET_ROUTER"] = "true"
         fleet_router.occupant_cache = StubOccupantCache(occupant="clerk")
-        response = await self.client.post("/__guardian/jobs", json=self._payload(model="consult", key="consult-409"))
-        self.assertEqual(409, response.status)
-        body = await response.json()
-        self.assertEqual("aiwa_wrong_occupant", body["error"]["code"])
-        self.assertIsNone(self.module.guardian.job_store.get_by_idempotency_key("consult-409"))
+        response = await self.client.post("/__guardian/jobs", json=self._payload(model="consult", key="consult-downgrade"))
+        self.assertEqual(202, response.status)
+        job = self.module.guardian.job_store.get_by_idempotency_key("consult-downgrade")
+        self.assertIsNotNone(job)
+        self.assertEqual("nemotron-3.5-lightning-30b-a3b", job.request.get("model"))
 
     async def test_fleet_on_consult_unreachable_503(self) -> None:
         os.environ["FLEET_ROUTER"] = "true"

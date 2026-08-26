@@ -830,7 +830,12 @@ async def queue_submit(request: web.Request) -> web.Response:
                     "aiwa_unreachable",
                     503,
                 )
-            if occupant != "consult":
+            if occupant == "clerk":
+                log.info("downgraded_consult=clerk on job submit; consult swap is gated")
+                seat = "clerk"
+                completion = dict(completion)
+                completion["model"] = fleet_router.SERVING_IDS["clerk"]
+            elif occupant != "consult":
                 return fleet_router.aiwa_wrong_occupant_response(occupant, model_id, "consult")
 
         if not hermes_decider_enabled():
@@ -930,7 +935,14 @@ async def guardian_swap(request: web.Request) -> web.Response:
     to = payload.get("to") if isinstance(payload, dict) else None
     if not isinstance(to, str):
         to = ""
-    return await aiwa_swap.perform_swap(to.strip().lower(), getattr(guardian, "_client", None))
+    gate = payload.get("gate") if isinstance(payload, dict) else None
+    if not isinstance(gate, str):
+        gate = ""
+    return await aiwa_swap.perform_swap(
+        to.strip().lower(),
+        getattr(guardian, "_client", None),
+        gate=gate.strip().lower(),
+    )
 
 
 async def proxy_handler(request: web.Request) -> web.StreamResponse:
@@ -1203,11 +1215,15 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
             guardian.job_store.fail(job.job_id, "AIWA unreachable or occupant unknown; retry later.")
             return
         if occupant != seat:
-            guardian.job_store.fail(
-                job.job_id,
-                f"AIWA occupant is {occupant} ({model_id}); {seat} job requires an operator swap.",
-            )
-            return
+            if seat == "consult" and occupant == "clerk":
+                log.info("downgraded_consult=clerk on job run; consult swap is gated")
+                seat = "clerk"
+            else:
+                guardian.job_store.fail(
+                    job.job_id,
+                    f"AIWA occupant is {occupant} ({model_id}); {seat} job requires an operator swap.",
+                )
+                return
         payload = dict(job.request)
         payload["model"] = fleet_router.SERVING_IDS[seat]
         payload["stream"] = False
