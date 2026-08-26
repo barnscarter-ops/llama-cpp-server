@@ -109,6 +109,13 @@ module.exports = {
         "--cont-batching",
         "--flash-attn",  "on",
         "--reasoning",   "off",
+        // Server-side thinking kill for Qwen3.6 (shortlist gotcha): template
+        // defaults thinking ON and there is no /no_think. This makes
+        // enable_thinking:false the DEFAULT for every client request — clients
+        // that want reasoning can override per-request with
+        // chat_template_kwargs {"enable_thinking": true}. Without this, agents
+        // hit the reasoning-explosion failure at context depth.
+        "--chat-template-kwargs", "{\"enable_thinking\":false}",
         "--repeat-penalty", "1.0",
         "--min-p",      "0.01",
       ],
