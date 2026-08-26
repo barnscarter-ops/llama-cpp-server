@@ -1750,6 +1750,7 @@ async def guardian_health(request: web.Request) -> web.Response:
         {
             "status": "ok",
             "llama_up": llama_up,
+            "swap_owner": aiwa_swap.swap_owner_enabled(),
             "active_requests": guardian.active_requests,
             "queue": guardian.job_store.summary(),
             "idle_seconds": int(time.time() - guardian.last_request_time),
@@ -1783,15 +1784,15 @@ async def guardian_seats(request: web.Request) -> web.Response:
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
     else:
         occupant, model_id, reachable = "unknown", None, False
-    return web.json_response(
-        seats_snapshot(
-            occupant=occupant,
-            model_id=model_id,
-            reachable=reachable,
-            llama_up=bool(guardian._llama_up),
-            llama_target=guardian.llama_target,
-        )
+    payload = seats_snapshot(
+        occupant=occupant,
+        model_id=model_id,
+        reachable=reachable,
+        llama_up=bool(guardian._llama_up),
+        llama_target=guardian.llama_target,
     )
+    payload["swap_owner"] = aiwa_swap.swap_owner_enabled()
+    return web.json_response(payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
