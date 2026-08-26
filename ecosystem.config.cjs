@@ -90,13 +90,13 @@ module.exports = {
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        // ctx 202752 → 49152 (2026-08-20): 202k verified on iGPU then spilled
-        // when the desktop sat on the 4060 Ti. 131072 trial 2026-08-26 (iGPU
-        // display, 64 GB RAM): nvidia-smi 16071/16380 MiB (37 MiB free),
-        // guardian ping tg ~25 t/s (spill; in-VRAM is ~90). Slabbed KV is
-        // flat 65k→202k so 131k≈202k on VRAM. DWM/explorer were GpuPreference=2.
-        // Stay at 49152 until 4060 is llama-only (scripts/pin-4060-for-llama.ps1)
-        // then retry 131072 in VRAM. Do not jump to 202752 until 131k tg ~90.
+        // ctx stays 49152. 131072 RETRY FAILED 2026-08-26 17:45 CDT even with
+        // the 4060 llama-only (sign-out done, nvidia-smi 0 MiB / no processes,
+        // DWM on iGPU): 16,086 MB dedicated + 3,722 MB SHARED (49k baseline is
+        // 0.25 GB shared) → guardian-path tg 35.7 t/s (in-VRAM ~90, full spill
+        // ~25). "MLA KV flat 65k→202k" from the 08-19 bench does NOT hold on
+        // this box (driver 595.97). 131k/202k are dead on 16 GB unless the
+        // model or KV quant changes. Do not retry without Carter.
         "--ctx-size",   "49152",
         "--cache-type-k", "f16",
         "--cache-type-v", "f16",
