@@ -84,20 +84,21 @@ module.exports = {
         //   - Sampler: repeat-penalty 1.0 + min-p 0.01 MANDATORY (loops without).
         // ROLLBACK: point --model back to Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf,
         // restore q8_0 KV + ctx 131072, drop the sampler flags (kept on disk).
+        // ══ QWEN3.6-35B SEAT (2026-08-26, TRIAL PASSED): replaces GLM as the
+        // Workbench seat. GLM is capped at 49152 on 16 GB (131k spills 3.7 GB
+        // shared, tg 35.7). Qwen3.6 verified live 2026-08-26 @ 131k: 15,360 MB
+        // dedicated + 352 MB shared (no spill), tg 82 t/s, tool calls clean,
+        // enable_thinking:false fully suppresses reasoning (empty <think>
+        // prefill gate confirmed in template AND live). Known quirk: golf-
+        // style prompts ("write a one-liner") trigger perfectionism loops.
+        // ROLLBACK: GLM path + ctx 49152 (commit 47437bf).
         "C:\\Workspace\\Infrastructure\\llama-cpp-server-cuda-b10488\\llama-server.exe",
-        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\GLM-4.7-Flash-UD-IQ3_XXS.gguf",
+        "--model",      "C:\\Workspace\\Infrastructure\\llama-cpp-server\\models\\Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
         "--host",       "127.0.0.1",
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        // ctx stays 49152. 131072 RETRY FAILED 2026-08-26 17:45 CDT even with
-        // the 4060 llama-only (sign-out done, nvidia-smi 0 MiB / no processes,
-        // DWM on iGPU): 16,086 MB dedicated + 3,722 MB SHARED (49k baseline is
-        // 0.25 GB shared) → guardian-path tg 35.7 t/s (in-VRAM ~90, full spill
-        // ~25). "MLA KV flat 65k→202k" from the 08-19 bench does NOT hold on
-        // this box (driver 595.97). 131k/202k are dead on 16 GB unless the
-        // model or KV quant changes. Do not retry without Carter.
-        "--ctx-size",   "49152",
+        "--ctx-size",   "131072",
         "--cache-type-k", "f16",
         "--cache-type-v", "f16",
 
