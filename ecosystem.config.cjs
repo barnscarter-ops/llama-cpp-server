@@ -90,13 +90,14 @@ module.exports = {
         "--port",       "8081",
         "--alias",      "local-llm",
         "--gpu-layers", "99",
-        // ctx 202752 → 49152 (2026-08-20): the 202k slab was verified with the
-        // display on the iGPU (627 MiB overhead). The desktop now composites on
-        // the 4060 Ti (~509 MiB), the slab no longer fits, and the driver
-        // sysmem-spills — tg cratered 90 → ~24-35 t/s (guardian probe-fail
-        // loop). KV slab is flat 65k→202k, so reclaiming VRAM requires going
-        // below 65k. ROLLBACK: restore 202752 once display is back on the iGPU.
-        "--ctx-size",   "49152",
+        // ctx 49152 → 131072 (2026-08-26): display is back on the iGPU; 64 GB
+        // RAM removes the old 32 GB committed-RAM ceiling. 131072 is the
+        // halfway step between 49k and native 202752. MLA KV is slabbed
+        // (VRAM flat 65k→202k), so this tests FIT (dedicated vs shared,
+        // tg ~90 vs spill ~24-35), not a VRAM-vs-ctx curve. Next: 202752
+        // if dedicated VRAM has headroom and tg stays ~90. Drop toward
+        // 65k only if this load sysmem-spills.
+        "--ctx-size",   "131072",
         "--cache-type-k", "f16",
         "--cache-type-v", "f16",
 
