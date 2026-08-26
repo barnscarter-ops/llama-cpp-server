@@ -26,7 +26,8 @@ log = logging.getLogger("guardian")
 
 WORKBOARD_DEFAULT_PATH = r"C:\Workspace\Active\brain\WORKBOARD.md"
 WORKSTREAM = "690 GPU swap"          # Board WorkboardAnnounce.Workstream — do not rename
-SSH_KEY = r"C:\Users\carte\.ssh\id_ed25519_proxmox"
+SSH_KEY = r"C:\ProgramData\llama-guardian\ssh\id_ed25519_proxmox"
+SSH_KNOWN_HOSTS = r"C:\ProgramData\llama-guardian\ssh\known_hosts"
 SSH_HOST = "root@192.168.1.12"       # .12; Board's freeze bug was on .230
 CT = "210"
 SWAP_SCRIPTS = {"clerk": "swap-nemo-clerk.sh", "consult": "swap-qwen-consult.sh"}
@@ -168,8 +169,18 @@ def announce_workboard(path: str, to: str) -> bool:
 async def run_swap_ssh(to: str) -> tuple[int, str]:
     """SSH to the Proxmox host and run the CT 210 swap script. Returns (rc, combined)."""
     remote = f"lxc-attach -n {CT} -- /opt/llama/{SWAP_SCRIPTS[to]}"
+    # Session-0 / PM2 stdin is not a TTY. Without BatchMode, OpenSSH waits forever
+    # on host-key or askpass prompts and the swap never enters CT 210.
     proc = await asyncio.create_subprocess_exec(
-        "ssh", "-i", SSH_KEY, SSH_HOST, remote,
+        "ssh",
+        "-i", SSH_KEY,
+        "-T",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=15",
+        "-o", f"UserKnownHostsFile={SSH_KNOWN_HOSTS}",
+        SSH_HOST,
+        remote,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
