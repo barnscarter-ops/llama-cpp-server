@@ -35,6 +35,9 @@ CONSOLE_PORTS = (17890, 17891)
 SWAP_POLL_S = 2.0
 SWAP_POLL_TIMEOUT_S = 360.0
 SWAP_ETA_TEXT = "~1 min"
+# Completions that ask for Qwen while clerk occupies are served on clerk.
+# Loading consult requires Carter (operator) or a frontier model (frontier).
+CONSULT_SWAP_GATES = frozenset({"operator", "frontier"})
 
 
 def swap_owner_enabled() -> bool:
@@ -232,7 +235,7 @@ async def wait_for_occupant(client, to: str, timeout: float = SWAP_POLL_TIMEOUT_
 #  Swap handler body (auth is enforced by the guardian route wrapper)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def perform_swap(to: str, client) -> object:
+async def perform_swap(to: str, client, gate: str | None = None) -> object:
     """Run one swap. Returns an aiohttp web.Response (guardian error shape)."""
     if to not in SWAP_SCRIPTS:
         return guardian_error(
@@ -240,6 +243,17 @@ async def perform_swap(to: str, client) -> object:
             "invalid_swap_target",
             400,
         )
+
+    if to == "consult":
+        approved = (gate or "").strip().lower()
+        if approved not in CONSULT_SWAP_GATES:
+            return guardian_error(
+                "Consult swap is gated: Carter (gate=operator) or a frontier "
+                "model (gate=frontier) must approve. Completions that ask for "
+                "Qwen while clerk occupies are served on clerk.",
+                "consult_gate_required",
+                403,
+            )
 
     if not swap_owner_enabled():
         return guardian_error(

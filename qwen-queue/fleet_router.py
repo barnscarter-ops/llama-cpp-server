@@ -357,10 +357,17 @@ async def handle_aiwa_completion(
             "aiwa_unreachable",
             503,
         )
+    effective_seat = seat
     if occupant != seat:
-        return aiwa_wrong_occupant_response(occupant, model_id, seat)
+        if seat == "consult" and occupant == "clerk":
+            # Consult swap is gated (Carter or a frontier model). Agents that
+            # ask for Qwen while clerk occupies get clerk, not a 409 and not a swap.
+            log.info("downgraded_consult=clerk; consult swap is gated")
+            effective_seat = "clerk"
+        else:
+            return aiwa_wrong_occupant_response(occupant, model_id, seat)
 
-    serving_id = SERVING_IDS[seat]
+    serving_id = SERVING_IDS[effective_seat]
     body = rewrite_model_in_body(body, serving_id)
     fwd_headers = {
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
@@ -372,5 +379,5 @@ async def handle_aiwa_completion(
         fwd_headers=fwd_headers,
         client=client,
         guardian=guardian,
-        seat=seat,
+        seat=effective_seat,
     )

@@ -66,7 +66,7 @@ class Harness:
         aiwa_swap.perform_swap = self._fake_perform_swap
         return m
 
-    async def _fake_perform_swap(self, to, client):
+    async def _fake_perform_swap(self, to, client, gate=None):
         self.swap_calls.append((to, client))
         return self.swap_response
 

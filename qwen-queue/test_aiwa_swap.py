@@ -92,8 +92,23 @@ class AiwaSwapTests(EnvBackup, unittest.IsolatedAsyncioTestCase):
         self.temp_dir.cleanup()
         self.teardown_env()
 
-    async def _body(self, to="consult"):
-        return await aiwa_swap.perform_swap(to, client=None)
+    async def _body(self, to="consult", gate="operator"):
+        return await aiwa_swap.perform_swap(to, client=None, gate=gate)
+
+    async def test_consult_swap_without_gate_403(self) -> None:
+        os.environ["FLEET_SWAP_OWNER"] = "true"
+        resp = await self._body(gate="")
+        self.assertEqual(403, resp.status)
+        body = __import__("json").loads(resp.text)
+        self.assertEqual("consult_gate_required", body["error"]["code"])
+        self.assertEqual([], self._ssh.calls)
+
+    async def test_consult_swap_rejects_worker_gate(self) -> None:
+        os.environ["FLEET_SWAP_OWNER"] = "true"
+        resp = await self._body(gate="worker")
+        self.assertEqual(403, resp.status)
+        self.assertEqual("consult_gate_required", __import__("json").loads(resp.text)["error"]["code"])
+        self.assertEqual([], self._ssh.calls)
 
     async def test_flag_false_409_even_with_console_open(self) -> None:
         os.environ.pop("FLEET_SWAP_OWNER", None)
@@ -208,6 +223,15 @@ class SwapRouteOrderTests(EnvBackup, unittest.IsolatedAsyncioTestCase):
 
     async def test_route_registered_before_catch_all_flag_false(self) -> None:
         response = await self.client.post("/__guardian/swap", json={"to": "consult"})
+        self.assertEqual(403, response.status)
+        self.assertEqual(
+            "consult_gate_required", (await response.json())["error"]["code"]
+        )
+
+    async def test_route_consult_with_gate_flag_false_is_board_owns_ssh(self) -> None:
+        response = await self.client.post(
+            "/__guardian/swap", json={"to": "consult", "gate": "operator"}
+        )
         self.assertEqual(409, response.status)
         self.assertEqual(
             "swap_board_owns_ssh", (await response.json())["error"]["code"]
