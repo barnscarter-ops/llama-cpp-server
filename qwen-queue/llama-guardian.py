@@ -58,6 +58,7 @@ from guardian_workers import (
     is_worker_job,
     profiles_as_api,
     run_worker,
+    WorkerCancelled,
     validate_worker_submission,
     workers_enabled,
 )
@@ -243,6 +244,11 @@ class Guardian:
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
+        # At most one queued worker runs. These handles let cancellation stop
+        # the actual process tree before the durable row becomes terminal.
+        self.active_worker_job_id: str | None = None
+        self.active_worker_process = None
+        self.active_worker_cancel: asyncio.Event | None = None
 
         # AIWA activity clocks (fleet router). Never used by the GLM idle reaper.
         self.last_aiwa_activity = 0.0
@@ -920,6 +926,18 @@ async def queue_cancel(request: web.Request) -> web.Response:
     job = guardian.job_store.get(request.match_info["job_id"])
     if not job:
         return web.json_response({"error": {"message": "Queue job not found.", "code": "queue_job_not_found"}}, status=404)
+    if job.status == "running" and is_worker_job(job.request):
+        if guardian.active_worker_job_id != job.job_id or guardian.active_worker_cancel is None:
+            return web.json_response({"error": {"message": "Running worker is not cancellable at this moment.", "code": "worker_cancel_unavailable"}}, status=409)
+        guardian.active_worker_cancel.set()
+        # run_worker owns platform-correct process-tree termination; wait for
+        # its task to observe the event and write the terminal state.
+        for _ in range(100):
+            current = guardian.job_store.get(job.job_id)
+            if current and current.status == "cancelled":
+                return web.json_response(current.as_api())
+            await asyncio.sleep(0.05)
+        return web.json_response({"error": {"message": "Worker cancellation timed out.", "code": "worker_cancel_timeout"}}, status=504)
     if job.status != "queued":
         return web.json_response(
             {"error": {"message": f"Only queued jobs can be cancelled (currently {job.status}).", "code": "queue_not_cancellable"}},
@@ -974,7 +992,9 @@ async def worker_submit(request: web.Request) -> web.Response:
         "priority": submitted["priority"],
     }
     guardian.job_store.log_decision(
-        submitted["source"], decision, {"summary": spec["task"], "parent_run_id": spec["parent_run_id"]}
+        submitted["source"], decision,
+        {"work_class": spec["work_class"], "route": decision["route"],
+         "parent_run_id": spec["parent_run_id"], "workspace": spec["workspace"]},
     )
     job, created = guardian.job_store.submit(
         idempotency_key=submitted["idempotency_key"],
@@ -1330,13 +1350,32 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
 async def run_queued_job(job: QueueJob) -> None:
     """Run one durable job while holding the same one-slot generation lock."""
     if is_worker_job(job.request):
+        cancel_event = asyncio.Event()
+        guardian.active_worker_job_id = job.job_id
+        guardian.active_worker_cancel = cancel_event
+        guardian.active_worker_process = None
         try:
-            result = await run_worker(job.request["_guardian_worker"])
+            def remember_process(proc):
+                guardian.active_worker_process = proc
+                if proc is not None:
+                    guardian.job_store.set_worker_pid(job.job_id, proc.pid)
+
+            result = await run_worker(
+                job.request["_guardian_worker"], cancel_event=cancel_event,
+                on_process=remember_process,
+            )
             guardian.job_store.finish(job.job_id, result)
             log.info("guardian worker succeeded %s", job.job_id)
+        except WorkerCancelled as exc:
+            guardian.job_store.cancel_running(job.job_id, str(exc))
+            log.info("guardian worker cancelled %s", job.job_id)
         except Exception as exc:
             guardian.job_store.fail(job.job_id, f"Guardian worker failed: {exc}")
             log.exception("guardian worker crashed %s", job.job_id)
+        finally:
+            guardian.active_worker_job_id = None
+            guardian.active_worker_cancel = None
+            guardian.active_worker_process = None
         return
     if fleet_router_enabled() and seat_for_model(job.request.get("model")) in {"clerk", "consult"}:
         await _run_aiwa_queued_job(

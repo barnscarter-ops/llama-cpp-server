@@ -45,6 +45,16 @@ The feature defaults **off** (`LOCAL_WORKER_ENABLED=false`) and no current PM2
 environment enables it. Starting a worker may wake the Workbench model, so do
 not enable or test it against live inference without Carter's approval.
 
+Worker lifecycle safety: queued cancellation remains a cheap terminal
+`cancelled` transition. A running worker is cancelled by terminating its full
+process tree with the host platform's process primitive, then recording a
+terminal `cancelled` row and bounded lifecycle evidence (work class, route,
+parent run, workspace, PID, timestamps, and cancel reason). A guardian restart
+never replays a running write-capable worker; it marks that row failed with an
+explicit-resubmission error. Ordinary completion jobs retain restart requeue
+recovery. Worker audit records contain metadata only—never prompts, secrets, or
+unbounded model output.
+
 For an MCP-capable parent runtime, configure a stdio server like:
 
 ```text

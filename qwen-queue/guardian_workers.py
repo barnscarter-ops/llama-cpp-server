@@ -1,7 +1,7 @@
 """Guardian-owned admission policy for disabled-by-default local workers."""
 
 from __future__ import annotations
-import asyncio, json, os
+import asyncio, json, os, signal, subprocess, sys, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -105,15 +105,84 @@ def _parse_pi_output(stdout: bytes) -> Any:
     try: return json.loads(text)
     except json.JSONDecodeError: return text
 
-async def run_worker(spec: dict[str, Any]) -> dict[str, Any]:
+class WorkerCancelled(RuntimeError):
+    """The operator cancelled a running worker."""
+
+
+async def terminate_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """Terminate a worker and descendants using the host platform's primitive."""
+    if proc.returncode is not None:
+        return
+    if sys.platform == "win32":
+        await asyncio.to_thread(
+            subprocess.run,
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        if sys.platform != "win32":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                proc.kill()
+        await proc.wait()
+
+
+async def run_worker(
+    spec: dict[str, Any],
+    *,
+    cancel_event: asyncio.Event | None = None,
+    on_process: Any = None,
+) -> dict[str, Any]:
     command, workspace = worker_command(spec)
     timeout = int(spec["timeout_seconds"])
-    try: proc = await asyncio.create_subprocess_exec(*command, cwd=str(workspace), stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    kwargs: dict[str, Any] = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    started_at = time.time()
+    try: proc = await asyncio.create_subprocess_exec(*command, cwd=str(workspace), stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs)
     except FileNotFoundError as exc: raise RuntimeError("Pi executable was not found for the configured local worker.") from exc
-    try: stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    if on_process is not None:
+        on_process(proc)
+    communicate = asyncio.create_task(proc.communicate())
+    cancel_wait = asyncio.create_task(cancel_event.wait()) if cancel_event else None
+    try:
+        pending = {communicate}
+        if cancel_wait:
+            done, pending = await asyncio.wait(pending | {cancel_wait}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if cancel_wait in done and cancel_event and cancel_event.is_set():
+                await terminate_process_tree(proc)
+                await communicate
+                raise WorkerCancelled("Worker cancelled by operator.")
+            if not done:
+                raise asyncio.TimeoutError
+            stdout, stderr = communicate.result()
+        else:
+            stdout, stderr = await asyncio.wait_for(communicate, timeout=timeout)
     except asyncio.TimeoutError as exc:
-        proc.kill(); await proc.communicate(); raise RuntimeError(f"Worker timed out after {timeout} seconds.") from exc
+        await terminate_process_tree(proc); await communicate; raise RuntimeError(f"Worker timed out after {timeout} seconds.") from exc
+    finally:
+        if cancel_wait:
+            cancel_wait.cancel()
+        if on_process is not None:
+            on_process(None)
     if len(stdout) + len(stderr) > MAX_RESULT_BYTES: raise RuntimeError(f"Worker output exceeded the {MAX_RESULT_BYTES}-byte durable result limit.")
     if proc.returncode != 0:
         detail = (stderr or stdout).decode(errors="replace").strip(); raise RuntimeError(f"Worker exited {proc.returncode}: {detail[:2000]}")
-    return {"kind": "local_worker", "work_class": spec["work_class"], "workspace": str(workspace), "parent_run_id": spec.get("parent_run_id") or None, "runner": "pi", "output": _parse_pi_output(stdout), "stderr": stderr.decode(errors="replace").strip() or None}
+    output = _parse_pi_output(stdout)
+    # Durable evidence is deliberately bounded; full model output remains ephemeral.
+    output_text = output if isinstance(output, str) else json.dumps(output, separators=(",", ":"), default=str)
+    policy = worker_policies()[spec["work_class"]]
+    return {"kind": "local_worker", "work_class": spec["work_class"], "internal_route": policy.route, "workspace": str(workspace), "parent_run_id": spec.get("parent_run_id") or None, "runner": "pi", "lifecycle": {"pid": proc.pid, "started_at": started_at, "finished_at": time.time(), "cancel_reason": None}, "result_metadata": {"output_chars": len(output_text), "stderr_present": bool(stderr.strip())}}

@@ -46,6 +46,8 @@ class QueueJob:
     finished_at: float | None
     result: dict[str, Any] | None
     error: str | None
+    worker_pid: int | None = None
+    cancel_reason: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "QueueJob":
@@ -63,6 +65,8 @@ class QueueJob:
             finished_at=row["finished_at"],
             result=json.loads(row["result_json"]) if row["result_json"] else None,
             error=row["error"],
+            worker_pid=row["worker_pid"] if "worker_pid" in row.keys() else None,
+            cancel_reason=row["cancel_reason"] if "cancel_reason" in row.keys() else None,
         )
 
     def as_api(self, *, include_result: bool = True) -> dict[str, Any]:
@@ -80,6 +84,9 @@ class QueueJob:
         }
         if include_result:
             result["result"] = self.result
+        if self.worker_pid is not None or self.cancel_reason is not None:
+            result["lifecycle"] = {"pid": self.worker_pid, "cancel_reason": self.cancel_reason,
+                                    "started_at": self.started_at, "finished_at": self.finished_at}
         return result
 
 
@@ -109,9 +116,16 @@ class JobStore:
                 finished_at REAL,
                 result_json TEXT,
                 error TEXT
+                ,worker_pid INTEGER
+                ,cancel_reason TEXT
             )
             """
         )
+        for column, declaration in (("worker_pid", "INTEGER"), ("cancel_reason", "TEXT")):
+            try:
+                self._conn.execute(f"ALTER TABLE guardian_jobs ADD COLUMN {column} {declaration}")
+            except sqlite3.OperationalError:
+                pass
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS guardian_jobs_next ON guardian_jobs(status, priority DESC, created_at ASC)"
         )
@@ -134,17 +148,26 @@ class JobStore:
         self._conn.close()
 
     def recover_interrupted(self) -> int:
-        """Requeue a job interrupted by a guardian restart without duplication."""
+        """Recover running jobs; never silently replay a write-capable worker."""
+        worker_cursor = self._conn.execute(
+            """
+            UPDATE guardian_jobs
+            SET status = 'failed', finished_at = ?,
+                error = 'Worker interrupted by guardian restart; explicit resubmission required.',
+                cancel_reason = 'guardian_restart'
+            WHERE status = 'running' AND request_json LIKE '%\"_guardian_worker\"%'
+            """, (time.time(),)
+        )
         cursor = self._conn.execute(
             """
             UPDATE guardian_jobs
             SET status = 'queued', started_at = NULL,
                 error = 'Requeued after guardian restart before a terminal result.'
-            WHERE status = 'running'
+            WHERE status = 'running' AND request_json NOT LIKE '%\"_guardian_worker\"%'
             """
         )
         self._conn.commit()
-        return cursor.rowcount
+        return worker_cursor.rowcount + cursor.rowcount
 
     def get(self, job_id: str) -> QueueJob | None:
         row = self._conn.execute(
@@ -213,7 +236,8 @@ class JobStore:
                 """
                 UPDATE guardian_jobs
                 SET status = 'running', attempts = attempts + 1,
-                    started_at = ?, finished_at = NULL, error = NULL
+                    started_at = ?, finished_at = NULL, error = NULL,
+                    worker_pid = NULL, cancel_reason = NULL
                 WHERE job_id = ? AND status = 'queued'
                 """,
                 (now, row["job_id"]),
@@ -236,6 +260,10 @@ class JobStore:
         self._conn.commit()
         return self.get(job_id)  # type: ignore[return-value]
 
+    def set_worker_pid(self, job_id: str, pid: int) -> None:
+        self._conn.execute("UPDATE guardian_jobs SET worker_pid = ? WHERE job_id = ? AND status = 'running'", (pid, job_id))
+        self._conn.commit()
+
     def fail(self, job_id: str, error: str) -> QueueJob:
         self._conn.execute(
             """
@@ -256,6 +284,17 @@ class JobStore:
             WHERE job_id = ? AND status = 'queued'
             """,
             (time.time(), job_id),
+        )
+        self._conn.commit()
+        return self.get(job_id)
+
+    def cancel_running(self, job_id: str, reason: str = "Cancelled by operator.") -> QueueJob | None:
+        self._conn.execute(
+            """
+            UPDATE guardian_jobs
+            SET status = 'cancelled', finished_at = ?, error = ?, cancel_reason = ?
+            WHERE job_id = ? AND status = 'running'
+            """, (time.time(), reason[:2000], reason[:2000], job_id),
         )
         self._conn.commit()
         return self.get(job_id)
