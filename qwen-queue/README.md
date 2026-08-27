@@ -65,6 +65,37 @@ Use one instance per harness, changing only `--source` (`grok`, `hermes`, `pi`,
 `deepseek-harness`, `codex`, or `claude`). The exposed tools submit, poll, and
 cancel durable worker jobs.
 
+### Grok and Hermes source-owned configuration
+
+These exact fragments are reviewable instructions for a later watched harness
+change. Session 2 does not edit the live files. Preserve existing main and
+cloud delegation settings and add one server with a fixed source.
+
+Grok (`%USERPROFILE%\\.grok\\config.toml`):
+
+```toml
+[mcp_servers.guardian_local_worker]
+command = "python"
+args = ["D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py", "--source", "grok"]
+```
+
+Hermes (`%LOCALAPPDATA%\\hermes\\config.yaml`):
+
+```yaml
+mcp_servers:
+  guardian_local_worker:
+    command: python
+    args:
+      - D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py
+      - --source
+      - hermes
+```
+
+Parent contract: use `planning`/`deep_analysis` for architecture only with an
+explicit gate; use executor classes for bounded implementation. Poll or
+cancel by `job_id`. Accepted means queued, not complete; completion requires
+a terminal status and durable result.
+
 ## Moved from `scripts\` (2026-07-22)
 
 The four queue files above previously lived in `scripts\`. Updated references:

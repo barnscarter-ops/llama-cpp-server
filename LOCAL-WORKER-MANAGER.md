@@ -53,3 +53,37 @@ wire the `local-worker-mcp.py --source grok` and `--source hermes` instances.
 Pi can subsequently use its native package path; DeepSeek Harness can add a
 native `SubagentProvider`; Codex and Claude can use the same MCP tool unless a
 supported native provider override becomes available.
+
+## Grok/Hermes MCP wiring (source-owned instructions)
+
+These exact fragments are prepared for a later watched configuration change;
+do not copy them into live configuration during this source session. The live
+files are `%USERPROFILE%\\.grok\\config.toml` and
+`%LOCALAPPDATA%\\hermes\\config.yaml`. Keep existing main and cloud
+delegation models unchanged.
+
+Grok TOML:
+
+```toml
+[mcp_servers.guardian_local_worker]
+command = "python"
+args = ["D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py", "--source", "grok"]
+```
+
+Hermes YAML:
+
+```yaml
+mcp_servers:
+  guardian_local_worker:
+    command: python
+    args:
+      - D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py
+      - --source
+      - hermes
+```
+
+Parent contract: planning/deep-analysis classes are for architecture and
+require their operator/frontier gate; executor classes are for bounded
+implementation. Poll or cancel with the returned `job_id`. Accepted means
+queued, not complete; only a terminal status with a durable result is
+completion evidence.
