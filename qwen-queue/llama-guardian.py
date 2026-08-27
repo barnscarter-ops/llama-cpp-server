@@ -54,6 +54,13 @@ from aiohttp import ClientError, ClientTimeout, web
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 import aiwa_swap
 import fleet_router
+from guardian_workers import (
+    is_worker_job,
+    profiles_as_api,
+    run_worker,
+    validate_worker_submission,
+    workers_enabled,
+)
 from fleet_router import (
     LEGACY_MODEL_ALIASES,
     extract_model_from_body,
@@ -921,6 +928,66 @@ async def queue_cancel(request: web.Request) -> web.Response:
     return web.json_response(guardian.job_store.cancel(job.job_id).as_api())
 
 
+async def worker_profiles(request: web.Request) -> web.Response:
+    """Expose only named worker capabilities, never raw model/provider choices."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    return web.json_response({"enabled": workers_enabled(), "profiles": profiles_as_api()})
+
+
+async def worker_submit(request: web.Request) -> web.Response:
+    """Admit a write-capable local worker into the guardian's durable queue."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    if not workers_enabled():
+        return web.json_response(
+            {"error": {"message": "Guardian local workers are disabled.", "code": "local_workers_disabled"}},
+            status=503,
+        )
+    if request.content_length and request.content_length > QUEUE_MAX_REQUEST_BYTES:
+        return web.json_response(
+            {"error": {"message": f"Worker request exceeds {QUEUE_MAX_REQUEST_BYTES} bytes.", "code": "invalid_worker_job"}},
+            status=400,
+        )
+    try:
+        payload = await request.json()
+        submitted = validate_worker_submission(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return web.json_response({"error": {"message": str(exc), "code": "invalid_worker_job"}}, status=400)
+
+    admission = submitted.get("admission")
+    if admission == "requires_cloud":
+        return web.json_response({"error": {"message": "This quality floor requires cloud execution.", "code": "requires_cloud"}}, status=409)
+    if admission == "gate_required":
+        return web.json_response({"error": {"message": "Planning and deep analysis require an explicit operator or frontier gate.", "code": "consult_gate_required"}}, status=409)
+    if admission == "consult_unavailable":
+        return web.json_response({"error": {"message": "The gate is present, but consult is unavailable; no AIWA swap was attempted.", "code": "consult_unavailable"}}, status=503)
+
+    existing = guardian.job_store.get_by_idempotency_key(submitted["idempotency_key"])
+    if existing:
+        return web.json_response({"idempotent": True, **existing.as_api()})
+
+    spec = submitted["worker"]
+    decision = {
+        "route": "guardian_worker",
+        "reason": f"guardian policy route for {spec['work_class']}",
+        "priority": submitted["priority"],
+    }
+    guardian.job_store.log_decision(
+        submitted["source"], decision, {"summary": spec["task"], "parent_run_id": spec["parent_run_id"]}
+    )
+    job, created = guardian.job_store.submit(
+        idempotency_key=submitted["idempotency_key"],
+        source=submitted["source"],
+        priority=submitted["priority"],
+        request={"_guardian_worker": spec},
+        decision=decision,
+    )
+    guardian.queue_event.set()
+    log.info("worker accepted %s from %s for %s", job.job_id, job.source, spec["work_class"])
+    return web.json_response(job.as_api(), status=202 if created else 200)
+
+
 async def guardian_swap(request: web.Request) -> web.Response:
     """PR6: manager-owned AIWA swap. Same loopback auth as the job queue."""
     if not _queue_authorized(request):
@@ -1262,6 +1329,15 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
 
 async def run_queued_job(job: QueueJob) -> None:
     """Run one durable job while holding the same one-slot generation lock."""
+    if is_worker_job(job.request):
+        try:
+            result = await run_worker(job.request["_guardian_worker"])
+            guardian.job_store.finish(job.job_id, result)
+            log.info("guardian worker succeeded %s", job.job_id)
+        except Exception as exc:
+            guardian.job_store.fail(job.job_id, f"Guardian worker failed: {exc}")
+            log.exception("guardian worker crashed %s", job.job_id)
+        return
     if fleet_router_enabled() and seat_for_model(job.request.get("model")) in {"clerk", "consult"}:
         await _run_aiwa_queued_job(
             job, seat_for_model(job.request.get("model"))
@@ -1964,6 +2040,8 @@ def make_app() -> web.Application:
     app.router.add_post("/__guardian/jobs", queue_submit)
     app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
     app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
+    app.router.add_get("/__guardian/workers", worker_profiles)
+    app.router.add_post("/__guardian/workers", worker_submit)
     app.router.add_post("/__guardian/sleep", guardian_sleep)
     app.router.add_post("/__guardian/swap", guardian_swap)
     # Catch-all proxy: any method, any path → llama.

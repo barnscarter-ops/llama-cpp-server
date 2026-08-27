@@ -111,7 +111,7 @@ class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self._env_backup = {
             k: os.environ.get(k)
-            for k in ("GUARDIAN_QUEUE_DB", "FLEET_ROUTER", "HERMES_DECIDER_ENABLED")
+            for k in ("GUARDIAN_QUEUE_DB", "FLEET_ROUTER", "HERMES_DECIDER_ENABLED", "LOCAL_WORKER_ENABLED", "LOCAL_WORKER_ROOT")
         }
         os.environ["GUARDIAN_QUEUE_DB"] = str(Path(self.temp_dir.name) / "guardian.sqlite3")
         os.environ["FLEET_ROUTER"] = "false"
@@ -132,6 +132,8 @@ class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
         app.router.add_post("/__guardian/jobs", self.module.queue_submit)
         app.router.add_get("/__guardian/jobs/{job_id}", self.module.queue_status)
         app.router.add_post("/__guardian/jobs/{job_id}/cancel", self.module.queue_cancel)
+        app.router.add_get("/__guardian/workers", self.module.worker_profiles)
+        app.router.add_post("/__guardian/workers", self.module.worker_submit)
         self.client = TestClient(TestServer(app, host="127.0.0.1"))
         await self.client.start_server()
 
@@ -257,6 +259,38 @@ class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("route_cloud", body["error"]["code"])
         self.assertIsNone(self.module.guardian.job_store.get_by_idempotency_key("cloud-409"))
         self.assertEqual(0, self.decider.calls)
+
+    async def test_worker_profiles_and_submission_are_explicitly_gated(self) -> None:
+        response = await self.client.get("/__guardian/workers")
+        self.assertEqual(200, response.status)
+        catalog = await response.json()
+        self.assertFalse(catalog["enabled"])
+        self.assertEqual({"mechanical_execution", "tool_execution", "planning", "deep_analysis"}, {p["work_class"] for p in catalog["profiles"]})
+
+        payload = {
+            "source": "grok",
+            "idempotency_key": "worker-http-test",
+            "work_class": "tool_execution",
+            "workspace": self.temp_dir.name,
+            "task": "Create one focused test and run it.",
+            "parent_run_id": "grok-run-1",
+        }
+        response = await self.client.post("/__guardian/workers", json=payload)
+        self.assertEqual(503, response.status)
+        self.assertEqual("local_workers_disabled", (await response.json())["error"]["code"])
+
+        os.environ["LOCAL_WORKER_ENABLED"] = "true"
+        os.environ["LOCAL_WORKER_ROOT"] = self.temp_dir.name
+        response = await self.client.post("/__guardian/workers", json=payload)
+        self.assertEqual(202, response.status, await response.text())
+        submitted = await response.json()
+        job = self.module.guardian.job_store.get(submitted["job_id"])
+        self.assertEqual("guardian_worker", job.decision["route"])
+        self.assertEqual("tool_execution", job.request["_guardian_worker"]["work_class"])
+
+        response = await self.client.post("/__guardian/workers", json=payload)
+        self.assertEqual(200, response.status)
+        self.assertTrue((await response.json())["idempotent"])
 
 
 if __name__ == "__main__":
