@@ -1,11 +1,12 @@
 """Offline validation tests for guardian-managed worker admission."""
 
 import os
+from unittest.mock import patch
 import tempfile
 import unittest
 from pathlib import Path
 
-from guardian_workers import is_worker_job, validate_worker_submission, worker_command
+from guardian_workers import _pi_command, is_worker_job, validate_worker_submission, worker_command
 
 
 class GuardianWorkerTests(unittest.TestCase):
@@ -36,13 +37,24 @@ class GuardianWorkerTests(unittest.TestCase):
     def test_admits_work_class_and_builds_fixed_pi_command(self):
         submitted = validate_worker_submission(self._payload())
         spec = submitted["worker"]
-        command, workspace = worker_command(spec)
+        with patch("guardian_workers._pi_command", return_value=["pi"]):
+            command, workspace = worker_command(spec)
         self.assertEqual(Path(self.temp_dir.name).resolve(), workspace)
         self.assertEqual("pi", command[0])
         self.assertIn("llamacpp/local-llm", command)
         self.assertIn("--no-extensions", command)
         self.assertIn("--approve", command)
         self.assertTrue(is_worker_job({"_guardian_worker": spec}))
+
+    def test_windows_uses_hermes_managed_pi_runtime_without_path_lookup(self):
+        hermes_home = Path(self.temp_dir.name) / "hermes" / "node"
+        cli = hermes_home / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
+        cli.parent.mkdir(parents=True)
+        (hermes_home / "node.exe").touch()
+        cli.touch()
+        with patch.dict(os.environ, {"LOCALAPPDATA": self.temp_dir.name}, clear=False), patch("guardian_workers.sys.platform", "win32"), patch("guardian_workers.shutil.which") as which:
+            self.assertEqual([str(hermes_home / "node.exe"), str(cli)], _pi_command())
+        which.assert_not_called()
 
     def test_rejects_unknown_class_and_workspace_outside_root(self):
         unknown = self._payload()

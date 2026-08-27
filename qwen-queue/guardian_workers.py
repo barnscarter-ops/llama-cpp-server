@@ -1,7 +1,7 @@
 """Guardian-owned admission policy for disabled-by-default local workers."""
 
 from __future__ import annotations
-import asyncio, json, os, signal, subprocess, sys, time
+import asyncio, json, os, shutil, signal, subprocess, sys, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,6 +86,20 @@ def validate_worker_submission(payload: Any) -> dict[str, Any]:
 
 def is_worker_job(request: dict[str, Any]) -> bool: return isinstance(request.get("_guardian_worker"), dict)
 
+def _pi_command() -> list[str]:
+    """Resolve the guardian-owned Pi runtime without relying on PM2's PATH."""
+    configured = os.environ.get("LOCAL_WORKER_PI_EXE")
+    if configured:
+        return [configured]
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            pi_home = Path(local_app_data) / "hermes" / "node"
+            node, cli = pi_home / "node.exe", pi_home / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
+            if node.is_file() and cli.is_file():
+                return [str(node), str(cli)]
+    return [shutil.which("pi") or "pi"]
+
 def worker_command(spec: dict[str, Any]) -> tuple[list[str], Path]:
     policy = worker_policies().get(spec.get("work_class"))
     if policy is None or policy.runner != "pi": raise ValueError("This work class is not an executable local worker.")
@@ -94,7 +108,7 @@ def worker_command(spec: dict[str, Any]) -> tuple[list[str], Path]:
     except ValueError as exc: raise ValueError("Worker workspace is outside the configured worker root.") from exc
     if not workspace.is_dir(): raise ValueError("Worker workspace no longer exists.")
     prompt = "You are a guardian-managed local worker. Work only inside the current workspace. Do not spawn subagents, switch models, contact cloud providers, or work outside this workspace. Report completed changes, verification performed, and blockers.\n\nTask:\n" + spec["task"]
-    command = [os.environ.get("LOCAL_WORKER_PI_EXE", "pi"), "--model", policy.pi_model, "--mode", "json", "--print", "--no-session", "--no-extensions", "--approve"]
+    command = [*_pi_command(), "--model", policy.pi_model, "--mode", "json", "--print", "--no-session", "--no-extensions", "--approve"]
     if policy.skill_path: command.extend(["--skill", policy.skill_path])
     command.append(prompt)
     return command, workspace
