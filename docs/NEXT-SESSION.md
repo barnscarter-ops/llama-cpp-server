@@ -1,4 +1,4 @@
-# HANDOFF — Local-model-manager (GitHub merged; live deploy next)
+# NEXT SESSION — Local-model-manager (GitHub merged; live deploy next)
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`  
 **Workstream:** Local-model-manager — merge  
@@ -6,10 +6,16 @@
 
 Night 4 cutover is **complete** and is a different workstream. Soak leftovers stay in `NEXT-SESSION-HANDOFF.md` (Night 4).
 
+## Live (from prior NEXT.SESSION.md)
+
+1. Guardian PM2 re-registered; seats 200; health has `seats.aiwa` / `seats.workbench`; `/v1/models` GLM-shaped 503.
+2. MCC folder on `26e5eb8` with dirty files kept. Windows `mav-console` not started.
+3. Clerk POST pong without waking GLM. Consult 409. Cloud 409.
+4. Next: PR4 — omitted model → clerk when flag on (`FLEET_DEFAULT_SEAT=clerk`).
+
 ## Plan
 
-Full plan: `D:\Workspace\Active\WindowsApps\LocalLlmBoard\PLAN.md`  
-Session prompt: `NEXT.SESSION.md`
+Full plan: `D:\Workspace\Active\WindowsApps\LocalLlmBoard\PLAN.md`
 
 ## GitHub merge ≠ live (do not merge again)
 
