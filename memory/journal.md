@@ -3,6 +3,17 @@
 Chronological log of session activity. Append a date-stamped entry at session
 close; never rewrite history.
 
+<!-- 2026-08-28 (later, Hermes TUI default profile) — guardian control-plane audit.
+Swept all Hermes profiles/skills/env/cron/bots/MCP for llamacpp routing or
+guardian-override paths. Findings in `harness routing/Hermes.md` (new folder,
+committed): ungated qwen-llamacpp provider entries in default+mav-room configs;
+prefer-local doctrine in external ~/.agents/skills orchestration skills; stale
+GLM fallback line in ~/.claude/CLAUDE.md; pi llamacpp provider dormant (pi
+paused). Delegation/aux/moa/env/cron verified clean. Deleted omp profile
+entirely (pre-delete archive in ~/Documents/hermes-profile-backups/), mav-room
+untouched per Carter. Open decisions Q1–Q5 in the report; Q4 (mav-room MCP
+gap) deferred by Carter. -->
+
 <!-- 2026-08-28 session close — Grok. PLAN Sessions 0–6 complete. Session 6
 commit b5eee2b docs(guardian): publish managed local worker rollout (Codex/
 Claude MCP fragments not live; native subagents stay cloud; :8081 down;

@@ -1,67 +1,64 @@
-# NEXT SESSION — PLAN complete; workstream parked
+# NEXT SESSION — Hermes routing audit done; Q1–Q5 decisions pending
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`
-**Workstream:** Guardian-managed local workers (`PLAN.md`) — **complete**
-**Tip:** `b5eee2b` (pushed; `main` = `origin/main`) plus this close commit
-**Live:** guardian `ok` on `:8080`, `llama_up=false`, `:8081` down,
-`LOCAL_WORKER_ENABLED` **off** (`/__guardian/workers` enabled=false),
-AIWA occupant **clerk**, `swap_owner=true`.
+**Workstream:** Guardian control-plane — closing the ungated local-routing side doors in Hermes configs/skills
+**Date:** 2026-08-28 (Hermes TUI, default profile)
 
 ## Shipped
 
-- PLAN Sessions **0–6 complete**. Capstone: `qwen-queue/harness/ROLLOUT.md`.
-- Watched smoke **attempt 2 PASS** then flag rolled back. Job
-  `qj_d52cb887f9ae49db9ef440d322595a9f`, `SMOKE.txt=GATE_ATTEMPT_2_OK`.
-- Attempt 1 was **Hermes GLM-5.3**, not Codex (Pi on `llamacpp/local-llm`,
-  circular guardian kill). **Pi orchestrators paused.**
-- Session 3: Grok + Hermes MCP live. Defaults unchanged (`grok-4.6` /
-  `glm-5.3`). Jobs `qj_3e8a4e29129a4a718d5550e7ca8f652a` /
-  `qj_c926913dc0db46b98d7329a6aa42d62b`.
-- Session 4: prefer local only for bounded standard `tool_execution`.
-  Planning 409/503, frontier 409, AIWA stayed clerk.
-  `qwen-queue/harness/CALIBRATION.md`.
-- Session 5: DeepSeek `SubagentProvider` in-repo. **Pi native skipped.**
-- Session 6: Codex/Claude MCP fragments documented, **not live-installed**.
-  Native subagents stay cloud. `:8081` / `.240` inventory. Enforcement
-  **proposed, not deployed** (keep loopback `:8081` + policy; do not
-  firewall `.240`).
-- WORKBOARD: guardian row parked S0–S6; stale 2026-08-27 690 GPU swap
-  ANNOUNCE marked done (occupant clerk).
-- Commits: `17b1e26` `c080df5` `85a63a5` `b5eee2b`.
+- **Full Hermes-side routing audit** (`harness routing/Hermes.md`, committed):
+  every config/skill/env/cron/bot/MCP surface in all profiles checked for
+  llamacpp routing or guardian-override paths.
+  - Ungated `qwen-llamacpp` provider (→ `127.0.0.1:8080/v1`) confirmed in
+    default + mav-room `config.yaml` custom_providers.
+  - Prefer-local doctrine found in external `~/.agents/skills` orchestration
+    skills (build-handoff "Local GPU first"), which the default profile loads
+    via `skills.external_dirs`.
+  - Stale local-model fallback paragraph in `~/.claude/CLAUDE.md` (GLM-4.7-Flash
+    + `192.168.1.240:8080`).
+  - pi `~/.pi/agent/models.json` llamacpp provider still present (dormant; pi
+    paused).
+  - Delegation/aux/moa/fallback/cron/bots/.env verified clean — nothing else
+    routes model calls locally.
+- **omp profile deleted** (`hermes profile delete omp -y`), gateway already
+  stopped. Archive: `~/Documents/hermes-profile-backups/omp-predelete-20260828.tar.gz`.
+  mav-room untouched per Carter.
+- Vault `projects/llama-cpp-server.md` updated with the durable control-plane
+  facts.
 
 ## Open
 
-- No PLAN session remains. Do **not** start new guardian feature work
-  unless Carter names it.
-- `LOCAL_WORKER_ENABLED` stays off until Pi is unpaused **or** the
-  guardian runner is switched off Pi.
-- Codex/Claude MCP is docs-only until a watched harness-config install.
-- Grok/Hermes MCP needs a process reload to appear in an old live tab;
-  Hermes gateway was not restarted.
-- `.240` remains a LAN completions bypass (and Board/ops GET). Do not
-  deploy nftables/firewall without an allowlist that keeps those GETs.
+- **Q1 (default profile)** — remove the `qwen-llamacpp` custom provider
+  entirely (local access only via `local_worker_submit`), or keep as
+  guardian-front-door but fix metadata (`model: local-llm`, `ctx: 131072`;
+  current `qwen3-llama/65536` silently truncates if trusted).
+- **Q2** — strip "Local GPU first / rollback to Qwen" doctrine from external
+  `~/.agents/skills` build-handoff + parallel-build-handoff (and their
+  `qwen-executor-setup.md` rollback recipes), or leave dormant while pi paused.
+- **Q3** — fix `~/.claude/CLAUDE.md` local-model paragraph (name guardian as
+  the only sanctioned local path, or delete the fallback line).
+- **Q4 — mav-room**: add `guardian_local_worker` MCP or remove its
+  `qwen-llamacpp` entry — **deferred by Carter 2026-08-28; do not touch
+  mav-room without his explicit go.**
+- **Q5** — remove `llamacpp` provider from `~/.pi/agent/models.json`
+  (defense-in-depth; pi's core prompt overrides AGENTS.md bans).
+- Guardian stack itself unchanged this session: `LOCAL_WORKER_ENABLED` still
+  off; no PM2/process changes made.
 
 ## Next session
 
-**No executor job is queued.** This workstream is parked.
+**Repo:** none queued — wait for Carter to decide Q1 (and Q2/Q3/Q5).
+**Prompt:** none — Carter owes the Q1 decision (remove vs keep-and-fix the
+default-profile `qwen-llamacpp` entry) before that work can start.
 
-If Carter names a leftover, possible follow-ups (do not start from this
-prompt alone):
-
-1. Unpause Pi or switch the worker runner off Pi, then a watched
-   `LOCAL_WORKER_ENABLED` flip.
-2. Live-wire the Codex/Claude MCP fragments in `ROLLOUT.md`.
-3. A different repo.
-
-**Repo:** none queued
-**Prompt:** none — wait for Carter
+Note: the previous parked workstream (PLAN sessions 0–6) is fully closed; its
+handoff content lives in journal history + vault. Do not reopen it.
 
 ## Do not
 
-- Do not spawn Pi agents (paused 2026-08-28). Use Hermes.
+- Do not touch the mav-room profile (Carter's standing order 2026-08-28).
+- Do not spawn Pi agents (paused). Use Hermes.
 - Do not enable `LOCAL_WORKER_ENABLED` unattended.
-- Do not point guardian at `pi.cmd`.
 - Do not restart PM2 guardian without WORKBOARD announce.
 - Do not deploy firewall/nftables on `:8081` or `.240`.
-- Extra llama on the R9700; clients on `:8081`; rewriting
-  `690-routing/swap-*.sh`.
+- Do not `git add -A` on a dirty tree at close.
