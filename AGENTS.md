@@ -67,3 +67,8 @@ When told "prepare for session close" (or when a session is clearly ending):
    - `Next session: <repo>`
    - `Prompt: <prompt>`
    - `Start it?`
+
+7. **If Carter says start it:** start that job in a **new** Grok (or named)
+   session with the exact prompt. Do **not** continue the next session's work
+   in the closing conversation — that defeats the close. Confirm the new
+   session received the prompt, then stop.
