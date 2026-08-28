@@ -38,6 +38,42 @@ What's left:
   before e00a003 — harmless while LOCAL_WORKER_ENABLED is absent (runner never
   invoked), but the watched gate's delete-and-re-add will pick it up anyway. -->
 
+<!-- 2026-08-28 (Grok) — Sessions 3–5. S3: Grok+Hermes MCP live in
+config.toml / config.yaml (default models unchanged). Stdio initialize,
+tools/list, reject raw model. Live MCP jobs: grok
+qj_3e8a4e29129a4a718d5550e7ca8f652a GROK_MCP.txt=S34_GROK_OK; hermes
+qj_c926913dc0db46b98d7329a6aa42d62b HERMES_MCP.txt=S34_HERMES_OK. S4:
+planning 409 consult_gate_required; gated planning 503 consult_unavailable;
+frontier 409 requires_cloud; AIWA stayed clerk. Preference table in
+LOCAL-WORKER-MANAGER.md + qwen-queue/harness/CALIBRATION.md. S5: DeepSeek
+SubagentProvider adapter (fixed tool_execution, parent cwd + run id, cancel);
+Pi native skipped. Flag rolled back; local-llm stopped. Session 6 remains. -->
+
+<!-- 2026-08-28 (Grok) — Watched smoke attempt 2 PASS, then rolled back.
+Operator: this Grok session (no Pi orchestrator). Elevated pm2 jlist showed
+llama-guardian online, flag absent. Delete-and-re-add with
+LOCAL_WORKER_ENABLED=true (temp ecosystem line, reverted before any commit;
+pm2 save). GET /__guardian/workers enabled=true. One tool_execution job
+qj_d52cb887f9ae49db9ef440d322595a9f source=grok require_local standard in
+D:\Workspace\tmp\guardian-smoke-2026-08-28; 202 queued → succeeded in ~25s;
+SMOKE.txt == GATE_ATTEMPT_2_OK; worker pid 19984 dead; AIWA stayed clerk;
+no model/profile/endpoint in the stored worker spec. Flag rolled back
+(delete-and-re-add from clean ecosystem + pm2 stop local-llm + save).
+Post-rollback: workers_enabled=false, llama_up=false, :8081 down, :8080
+pid 36156, RAM ~43.3 GB. Session 3 (Grok+Hermes MCP) is eligible. Pi
+orchestrators remain paused; the guardian Pi runner worked for this one
+watched job. -->
+
+<!-- 2026-08-28 (Grok pickup) — Pi agents paused; attempt-1 attribution corrected.
+Carter: attempt 1 was Hermes GLM-5.3, not Codex. Hermes launched Pi because
+build-handoff/orca-cli default to `pi --provider …`; leftover process was
+`pi --provider llamacpp --model local-llm` (circular guardian kill). Pi also
+has an install-location split (independent global npm vs Hermes-managed;
+pi.cmd truncates multi-line prompts) found earlier tonight.
+Standing rule saved: do not spawn Pi; all agent work → Hermes. Guardian
+source still names Pi as the worker subprocess — LOCAL_WORKER_ENABLED stays
+off until Pi is unpaused or that runner is switched. Watched gate not run. -->
+
 <!-- 2026-08-28 (later, close #2) — Chief. Gate attempt 1 aborted by Carter during
 preflight; stack verified healthy after (guardian ok, local-llm online, flag absent).
 Postmortem documented in docs/NEXT-SESSION.md: (1) PM2 resurrect had left

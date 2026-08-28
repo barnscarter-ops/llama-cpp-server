@@ -2,7 +2,7 @@
 
 **Workstream:** Local models as controlled subagent workers
 
-**Status:** Planned. Source baseline exists locally and is uncommitted. No
+**Status:** Sessions 0–4 done. Session 5 DeepSeek-only (Pi native skipped). Watched smoke **PASS**. Flag rolled back. **Pi orchestrators paused 2026-08-28**. No
 session may enable local workers, modify PM2, swap AIWA, alter LocalLlmBoard,
 or change a live harness configuration without the separate watched approval
 gate in this plan.
@@ -289,15 +289,16 @@ than duplicate policy.
 - DeepSeek Harness `packages/subagent/` and `packages/workflow/` provider
   registration interfaces
 
-**Tasks:** implement a Pi-native work-class mapping and a DeepSeek Harness
-`SubagentProvider` adapter after reading their current interfaces; ensure each
-passes parent run identity, workspace, cancellation, and a fixed work class to
-guardian. Do not invent a provider API from documentation alone.
+**Tasks:** implement a DeepSeek Harness `SubagentProvider` adapter after
+reading its current interfaces; pass parent run identity, workspace,
+cancellation, and a **fixed** work class to guardian. Do not invent a
+provider API from documentation alone. **Pi native mapping is skipped**
+(Pi orchestrators paused 2026-08-28) — do not add a Pi subagent extension.
 
-**Verification:** each runtime's focused test suite plus a watched disposable
-smoke after code review. Confirm native paths cannot bypass guardian.
+**Verification:** DeepSeek adapter unit tests plus confirmation it cannot
+select a raw local model. No Pi native smoke.
 
-**Commit:** `feat(harness): route Pi and DeepSeek workers through guardian`
+**Commit:** `feat(harness): route DeepSeek workers through guardian`
 
 ## Session 6 — Codex/Claude fallback and bypass-control decision
 
