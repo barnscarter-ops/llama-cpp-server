@@ -37,3 +37,19 @@ What's left:
 - pi runtime resolution is source-only; the running guardian process was started
   before e00a003 — harmless while LOCAL_WORKER_ENABLED is absent (runner never
   invoked), but the watched gate's delete-and-re-add will pick it up anyway. -->
+
+<!-- 2026-08-28 (later, close #2) — Chief. Gate attempt 1 aborted by Carter during
+preflight; stack verified healthy after (guardian ok, local-llm online, flag absent).
+Postmortem documented in docs/NEXT-SESSION.md: (1) PM2 resurrect had left
+llama-guardian STOPPED while a stale detached process served :8080 — health 200
+did not prove PM2 registration; recovered + pm2 save. (2) Executor launched on
+llamacpp/local-llm — behind the guardian it manages — pm2-stop'd its own brain
+mid-turn; ops executors must run off-stack (NIM/cloud). (3) TUI spinner opacity
+on NIM free tier gave Carter no visibility → stopped. Launch recipe for attempt 2
+written: pm2 jlist assert first, off-stack executor, per-step WORKBOARD/logging,
+explicit "no PM2 stops except the prescribed re-add" constraint.
+Also shipped: pi models.json local-llm entry was stale GLM-4.7-Flash/49152 →
+Qwen3.6-35B-A3B/131072 (why Orca showed 49k); vault pi AGENTS.md bootstrap
+updated (AIWA rename + seat facts); executor 'nul' reserved-name residue deleted
+via Win32 DeleteFileW. Two pre-existing "Pi ready" terminals closed in error
+during cleanup — flagged. Tree clean at 21f460d; nothing to commit. -->
