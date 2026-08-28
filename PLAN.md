@@ -2,10 +2,13 @@
 
 **Workstream:** Local models as controlled subagent workers
 
-**Status:** Sessions 0–4 done. Session 5 DeepSeek-only (Pi native skipped). Watched smoke **PASS**. Flag rolled back. **Pi orchestrators paused 2026-08-28**. No
-session may enable local workers, modify PM2, swap AIWA, alter LocalLlmBoard,
-or change a live harness configuration without the separate watched approval
-gate in this plan.
+**Status:** Sessions 0–6 done. Session 5 DeepSeek-only (Pi native skipped).
+Session 6 docs published (Codex/Claude MCP fallback; `:8081` / `.240`
+inventory; enforcement proposed not deployed). Watched smoke **PASS**. Flag
+rolled back. **Pi orchestrators paused 2026-08-28**. No session may enable
+local workers, modify PM2, swap AIWA, alter LocalLlmBoard, or change a live
+harness configuration without the separate watched approval gate in this
+plan.
 
 ## Goal
 
@@ -306,7 +309,8 @@ select a raw local model. No Pi native smoke.
 about stricter direct-upstream controls.
 
 **Target files:** canonical local-LLM architecture, guardian documentation,
-and source-owned harness instructions discovered in earlier sessions.
+`LOCAL-WORKER-MANAGER.md`, `qwen-queue/local-worker-mcp.py` (source identity
+only), and `qwen-queue/harness/ROLLOUT.md`.
 
 **Tasks:** document the MCP fallback for Codex and Claude; clearly state that
 their native subagents remain cloud unless a supported provider override is

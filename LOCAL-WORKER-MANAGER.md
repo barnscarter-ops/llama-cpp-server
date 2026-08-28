@@ -52,8 +52,12 @@ Watched smoke passed 2026-08-28 (`qj_d52cb887f9ae49db9ef440d322595a9f`); the
 PM2 flag was rolled back to off. Grok and Hermes MCP instances are live in
 their harness configs (Session 3). DeepSeek Harness has a native
 `SubagentProvider` adapter in-repo (Session 5). **Pi native path is skipped**
-while Pi orchestrators are paused. Codex and Claude stay on the same MCP tool
-until a supported native provider override exists.
+while Pi orchestrators are paused. Codex and Claude stay on the same MCP
+adapter (`--source codex` / `--source claude`). Their **native** subagents
+remain cloud unless a DeepSeek-style provider override is verified — none
+is, as of Session 6. Fragments and the `:8081` / `.240` inventory:
+`qwen-queue/harness/ROLLOUT.md`. Do not live-edit Codex or Claude configs
+from this workstream.
 
 ## Preference table (Session 4, 2026-08-28)
 
@@ -104,3 +108,48 @@ queued, not complete; only a terminal status with a durable result is
 completion evidence. Escalate visibly on `requires_cloud`,
 `consult_gate_required`, `consult_unavailable`, or `local_workers_disabled`.
 Never pass model, profile, endpoint, runner, or executable.
+
+## Codex / Claude MCP fallback (Session 6, not live)
+
+Native Codex child agents and Claude Agent/Task runs stay on their cloud
+defaults (`gpt-5.6-terra`, `claude-fable-5`). Live MCP catalogs are `gws`
+(+ Codex `node_repl`) only. A custom OpenAI-compatible `base_url` aimed at
+`:8080` or `:8081` is **not** a supported worker override.
+
+Install these fragments only in a watched harness-config change. Python and
+adapter paths match the live Grok/Hermes rows.
+
+Codex (`%USERPROFILE%\\.codex\\config.toml`):
+
+```toml
+[mcp_servers.guardian_local_worker]
+command = 'C:\Users\carte\AppData\Local\Programs\Python\Python312\python.exe'
+args = ['D:\Workspace\Infrastructure\llama-cpp-server\qwen-queue\local-worker-mcp.py', '--source', 'codex']
+```
+
+Claude Code (add the key under `mcpServers` in `%USERPROFILE%\\.claude.json`;
+do not replace the object):
+
+```json
+"guardian_local_worker": {
+  "command": "C:\\Users\\carte\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "args": [
+    "D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py",
+    "--source",
+    "claude"
+  ]
+}
+```
+
+## Direct upstreams and enforcement (Session 6, not deployed)
+
+Live: guardian `:8080` ok, `:8081` not listening, AIWA `.240` clerk reachable,
+workers off. `:8081` already binds loopback. `.240` binds `0.0.0.0` with no
+API key — that is the remaining completions bypass, and also Board
+`SeatProbe` + operator rollback.
+
+**Do not deploy firewall, nftables, API keys, or AppLocker from this
+plan.** Recommended stay: current binds + policy + the existing
+single-llama enforcer. Optional later (watched): `:8081` API key, or an
+AIWA POST allowlist that still permits Board GET and rollback curls.
+Full table, rollback, and compatibility: `qwen-queue/harness/ROLLOUT.md`.

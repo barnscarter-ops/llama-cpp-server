@@ -73,6 +73,17 @@ def test_job_operations_validate_ids_and_call_guardian(monkeypatch, name):
     assert mcp.call_tool(name, {"job_id": "../../etc"}, "grok")["isError"] is True
 
 
+def test_codex_and_claude_are_fixed_sources():
+    assert "codex" in mcp.SOURCE_CHOICES
+    assert "claude" in mcp.SOURCE_CHOICES
+    assert mcp.call_tool("local_worker_submit", {
+        "work_class": "tool_execution", "task": "x", "workspace": r"D:\Workspace", "model": "raw",
+    }, "codex")["isError"] is True
+    assert mcp.call_tool("local_worker_submit", {
+        "work_class": "tool_execution", "task": "x", "workspace": r"D:\Workspace", "model": "raw",
+    }, "claude")["isError"] is True
+
+
 def test_unknown_and_arbitrary_arguments_are_rejected():
     assert mcp.call_tool("raw_model", {}, "grok")["isError"] is True
     assert mcp.call_tool("local_worker_submit", {

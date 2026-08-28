@@ -35,7 +35,7 @@ def main() -> int:
         if word in serialized:
             print("FAIL tools catalog contains", word)
             return 1
-    for source in ("grok", "hermes"):
+    for source in ("grok", "hermes", "codex", "claude"):
         replies = _run_stdio(source, [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},

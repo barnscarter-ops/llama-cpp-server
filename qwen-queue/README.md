@@ -71,6 +71,13 @@ Main models unchanged. See `LOCAL-WORKER-MANAGER.md` for the live fragments
 and the Session 4 preference table. DeepSeek native adapter:
 `qwen-queue/harness/deepseek-guardian-provider.mjs`. Pi native path skipped.
 
+### Codex and Claude (MCP fallback; not live-installed)
+
+`--source codex` and `--source claude` are valid adapter launches. Native
+Codex/Claude subagents remain cloud unless a supported provider override is
+verified (none is). Fragments, bypass inventory (`:8081` / `.240`), and the
+propose-only enforcement decision: `qwen-queue/harness/ROLLOUT.md`.
+
 Parent contract: use `planning`/`deep_analysis` for architecture only with an
 explicit gate; use executor classes for bounded implementation. Poll or
 cancel by `job_id`. Accepted means queued, not complete; completion requires
