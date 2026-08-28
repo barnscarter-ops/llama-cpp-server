@@ -41,9 +41,9 @@ return typed gate/unavailable responses; frontier quality returns
 `requires_cloud`. The caller never supplies a profile, endpoint, model alias,
 or runner command.
 
-The feature defaults **off** (`LOCAL_WORKER_ENABLED=false`) and no current PM2
-environment enables it. Starting a worker may wake the Workbench model, so do
-not enable or test it against live inference without Carter's approval.
+The feature defaults **off** (`LOCAL_WORKER_ENABLED=false`). Watched smoke
+passed 2026-08-28 and the flag was rolled back. Starting a worker may wake the
+Workbench model; do not enable it unattended.
 
 Worker lifecycle safety: queued cancellation remains a cheap terminal
 `cancelled` transition. A running worker is cancelled by terminating its full
@@ -65,31 +65,11 @@ Use one instance per harness, changing only `--source` (`grok`, `hermes`, `pi`,
 `deepseek-harness`, `codex`, or `claude`). The exposed tools submit, poll, and
 cancel durable worker jobs.
 
-### Grok and Hermes source-owned configuration
+### Grok and Hermes configuration (live 2026-08-28)
 
-These exact fragments are reviewable instructions for a later watched harness
-change. Session 2 does not edit the live files. Preserve existing main and
-cloud delegation settings and add one server with a fixed source.
-
-Grok (`%USERPROFILE%\\.grok\\config.toml`):
-
-```toml
-[mcp_servers.guardian_local_worker]
-command = "python"
-args = ["D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py", "--source", "grok"]
-```
-
-Hermes (`%LOCALAPPDATA%\\hermes\\config.yaml`):
-
-```yaml
-mcp_servers:
-  guardian_local_worker:
-    command: python
-    args:
-      - D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py
-      - --source
-      - hermes
-```
+Main models unchanged. See `LOCAL-WORKER-MANAGER.md` for the live fragments
+and the Session 4 preference table. DeepSeek native adapter:
+`qwen-queue/harness/deepseek-guardian-provider.mjs`. Pi native path skipped.
 
 Parent contract: use `planning`/`deep_analysis` for architecture only with an
 explicit gate; use executor classes for bounded implementation. Poll or

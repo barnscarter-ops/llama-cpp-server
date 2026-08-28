@@ -48,26 +48,39 @@ Nothing is live until a watched, approved configuration change sets
 performs the required delete-and-start cycle. Do not do that as part of source
 authoring or offline verification.
 
-Start with one manual `workbench-executor` job in a disposable repository, then
-wire the `local-worker-mcp.py --source grok` and `--source hermes` instances.
-Pi can subsequently use its native package path; DeepSeek Harness can add a
-native `SubagentProvider`; Codex and Claude can use the same MCP tool unless a
-supported native provider override becomes available.
+Watched smoke passed 2026-08-28 (`qj_d52cb887f9ae49db9ef440d322595a9f`); the
+PM2 flag was rolled back to off. Grok and Hermes MCP instances are live in
+their harness configs (Session 3). DeepSeek Harness has a native
+`SubagentProvider` adapter in-repo (Session 5). **Pi native path is skipped**
+while Pi orchestrators are paused. Codex and Claude stay on the same MCP tool
+until a supported native provider override exists.
 
-## Grok/Hermes MCP wiring (source-owned instructions)
+## Preference table (Session 4, 2026-08-28)
 
-These exact fragments are prepared for a later watched configuration change;
-do not copy them into live configuration during this source session. The live
-files are `%USERPROFILE%\\.grok\\config.toml` and
-`%LOCALAPPDATA%\\hermes\\config.yaml`. Keep existing main and cloud
-delegation models unchanged.
+| Parent declaration | Guardian / parent action | Evidence |
+|---|---|---|
+| Bounded `tool_execution`, `quality_floor=standard`, `prefer_local` or `require_local` | Admit Workbench Pi runner | Attempt 2: job succeeded ~25s, `SMOKE.txt` correct, source=grok |
+| Bounded `mechanical_execution`, standard | Admit AIWA clerk (no swap) | Policy map + Session 4 fixture |
+| `planning` / `deep_analysis` without `gate` | `consult_gate_required` (409); no swap | Policy + Session 4 probe |
+| `planning` / `deep_analysis` with `gate=operator` or `frontier` | `consult_unavailable` until a watched consult; **never auto-swap** | `guardian_workers.py` |
+| `quality_floor=frontier` | `requires_cloud` (409) | Policy + Session 4 probe |
+| Unknown API, Swift/iOS, architecture, safety-critical, ambiguous | Keep cloud; do not submit local | MacBridge S2–S10 (GLM-5.3); local 27–30B failed as executors |
+
+Re-evaluate this table when: local jobs fail twice in a row on the same class, the Workbench or AIWA model changes, context limits change, or the guardian runner is switched off Pi.
+
+## Grok/Hermes MCP wiring (live 2026-08-28)
+
+Live files: `%USERPROFILE%\\.grok\\config.toml` and
+`%LOCALAPPDATA%\\hermes\\config.yaml`. Main models unchanged (Grok `grok-4.6`,
+Hermes `glm-5.3`). Python is the 3.12 install, matching other local MCP
+servers — not the `python` Store stub.
 
 Grok TOML:
 
 ```toml
 [mcp_servers.guardian_local_worker]
-command = "python"
-args = ["D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py", "--source", "grok"]
+command = 'C:\Users\carte\AppData\Local\Programs\Python\Python312\python.exe'
+args = ['D:\Workspace\Infrastructure\llama-cpp-server\qwen-queue\local-worker-mcp.py', '--source', 'grok']
 ```
 
 Hermes YAML:
@@ -75,15 +88,19 @@ Hermes YAML:
 ```yaml
 mcp_servers:
   guardian_local_worker:
-    command: python
+    command: C:\Users\carte\AppData\Local\Programs\Python\Python312\python.exe
     args:
-      - D:\\Workspace\\Infrastructure\\llama-cpp-server\\qwen-queue\\local-worker-mcp.py
+      - D:\Workspace\Infrastructure\llama-cpp-server\qwen-queue\local-worker-mcp.py
       - --source
       - hermes
+    enabled: true
+    timeout: 60
 ```
 
 Parent contract: planning/deep-analysis classes are for architecture and
 require their operator/frontier gate; executor classes are for bounded
 implementation. Poll or cancel with the returned `job_id`. Accepted means
 queued, not complete; only a terminal status with a durable result is
-completion evidence.
+completion evidence. Escalate visibly on `requires_cloud`,
+`consult_gate_required`, `consult_unavailable`, or `local_workers_disabled`.
+Never pass model, profile, endpoint, runner, or executable.

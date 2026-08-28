@@ -13,6 +13,8 @@ Local model serving stack (4060 Ti production). Canonical architecture doc:
   `ecosystem.config.cjs`) to origin unless Carter explicitly wants that default.
 - Do not run PM2 from user space; read `C:\ProgramData\pm2\dump.pm2` instead.
 - AIWA/Proxmox changes go through Orca sandboxes and the AIWA deployment runbook.
+- **Pi agents paused (2026-08-28).** Do not spawn `pi` / Pi TUI / Orca `--agent pi`. Agent work goes through **Hermes**. Attempt 1 of the watched worker gate was Hermes GLM-5.3, which launched Pi on `llamacpp/local-llm` and circular-killed guardian. Pi also has a dual-install (independent `%APPDATA%\npm` vs Hermes-managed; `pi.cmd` truncates multi-line prompts). Guardian's coded Pi runner stays as-is in source; do not live-enable `LOCAL_WORKER_ENABLED` until Pi is unpaused or the runner is switched.
+- **Local workers (Grok/Hermes MCP, live 2026-08-28).** Prefer `local_worker_submit` only for bounded `mechanical_execution` / `tool_execution` at `quality_floor=standard`. Do not pass model, profile, endpoint, or runner. Planning/deep_analysis need an explicit `gate`. Frontier, unknown APIs, and architecture stay cloud. Accepted ≠ done — poll `local_worker_status` until a terminal result. If guardian returns `requires_cloud`, `consult_gate_required`, `consult_unavailable`, or `local_workers_disabled`, escalate visibly; do not retry as a raw local model.
 
 ## Agent file conventions
 
