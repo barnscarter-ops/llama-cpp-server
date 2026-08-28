@@ -3,6 +3,14 @@
 Chronological log of session activity. Append a date-stamped entry at session
 close; never rewrite history.
 
+<!-- 2026-08-28 session close — Grok. PLAN Sessions 0–6 complete. Session 6
+commit b5eee2b docs(guardian): publish managed local worker rollout (Codex/
+Claude MCP fragments not live; native subagents stay cloud; :8081 down;
+.240 clerk reachable; enforcement proposed not deployed). Live: guardian
+ok, workers off, llama_up=false, AIWA clerk. WORKBOARD parked + 2026-08-27
+690 swap ANNOUNCE marked done. No next executor job queued. Inbox:
+brain/inbox/2026-08-28-llama-worker-plan-complete.md. -->
+
 <!-- 2026-08-27 — repo doc structure standardized (AGENTS.md contract, docs/NEXT-SESSION.md, journal.md). See AGENTS.md. -->
 
 <!-- 2026-08-28 — Chief (session restart prep). Context: Carter reinstalled pi as an

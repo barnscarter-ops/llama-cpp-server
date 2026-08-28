@@ -1,33 +1,60 @@
-# NEXT SESSION — Session 6: Codex/Claude fallback + bypass-control
+# NEXT SESSION — PLAN complete; workstream parked
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`
-**Workstream:** Guardian-managed local workers (`PLAN.md`)
-**Tip:** `85a63a5` (pushed; `main` = `origin/main`)
-**Live:** guardian `ok` on `:8080`, `llama_up=false`, `LOCAL_WORKER_ENABLED` **off** (`/__guardian/workers` enabled=false), AIWA occupant **clerk**, `swap_owner=true`.
+**Workstream:** Guardian-managed local workers (`PLAN.md`) — **complete**
+**Tip:** `b5eee2b` (pushed; `main` = `origin/main`) plus this close commit
+**Live:** guardian `ok` on `:8080`, `llama_up=false`, `:8081` down,
+`LOCAL_WORKER_ENABLED` **off** (`/__guardian/workers` enabled=false),
+AIWA occupant **clerk**, `swap_owner=true`.
 
 ## Shipped
 
-- Watched smoke **attempt 2 PASS** (operator=Grok, not Pi). Job `qj_d52cb887f9ae49db9ef440d322595a9f`, `SMOKE.txt=GATE_ATTEMPT_2_OK`. Flag rolled back.
-- Attempt 1 attribution: **Hermes GLM-5.3**, not Codex. It launched Pi on `llamacpp/local-llm` and circular-killed guardian.
-- **Pi orchestrators paused.** Agent work → Hermes/Grok. Guardian's coded Pi runner still used for admitted `tool_execution` jobs only.
-- **Session 3:** Grok + Hermes MCP live (`~/.grok/config.toml`, `%LOCALAPPDATA%\hermes\config.yaml`). Defaults unchanged (`grok-4.6` / `glm-5.3`). Live jobs `qj_3e8a4e29129a4a718d5550e7ca8f652a` / `qj_c926913dc0db46b98d7329a6aa42d62b`.
-- **Session 4:** `qwen-queue/harness/CALIBRATION.md`. Prefer local only for bounded standard `tool_execution`. Planning 409/503, frontier 409, AIWA stayed clerk.
-- **Session 5:** DeepSeek `SubagentProvider` at `qwen-queue/harness/deepseek-guardian-provider.mjs` (5/5 tests). **Pi native skipped.**
-- Commits: `17b1e26` `c080df5` `85a63a5`.
+- PLAN Sessions **0–6 complete**. Capstone: `qwen-queue/harness/ROLLOUT.md`.
+- Watched smoke **attempt 2 PASS** then flag rolled back. Job
+  `qj_d52cb887f9ae49db9ef440d322595a9f`, `SMOKE.txt=GATE_ATTEMPT_2_OK`.
+- Attempt 1 was **Hermes GLM-5.3**, not Codex (Pi on `llamacpp/local-llm`,
+  circular guardian kill). **Pi orchestrators paused.**
+- Session 3: Grok + Hermes MCP live. Defaults unchanged (`grok-4.6` /
+  `glm-5.3`). Jobs `qj_3e8a4e29129a4a718d5550e7ca8f652a` /
+  `qj_c926913dc0db46b98d7329a6aa42d62b`.
+- Session 4: prefer local only for bounded standard `tool_execution`.
+  Planning 409/503, frontier 409, AIWA stayed clerk.
+  `qwen-queue/harness/CALIBRATION.md`.
+- Session 5: DeepSeek `SubagentProvider` in-repo. **Pi native skipped.**
+- Session 6: Codex/Claude MCP fragments documented, **not live-installed**.
+  Native subagents stay cloud. `:8081` / `.240` inventory. Enforcement
+  **proposed, not deployed** (keep loopback `:8081` + policy; do not
+  firewall `.240`).
+- WORKBOARD: guardian row parked S0–S6; stale 2026-08-27 690 GPU swap
+  ANNOUNCE marked done (occupant clerk).
+- Commits: `17b1e26` `c080df5` `85a63a5` `b5eee2b`.
 
 ## Open
 
-- **Session 6** (last PLAN session): Codex/Claude MCP fallback docs; inventory `:8081` and `.240` bypass; propose (do not deploy) enforcement.
-- Pi native path still skipped until Carter unpauses Pi.
-- `LOCAL_WORKER_ENABLED` stays off unless a watched flip.
-- This Grok tab does not have the new MCP until config reload. Hermes gateway was not restarted.
-- Stale WORKBOARD row: 690 GPU swap ANNOUNCE 2026-08-27 (occupant is clerk).
+- No PLAN session remains. Do **not** start new guardian feature work
+  unless Carter names it.
+- `LOCAL_WORKER_ENABLED` stays off until Pi is unpaused **or** the
+  guardian runner is switched off Pi.
+- Codex/Claude MCP is docs-only until a watched harness-config install.
+- Grok/Hermes MCP needs a process reload to appear in an old live tab;
+  Hermes gateway was not restarted.
+- `.240` remains a LAN completions bypass (and Board/ops GET). Do not
+  deploy nftables/firewall without an allowlist that keeps those GETs.
 
 ## Next session
 
-**Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`
+**No executor job is queued.** This workstream is parked.
 
-**Prompt:** Read `docs/NEXT-SESSION.md` and `PLAN.md` Session 6. Execute Session 6 only: document the MCP fallback for Codex and Claude (their native subagents remain cloud unless a supported provider override is verified); inventory direct access paths to Workbench `:8081` and AIWA `.240`; propose — do not deploy — network/process enforcement with rollback and compatibility impact. No firewall, no PM2 mutation, no Pi spawn, no `LOCAL_WORKER_ENABLED` flip. Commit `docs(guardian): publish managed local worker rollout`.
+If Carter names a leftover, possible follow-ups (do not start from this
+prompt alone):
+
+1. Unpause Pi or switch the worker runner off Pi, then a watched
+   `LOCAL_WORKER_ENABLED` flip.
+2. Live-wire the Codex/Claude MCP fragments in `ROLLOUT.md`.
+3. A different repo.
+
+**Repo:** none queued
+**Prompt:** none — wait for Carter
 
 ## Do not
 
@@ -35,4 +62,6 @@
 - Do not enable `LOCAL_WORKER_ENABLED` unattended.
 - Do not point guardian at `pi.cmd`.
 - Do not restart PM2 guardian without WORKBOARD announce.
-- Extra llama on the R9700; clients on `:8081`; rewriting `690-routing/swap-*.sh`.
+- Do not deploy firewall/nftables on `:8081` or `.240`.
+- Extra llama on the R9700; clients on `:8081`; rewriting
+  `690-routing/swap-*.sh`.
