@@ -38,6 +38,11 @@ What's left:
   before e00a003 — harmless while LOCAL_WORKER_ENABLED is absent (runner never
   invoked), but the watched gate's delete-and-re-add will pick it up anyway. -->
 
+<!-- 2026-08-28 session close — Grok. Close docs in this commit. Live:
+guardian ok, workers_enabled=false, llama_up=false, AIWA clerk. Handoff:
+docs/NEXT-SESSION.md (Session 6). Inbox:
+brain/inbox/2026-08-28-llama-worker-s3-s5-close.md. WORKBOARD parked. -->
+
 <!-- 2026-08-28 (Grok) — Sessions 3–5. S3: Grok+Hermes MCP live in
 config.toml / config.yaml (default models unchanged). Stdio initialize,
 tools/list, reject raw model. Live MCP jobs: grok
