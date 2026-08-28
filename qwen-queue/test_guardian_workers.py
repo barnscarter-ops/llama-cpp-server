@@ -46,13 +46,31 @@ class GuardianWorkerTests(unittest.TestCase):
         self.assertIn("--approve", command)
         self.assertTrue(is_worker_job({"_guardian_worker": spec}))
 
-    def test_windows_uses_hermes_managed_pi_runtime_without_path_lookup(self):
+    def test_windows_prefers_global_npm_pi_over_hermes_managed_runtime(self):
+        global_home = Path(self.temp_dir.name) / "npm-home"
+        hermes_home = Path(self.temp_dir.name) / "hermes" / "node"
+        global_cli = global_home / "npm" / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
+        hermes_cli = hermes_home / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
+        global_cli.parent.mkdir(parents=True)
+        global_cli.touch()
+        hermes_cli.parent.mkdir(parents=True)
+        hermes_cli.touch()
+        (hermes_home / "node.exe").touch()
+        system_node = Path(self.temp_dir.name) / "nodejs" / "node.exe"
+        system_node.parent.mkdir(parents=True)
+        system_node.touch()
+        env = {"APPDATA": str(global_home), "ProgramFiles": str(self.temp_dir.name), "LOCALAPPDATA": self.temp_dir.name}
+        with patch.dict(os.environ, env, clear=False), patch("guardian_workers.sys.platform", "win32"), patch("guardian_workers.shutil.which") as which:
+            self.assertEqual([str(system_node), str(global_cli)], _pi_command())
+        which.assert_not_called()
+
+    def test_windows_falls_back_to_hermes_managed_runtime_without_global_pi(self):
         hermes_home = Path(self.temp_dir.name) / "hermes" / "node"
         cli = hermes_home / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
         cli.parent.mkdir(parents=True)
         (hermes_home / "node.exe").touch()
         cli.touch()
-        with patch.dict(os.environ, {"LOCALAPPDATA": self.temp_dir.name}, clear=False), patch("guardian_workers.sys.platform", "win32"), patch("guardian_workers.shutil.which") as which:
+        with patch.dict(os.environ, {"APPDATA": str(Path(self.temp_dir.name) / "no-such-roaming"), "LOCALAPPDATA": self.temp_dir.name}, clear=False), patch("guardian_workers.sys.platform", "win32"), patch("guardian_workers.shutil.which") as which:
             self.assertEqual([str(hermes_home / "node.exe"), str(cli)], _pi_command())
         which.assert_not_called()
 

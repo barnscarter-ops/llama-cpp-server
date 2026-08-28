@@ -92,6 +92,17 @@ def _pi_command() -> list[str]:
     if configured:
         return [configured]
     if sys.platform == "win32":
+        # Preferred: Carter's independent global npm install, driven by the
+        # system Node runtime. Never route through the pi.cmd shim here —
+        # cmd.exe wrappers truncate multi-line prompt arguments.
+        appdata = os.environ.get("APPDATA")
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        system_node = Path(program_files) / "nodejs" / "node.exe"
+        if appdata and system_node.is_file():
+            cli = Path(appdata) / "npm" / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
+            if cli.is_file():
+                return [str(system_node), str(cli)]
+        # Fallback: the Hermes-managed runtime.
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             pi_home = Path(local_app_data) / "hermes" / "node"
