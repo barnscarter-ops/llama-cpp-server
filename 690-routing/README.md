@@ -10,6 +10,7 @@ One model at a time on the R9700 (`http://192.168.1.240:8080`). Boot default is 
 - **Announce** any llama restart on `C:\Workspace\Active\brain\WORKBOARD.md` first.
 - **Night 4 / CT rebuild:** live copies on CT 210 can die; keep the same bytes in this `690-routing/` git tree (`barnscarter-ops/llama-cpp-server`). Gate 4 is **keep/repair CT 210**, not the stale host unit in `aiwa-transplant/night4/llama-server.service`.
 - **Manager merge (PLAN READY):** do not rewrite these scripts. Plan: repo-root `PLAN.md` / `D:\Workspace\Active\WindowsApps\LocalLlmBoard\PLAN.md`. Pickup: repo-root `HANDOFF.md`.
+- **R9700 telemetry (built 2026-08-29, deploy approval-gated):** permanent monitoring stack in `../r9700-monitor/` — debugfs collector -> node_exporter textfile -> homelab-prometheus -> Grafana. After deploy: dashboard `http://192.168.1.12:3000/d/r9700-aiwa`, Prometheus `http://192.168.1.12:9090` (query `r9700_temp_c`). Terminal fallback unchanged: `tools/r9700-watch.py` / `r9700-watch-live.py`. Deploy scripts + operator card in `../r9700-monitor/README.md` (run on AIWA as root, no consult running).
 
 ## Session 4 smokes (2026-08-22)
 
