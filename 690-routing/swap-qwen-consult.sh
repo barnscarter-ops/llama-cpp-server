@@ -1,6 +1,7 @@
 #!/bin/bash
 # Stop systemd Nemotron clerk and serve Qwen 3.8 27B consult on :8080.
 # Thinking ON — do not pass --reasoning off.
+# Vision ON via --mmproj (permanent 2026-08-29, Carter-approved).
 # Usage: /opt/llama/swap-qwen-consult.sh
 set -euo pipefail
 
@@ -40,6 +41,7 @@ nohup "$BIN" \
   -m "$MODEL" \
   -md "$MTP" \
   --spec-type draft-mtp \
+  --mmproj /opt/llama/models/mmproj-Qwen3.8-27B-F16.gguf \
   --host 0.0.0.0 --port 8080 \
   -ngl 999 -c 262144 \
   -fa on -ctk q8_0 -ctv q8_0 \

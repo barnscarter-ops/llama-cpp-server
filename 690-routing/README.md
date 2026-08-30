@@ -2,7 +2,8 @@
 
 One model at a time on the R9700 (`http://192.168.1.240:8080`). Boot default is Nemotron (systemd `llama-server.service`, `--reasoning off`). Qwen is a thinking-on consult, never a pi worker.
 
-- **Swap to consult:** `lxc-attach -n 210 -- /opt/llama/swap-qwen-consult.sh` (alias `qwen3.8-27b`, 262k, no `--reasoning off`).
+- **Swap to consult:** `lxc-attach -n 210 -- /opt/llama/swap-qwen-consult.sh` (alias `qwen3.8-27b`, 262k, no `--reasoning off`, **vision ON via `--mmproj` mmproj-Qwen3.8-27B-F16.gguf** — permanent 2026-08-29).
+- **Vision test:** send `image_url` content to `/v1/chat/completions`; the mmproj lives in `/opt/llama/models/`. If the mmproj file is missing (CT rebuild), the swap script fails — re-fetch `mmproj-F16.gguf` from `unsloth/Qwen3.8-27B-GGUF`.
 - **Swap back to clerk:** `lxc-attach -n 210 -- /opt/llama/swap-nemo-clerk.sh` (starts systemd; alias `nemotron-3.5-lightning-30b-a3b`).
 - **Which is up:** `curl -sS --max-time 5 http://192.168.1.240:8080/v1/models` — walk away only when the id is the clerk.
 - **pkill trap:** `pkill -f llama-server` self-kills. Use `pkill -f '[l]lama-server'` and only after `systemctl stop` if the clerk unit is running.
