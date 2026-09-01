@@ -309,7 +309,9 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(body["seats"]["aiwa"]["reachable"])
 
-        text = json.dumps(body)
+        # served counters are required to carry the consult key; the no-consult
+        # claim is scoped to the seats document itself.
+        text = json.dumps(body["seats"])
         self.assertNotIn("qwen3.8-27b", text)
         self.assertNotIn("consult", text)
 
@@ -545,7 +547,12 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         resp = await self.client.get("/__guardian/seats")
         self.assertEqual(200, resp.status, await resp.text())
         body = await resp.json()
-        self.assertEqual({"aiwa", "workbench", "swap_owner"}, set(body.keys()))
+        self.assertEqual(
+            {"aiwa", "workbench", "swap_owner", "served", "served_total"},
+            set(body.keys()),
+        )
+        self.assertEqual({"glm", "clerk", "consult"}, set(body["served"].keys()))
+        self.assertEqual(0, body["served_total"])
         self.assertEqual("glm", body["workbench"]["occupant"])
         self.assertIsNone(body["workbench"]["model_id"])
         self.assertTrue(
@@ -559,7 +566,9 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["aiwa"]["reachable"])
         self.assertEqual(os.environ["AIWA_BASE"], body["aiwa"]["endpoint"])
 
-        text = json.dumps(body)
+        # "no consult serving" claim is scoped to the aiwa seat document; the
+        # served counters legitimately carry a consult key.
+        text = json.dumps(body["aiwa"])
         self.assertNotIn("qwen3.8-27b", text)
         self.assertNotIn("consult", text)
 

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from typing import Any
 
 from aiohttp import ClientError, ClientTimeout, web
@@ -173,6 +174,22 @@ def guardian_error(
     return web.json_response(payload, status=status)
 
 
+def served_headers(seat: str, model_id: str | None) -> tuple[dict[str, str], str]:
+    """Build the X-Guardian-* served-model-of-record headers for a response.
+
+    model_id None → seat + request-id only, for guardian error responses where
+    the seat resolved but nothing was served upstream (no Served-Model header).
+    """
+    request_id = str(uuid.uuid4())
+    headers = {
+        "X-Guardian-Seat": seat,
+        "X-Guardian-Request-Id": request_id,
+    }
+    if model_id:
+        headers["X-Guardian-Served-Model"] = model_id
+    return headers, request_id
+
+
 def llama_offline_response() -> web.Response:
     msg = "The local model is asleep (idle). Send a chat to wake it."
     return guardian_error(msg, "llama_offline", 503)
@@ -309,6 +326,8 @@ async def forward_aiwa(
     guardian.last_aiwa_activity = now
     if seat == "consult":
         guardian.last_aiwa_consult_activity = now
+    serving_id = SERVING_IDS[seat]
+    served_hdrs, request_id = served_headers(seat, serving_id)
     try:
         async with client.request(
             request.method, upstream_url, headers=fwd_headers, data=body, timeout=timeout
@@ -320,18 +339,24 @@ async def forward_aiwa(
             for k, v in upstream_resp.headers.items():
                 if k.lower() not in HOP_BY_HOP:
                     resp.headers[k] = v
+            resp.headers.update(served_hdrs)
             await resp.prepare(request)
             async for chunk in upstream_resp.content.iter_any():
                 await resp.write(chunk)
             await resp.write_eof()
+            if upstream_resp.status < 400:
+                guardian.served.record(seat, serving_id, request_id)
             return resp
     except (ClientError, asyncio.TimeoutError) as e:
         log.warning(f"AIWA upstream error: {e}")
-        return guardian_error(
+        resp = guardian_error(
             f"AIWA upstream error: {e}",
             "aiwa_unreachable",
             503,
         )
+        err_hdrs, _ = served_headers(seat, None)
+        resp.headers.update(err_hdrs)
+        return resp
 
 
 async def handle_aiwa_completion(
@@ -343,29 +368,55 @@ async def handle_aiwa_completion(
     guardian,
 ) -> web.StreamResponse:
     """Occupant check + optional rewrite + forward_aiwa for clerk/consult."""
+    seat_hdrs, request_id = served_headers(seat, None)
     if aiwa_proxy_loopback_only() and not is_loopback_remote(request.remote):
-        return guardian_error(
+        resp = guardian_error(
             "AIWA reverse-proxy is loopback-only until Phase 3.",
             "aiwa_proxy_loopback_only",
             403,
         )
+        resp.headers.update(seat_hdrs)
+        return resp
 
     occupant, model_id, reachable = await occupant_cache.get(client)
     if not reachable or occupant in {None, "", "unknown"}:
-        return guardian_error(
+        resp = guardian_error(
             "AIWA is unreachable or occupant is unknown.",
             "aiwa_unreachable",
             503,
         )
+        resp.headers.update(seat_hdrs)
+        return resp
     effective_seat = seat
     if occupant != seat:
         if seat == "consult" and occupant == "clerk":
-            # Consult swap is gated (Carter or a frontier model). Agents that
-            # ask for Qwen while clerk occupies get clerk, not a 409 and not a swap.
-            log.info("downgraded_consult=clerk; consult swap is gated")
-            effective_seat = "clerk"
+            # Consult swap is gated (Carter or a frontier model). A request
+            # carrying X-Guardian-Gate: operator|frontier (or ?gate=) runs the
+            # same operator swap /__guardian/swap performs; without it agents
+            # asking for Qwen while clerk occupies get clerk, not a 409.
+            gate = (
+                request.headers.get("X-Guardian-Gate")
+                or request.query.get("gate")
+                or ""
+            ).strip().lower()
+            import aiwa_swap  # local: aiwa_swap imports fleet_router at module level
+
+            if gate and gate in aiwa_swap.CONSULT_SWAP_GATES:
+                log.info("consult_gate_honored=%s", gate)
+                swap_resp = await aiwa_swap.perform_swap("consult", client, gate=gate)
+                if swap_resp.status == 200:
+                    effective_seat = "consult"
+                else:
+                    swap_resp.headers["X-Guardian-Seat"] = seat
+                    swap_resp.headers["X-Guardian-Request-Id"] = request_id
+                    return swap_resp
+            else:
+                log.info("downgraded_consult=clerk; consult swap is gated")
+                effective_seat = "clerk"
         else:
-            return aiwa_wrong_occupant_response(occupant, model_id, seat)
+            resp = aiwa_wrong_occupant_response(occupant, model_id, seat)
+            resp.headers.update(seat_hdrs)
+            return resp
 
     serving_id = SERVING_IDS[effective_seat]
     body = rewrite_model_in_body(body, serving_id)

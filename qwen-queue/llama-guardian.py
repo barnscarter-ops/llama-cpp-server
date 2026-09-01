@@ -45,6 +45,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,6 +65,7 @@ from guardian_workers import (
 )
 from fleet_router import (
     LEGACY_MODEL_ALIASES,
+    SERVING_IDS,
     extract_model_from_body,
     fleet_default_seat,
     fleet_router_enabled,
@@ -73,6 +75,7 @@ from fleet_router import (
     llama_offline_response,
     seat_for_model,
     seats_snapshot,
+    served_headers,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,6 +206,49 @@ logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 log = logging.getLogger("guardian")
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  SERVED-MODEL OF RECORD
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ServedTracker:
+    """In-process per-seat served-model of record (X-Guardian-* on responses).
+
+    Incremented when a completion response is fully handed back to the caller
+    (streaming counts on stream finish), success only. Surfaced on
+    /__guardian/health and /__guardian/seats so Chief can record which model
+    actually served a job instead of bracketing the seat occupant.
+    """
+
+    SEATS = ("glm", "clerk", "consult")
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.seats: dict[str, dict] = {
+            seat: {
+                "count": 0,
+                "last_model_id": None,
+                "last_at": None,
+                "last_request_id": None,
+            }
+            for seat in self.SEATS
+        }
+
+    def record(self, seat: str, model_id: str | None, request_id: str | None) -> None:
+        entry = self.seats[seat]
+        entry["count"] += 1
+        entry["last_model_id"] = model_id
+        entry["last_at"] = datetime.now(timezone.utc).isoformat()
+        entry["last_request_id"] = request_id
+        self.total += 1
+
+    def snapshot(self) -> dict:
+        return {
+            "served_total": self.total,
+            "served": {seat: dict(entry) for seat, entry in self.seats.items()},
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  GUARDIAN STATE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -253,6 +299,9 @@ class Guardian:
         # AIWA activity clocks (fleet router). Never used by the GLM idle reaper.
         self.last_aiwa_activity = 0.0
         self.last_aiwa_consult_activity = 0.0
+
+        # Served-model-of-record counters (X-Guardian-* response headers).
+        self.served = ServedTracker()
 
         # RAM safety net bookkeeping (see MIN_FREE_RAM_GB). Surfaced on
         # /__guardian/health so an operator can see *why* the model stays down.
@@ -1099,6 +1148,9 @@ async def _glm_proxy(
     check_llama_up: bool = True,
 ) -> web.StreamResponse:
     """Existing GLM-only proxy path (locks, idle bump, length-retry, wake)."""
+    # Served-model-of-record headers. seat_hdrs (no Served-Model) goes on
+    # guardian error responses; served_hdrs (full trio) on proxied completions.
+    seat_hdrs, request_id = served_headers("glm", None)
     # If llama is down: only generation may cold-start it. Probes get a clean
     # offline response so the dashboard shows offline without loading the GGUF.
     # Fleet metadata already consulted guardian._llama_up — skip the live probe.
@@ -1125,10 +1177,14 @@ async def _glm_proxy(
             # Don't promise "warming" — nothing is loading. The same gate inside
             # ensure_llama_started() covers the pre-warm and queue paths.
             guardian.last_start_failure = "ram_low"
-            return ram_low_response(available)
+            resp = ram_low_response(available)
+            resp.headers.update(seat_hdrs)
+            return resp
         log.info("cold generation request — starting local model (async start + friendly 503)")
         asyncio.create_task(ensure_llama_started(reason="request"))
-        return warming_response()
+        resp = warming_response()
+        resp.headers.update(seat_hdrs)
+        return resp
 
     # Build the upstream request.
     upstream_url = f"{guardian.llama_target}{request.path_qs}"
@@ -1143,6 +1199,12 @@ async def _glm_proxy(
         # The payload length changed, so aiohttp must calculate a fresh value.
         fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
         log.info("normalized retired model alias to %s", QUEUE_MODEL_ALIAS)
+
+    # The model id actually sent upstream (post-normalization); the served-model
+    # of record for the glm seat.
+    served_model_id = extract_model_from_body(body) or SERVING_IDS["glm"]
+    served_hdrs = dict(seat_hdrs)
+    served_hdrs["X-Guardian-Served-Model"] = served_model_id
 
     # Length-retry applies only to non-streaming chat completions we can parse.
     req_json = None
@@ -1201,14 +1263,19 @@ async def _glm_proxy(
                 k: v for k, v in up_headers.items()
                 if k.lower() not in HOP_BY_HOP and k.lower() != "content-length"
             }
+            resp_headers.update(served_hdrs)
+            if status < 400:
+                guardian.served.record("glm", served_model_id, request_id)
             return web.Response(status=status, body=raw, headers=resp_headers)
         except (ClientError, asyncio.TimeoutError) as e:
             guardian._llama_up = False
             log.warning(f"upstream error: {e}")
             err = str(e).lower()
             if any(x in err for x in ("connect", "refused", "closing", "reset", "timeout", "unreachable")):
-                return warming_response(str(e)[:80])
-            return web.json_response(
+                resp = warming_response(str(e)[:80])
+                resp.headers.update(seat_hdrs)
+                return resp
+            resp = web.json_response(
                 {
                     "error": {
                         "message": f"Local model upstream error: {e}",
@@ -1219,6 +1286,8 @@ async def _glm_proxy(
                 },
                 status=502,
             )
+            resp.headers.update(seat_hdrs)
+            return resp
         finally:
             guardian.active_requests -= 1
             guardian.last_request_time = time.time()
@@ -1241,11 +1310,15 @@ async def _glm_proxy(
                 for k, v in upstream_resp.headers.items():
                     if k.lower() not in HOP_BY_HOP:
                         resp.headers[k] = v
+                if is_real_work:
+                    resp.headers.update(served_hdrs)
                 await resp.prepare(request)
 
                 async for chunk in upstream_resp.content.iter_any():
                     await resp.write(chunk)
                 await resp.write_eof()
+                if is_real_work and upstream_resp.status < 400:
+                    guardian.served.record("glm", served_model_id, request_id)
                 return resp
         except (ClientError, asyncio.TimeoutError) as e:
             guardian._llama_up = False
@@ -1253,8 +1326,11 @@ async def _glm_proxy(
             # During cold start the port can flap / refuse briefly — sound human.
             err = str(e).lower()
             if any(x in err for x in ("connect", "refused", "closing", "reset", "timeout", "unreachable")):
-                return warming_response(str(e)[:80])
-            return web.json_response(
+                resp = warming_response(str(e)[:80])
+                if is_real_work:
+                    resp.headers.update(seat_hdrs)
+                return resp
+            resp = web.json_response(
                 {
                     "error": {
                         "message": f"Local model upstream error: {e}",
@@ -1265,6 +1341,9 @@ async def _glm_proxy(
                 },
                 status=502,
             )
+            if is_real_work:
+                resp.headers.update(seat_hdrs)
+            return resp
         finally:
             guardian.active_requests -= 1
             if is_real_work:
@@ -1877,6 +1956,7 @@ async def guardian_health(request: web.Request) -> web.Response:
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
     else:
         occupant, model_id, reachable = "unknown", None, False
+    served = guardian.served.snapshot()
     return web.json_response(
         {
             "status": "ok",
@@ -1894,6 +1974,8 @@ async def guardian_health(request: web.Request) -> web.Response:
                 llama_up=llama_up,
                 llama_target=guardian.llama_target,
             ),
+            "served": served["served"],
+            "served_total": served["served_total"],
         }
     )
 
@@ -1923,6 +2005,7 @@ async def guardian_seats(request: web.Request) -> web.Response:
         llama_target=guardian.llama_target,
     )
     payload["swap_owner"] = aiwa_swap.swap_owner_enabled()
+    payload.update(guardian.served.snapshot())
     return web.json_response(payload)
 
 

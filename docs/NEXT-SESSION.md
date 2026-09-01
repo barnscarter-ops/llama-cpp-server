@@ -6,6 +6,8 @@
 
 ## Shipped
 
+- **Served-model of record (W1-A, 2026-09-01, branch `barnscarter-ops/chief-v1-guardian-served`):** guardian now sets `X-Guardian-Seat` / `X-Guardian-Served-Model` / `X-Guardian-Request-Id` on every proxied completion (GLM + clerk/consult, stream + non-stream; seat header also on resolved-seat error responses). `/__guardian/health` and `/__guardian/seats` expose per-seat `served` counters + `served_total`. Consult requests carrying `X-Guardian-Gate: operator|frontier` (or `?gate=`) run the same gated swap as `/__guardian/swap`; ungated consult still downgrades to clerk. 101 qwen-queue tests green. Committed on the worktree branch, not pushed, PM2 untouched.
+
 - **Full Hermes-side routing audit** (`harness routing/Hermes.md`, committed):
   every config/skill/env/cron/bot/MCP surface in all profiles checked for
   llamacpp routing or guardian-override paths.
