@@ -113,3 +113,8 @@ Qwen3.6-35B-A3B/131072 (why Orca showed 49k); vault pi AGENTS.md bootstrap
 updated (AIWA rename + seat facts); executor 'nul' reserved-name residue deleted
 via Win32 DeleteFileW. Two pre-existing "Pi ready" terminals closed in error
 during cleanup — flagged. Tree clean at 21f460d; nothing to commit. -->
+
+## 2026-09-01 — served-model of record + consult gate header (Maverick Core v1, W1-A)
+
+- `af4bdab` (worker W1-A, pi/deepseek-v4-flash, reviewed by the coordinator; 101 pytest green): `X-Guardian-Seat` / `X-Guardian-Served-Model` / `X-Guardian-Request-Id` on every proxied completion (GLM + clerk/consult, stream + non-stream; seat-only on resolved-seat errors); per-seat `served` counters + `served_total` on `/__guardian/health` and `/__guardian/seats`; `X-Guardian-Gate: operator|frontier` (or `?gate=`) on a consult request while clerk occupies runs the same swap as `/__guardian/swap`; ungated consult still downgrades to clerk. `ecosystem.config.cjs` untouched.
+- Applied to the live PM2 `llama-guardian` on 2026-09-01 via the gsudo pattern while the queue was idle (active 0, queued 0); see the health check result recorded in the Maverick-Core handoff.
