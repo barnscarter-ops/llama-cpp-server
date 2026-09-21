@@ -37,6 +37,9 @@ IDEA.md
 ## External clone + venv (qwen-queue tooling) — not part of this repo
 qwen-queue/code-review-graph/
 
+## Nested clone of barnscarter-ops/r9700-monitor — separate repository
+r9700-monitor/
+
 ## Claude session state
 .claude/
 
