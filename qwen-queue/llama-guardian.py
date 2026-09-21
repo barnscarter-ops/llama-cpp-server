@@ -55,6 +55,7 @@ from aiohttp import ClientError, ClientTimeout, web
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 import aiwa_swap
 import fleet_router
+from guardian_worker_descriptor import build_worker_descriptor
 from guardian_workers import (
     is_worker_job,
     profiles_as_api,
@@ -1000,6 +1001,27 @@ async def worker_profiles(request: web.Request) -> web.Response:
     if not _queue_authorized(request):
         return _queue_forbidden()
     return web.json_response({"enabled": workers_enabled(), "profiles": profiles_as_api()})
+
+
+async def worker_descriptor_v1(request: web.Request) -> web.Response:
+    """Non-secret policy/cache projection; no probe, wake, admission or reservation."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    work_class = request.match_info["work_class"]
+    if work_class not in {"mechanical_execution", "tool_execution"}:
+        return web.json_response({"error": {"code": "invalid_worker_class"}}, status=400)
+    # Copy existing cache fields without calling get(), which can refresh remotely.
+    # No await between the policy/cache reads: one local event-loop snapshot.
+    try:
+        cache = fleet_router.occupant_cache
+        payload = build_worker_descriptor(
+            work_class, observed_at=int(time.time() * 1000), enabled=workers_enabled(),
+            workbench_up=guardian._llama_up,
+            aiwa_cache={"fetchedAt": cache._fetched_at, "reachable": cache.reachable, "modelId": cache.model_id},
+        )
+    except (AttributeError, ValueError, TypeError):
+        return web.json_response({"error": {"code": "worker_descriptor_unavailable"}}, status=503)
+    return web.json_response(payload)
 
 
 async def worker_submit(request: web.Request) -> web.Response:
@@ -2163,6 +2185,7 @@ def make_app() -> web.Application:
     app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
     app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
     app.router.add_get("/__guardian/workers", worker_profiles)
+    app.router.add_get("/__guardian/workers/descriptor/v1/{work_class}", worker_descriptor_v1)
     app.router.add_post("/__guardian/workers", worker_submit)
     app.router.add_post("/__guardian/sleep", guardian_sleep)
     app.router.add_post("/__guardian/swap", guardian_swap)

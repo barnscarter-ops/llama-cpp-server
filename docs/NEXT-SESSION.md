@@ -1,3 +1,28 @@
+## Current handoff — September 9 Guardian descriptor/Core normalization source accepted
+
+### Shipped
+
+- Separate versioned Guardian read-only descriptor route and pure producer, plus strict Core normalizer. Existing worker callers and Guardian authority preserved, consistent with PROJECT-VISION.
+- Actual DeepSeek producer and two reviews through Hermes; 100 offline tests and root typecheck passed. Prior 13 accepted source hashes/five receipts and Core/Guardian HEADs unchanged.
+- Unknown capability/entitlement/runtime/capacity remains unavailable. Claimed origin and public policy hash grant no authority. Pi pause unchanged; route is local source only.
+
+### Open
+
+- Actual operator provider/model/auth/data/budget choices, supported runner decision and first bounded actual task must precede activation.
+- Existing signed synthetic assignment has none egress and file-operation scope; it cannot cover model execution. A versioned assignment/Room consent and matching scoped runtime are required. See remaining-connection.json for source-specific reasons.
+- Verified observation transport and measured runtime admission evidence remain absent. Cached seats are not reservations. No extra generic registry/descriptor layer is needed.
+- No live inference/deployment/P2 or Apple validation performed. Preserve separate Apple and unrelated repository work.
+
+### Next session
+
+**Repo:** D:\Workspace\Active\Maverick-Core
+
+**Prompt:** Read PROJECT-VISION and PLAN section10 Guardian descriptor/Core normalizer acceptance; reuse .session/guardian-descriptor/100-test evidence and remaining-connection.json. The source slice is complete. Select the first bounded actual task and supported runtime using explicit operator provider/model/auth/data/budget choices. Then scope a versioned Assignment/Room consent extension and corresponding executor-side signed profile/admission/scoped transport connection, preserving V1 and Guardian authority. Current synthetic value.txt none-egress permits cannot be repurposed for model execution; ContainerBinding.profileDigest is not TaskProfile. Keep unknown evidence unavailable, preserve Pi/local-worker pause and accepted sources/receipts, and use actual DeepSeek through Hermes rather than paused Pi. No live activation, remote/in-container work, provider/account/service changes, worker enablement, swap, P2, private mounts, commits or pushes.
+
+---
+
+## Previous infrastructure handoff (preserved; separate Q1-Q5 decisions remain)
+
 # NEXT SESSION — Hermes routing audit done; Q1–Q5 decisions pending
 
 **Repo:** `D:\Workspace\Infrastructure\llama-cpp-server`

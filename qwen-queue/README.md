@@ -32,6 +32,45 @@ not sentences. Hermes-Supervisor graph is built; build others as needed.
 
 ## Guardian-managed local workers
 
+### Versioned policy descriptor (local source; not deployed by this change)
+
+`GET /__guardian/workers/descriptor/v1/{work_class}` adds a separate read-only
+`GuardianWorkerDescriptor.v1` response for `mechanical_execution` and
+`tool_execution`, under the existing queue authorization check. Existing
+`GET/POST /__guardian/workers` bodies and behavior remain unchanged. This
+handler never probes, wakes, refreshes a cache, submits a job or reserves a seat.
+
+`policyRevision` is SHA256 of sorted-key compact ASCII JSON for the included
+`GuardianWorkerPolicy.v1` **non-secret projection**. It binds work class,
+configured provider/model alias, fixed Pi runner, documented paused status,
+egress and unknown capability evidence. It is not a digest of private skill
+contents, executable configuration or an authorization receipt. No endpoint,
+credential, executable path or skill path is returned. Changing supported
+runner/route semantics requires deliberate source contract revision; a new
+operator flag cannot clear the descriptor's Pi pause.
+
+`observedAt` records descriptor generation. AIWA readiness retains the existing
+occupant cache's original observation time without fetching; Workbench's cached
+health boolean has no measured timestamp or exact served-model identity, so
+those fields are null. Cached reachability is diagnostic and is never capacity
+or a reservation. Capability evidence, entitlement, transport and capacity
+remain unknown/unavailable; execution and reservation flags are false even if
+the existing worker enablement flag is true. The `origin` label and policy hash
+authenticate nobody. The Core normalizer preserves these limits and V1 cannot
+produce execution permission or even a complete policy-ready observation.
+
+Offline verification: `python -B -m unittest test_guardian_worker_descriptor
+test_guardian_workers` from this directory. Handler tests compile only the
+actual handler definitions with inert dependencies, avoiding daemon startup
+and durable queue access. Core's composition test runs this actual pure Python
+producer before strict TypeScript normalization. No live service observation
+or inference is implied by these tests.
+
+The Core composition test requires Python and this source checkout at the
+workspace's sibling `Infrastructure/llama-cpp-server` path. It intentionally
+fails if the actual producer is absent; a copied JSON fixture is not a
+substitute for cross-language composition.
+
 `/__guardian/workers` is the local-subagent admission API. A caller requests a
 validated `work_class` (`mechanical_execution` or `tool_execution` for local
 workers), bounded `preference` and `quality_floor`, a task, and an existing
