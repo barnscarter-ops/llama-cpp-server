@@ -46,6 +46,8 @@ class TaskSpec:
     quality_floor: int
     priority: int
     params: dict[str, Any]
+    # Chief marks the summary as safe to leave the machine; without it Jev is never asked.
+    summary_cleared_for_jev: bool = False
 
     def to_json(self) -> str:
         return json.dumps(self.__dict__, separators=(",", ":"))
@@ -131,6 +133,9 @@ def parse_task(payload: Any) -> TaskSpec:
     priority = payload.get("priority", 50)
     if isinstance(priority, bool) or not isinstance(priority, int) or not 0 <= priority <= 100:
         raise TaskValidationError("priority must be an integer 0-100.")
+    cleared = payload.get("summary_cleared_for_jev", False)
+    if not isinstance(cleared, bool):
+        raise TaskValidationError("summary_cleared_for_jev must be true or false.")
     params = {k: payload[k] for k in COMPLETION_PARAMS if k in payload}
     if "max_tokens" in params and (
         isinstance(params["max_tokens"], bool) or not isinstance(params["max_tokens"], int) or params["max_tokens"] < 1
@@ -139,7 +144,7 @@ def parse_task(payload: Any) -> TaskSpec:
     return TaskSpec(
         task_id=task_id, idempotency_key=key, summary=summary, messages=messages,
         clearance=payload.get("clearance"), cost_ceiling_usd=payload.get("cost_ceiling_usd"),
-        quality_floor=floor, priority=priority, params=params,
+        quality_floor=floor, priority=priority, params=params, summary_cleared_for_jev=cleared,
     )
 
 

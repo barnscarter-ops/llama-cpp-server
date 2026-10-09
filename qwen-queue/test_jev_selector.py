@@ -70,8 +70,8 @@ def candidate(model_id: str, **over) -> Candidate:
     return Candidate(**base)
 
 
-def task(summary: str = "write a unit test") -> TaskSpec:
-    return TaskSpec("t1", "k1", summary, [{"role": "user", "content": "PRIVATE MESSAGE BODY"}], "lan", 0, 1, 5, {})
+def task(summary: str = "write a unit test", cleared: bool = True) -> TaskSpec:
+    return TaskSpec("t1", "k1", summary, [{"role": "user", "content": "PRIVATE MESSAGE BODY"}], "lan", 0, 1, 5, {}, cleared)
 
 
 def ledger(cap: int | None = None) -> jsp.JevSpendLedger:
@@ -264,8 +264,46 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_long_summary_is_truncated(self) -> None:
         fake = FakeJev("workbench-local")
-        await self.selector(fake).choose(task("x" * 9000), self.CANDS)
-        self.assertEqual(len(fake.calls[0][2]["state"]["summary"]), 2000)
+        await self.selector(fake).choose(task("word " * 2000), self.CANDS)
+        self.assertLessEqual(len(fake.calls[0][2]["state"]["summary"]), 2000)
+        self.assertGreater(len(fake.calls[0][2]["state"]["summary"]), 1900)
+
+    async def test_uncleared_summary_never_reaches_jev_and_costs_nothing(self) -> None:
+        fake = FakeJev("workbench-local")
+        led = ledger()
+        answer = await self.selector(fake, led).choose(task(cleared=False), self.CANDS)
+        self.assertEqual((answer.model_id, answer.reason), (None, "jev_summary_not_cleared"))
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(led.spent_microusd(1_000_000.0) if hasattr(led, "spent_microusd") else 0, 0)
+
+    async def test_summary_is_redacted_before_it_leaves(self) -> None:
+        fake = FakeJev("workbench-local")
+        dirty = (
+            "fix billing, key sk-abcdefghijklmnopqrstuvwx, Authorization: Bearer abc.def-ghi_jkl123, "
+            "call 555-123-4567, mail me@example.com, host 192.168.1.12\n-----BEGIN PRIVATE KEY-----\nMIIEv\n-----END PRIVATE KEY-----"
+        )
+        answer = await self.selector(fake).choose(task(dirty), self.CANDS)
+        sent = json.dumps(fake.calls[0][2])
+        for leaked in ("sk-abcdef", "abc.def-ghi", "555-123-4567", "me@example.com", "192.168.1.12", "MIIEv"):
+            self.assertNotIn(leaked, sent)
+        self.assertIn("fix billing", sent)
+        self.assertGreaterEqual(answer.raw["summary_redactions"], 4)
+
+    async def test_summary_that_is_all_secret_is_not_sent(self) -> None:
+        fake = FakeJev("workbench-local")
+        answer = await self.selector(fake).choose(task("sk-abcdefghijklmnopqrstuvwx"), self.CANDS)
+        self.assertEqual(answer.reason, "jev_request_invalid")
+        self.assertEqual(fake.calls, [])
+
+    async def test_ledger_error_at_reserve_is_a_reasoned_non_pick(self) -> None:
+        class Broken:
+            def reserve(self, now):
+                raise sqlite3.OperationalError("database is locked")
+
+        fake = FakeJev("workbench-local")
+        answer = await JevSelector(Broken(), key, transport=fake).choose(task(), self.CANDS)
+        self.assertEqual((answer.model_id, answer.reason), (None, "jev_ledger_unavailable"))
+        self.assertEqual(fake.calls, [])
 
     async def test_every_failure_is_a_reasoned_non_pick(self) -> None:
         cases = {
@@ -336,7 +374,7 @@ class JevTaskApiTests(TaskHttpBase):
     async def test_jev_pick_is_dispatched_and_recorded_as_evidence(self) -> None:
         fake = self.use(FakeJev("nemotron-r9700"))
         await self.start_worker()
-        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", summary_cleared_for_jev=True))
         self.assertEqual(response.status, 202, await response.text())
         body = await self.wait_status("t1", "succeeded")
         evidence = body["evidence"]
@@ -346,13 +384,13 @@ class JevTaskApiTests(TaskHttpBase):
 
     async def test_pc_clearance_never_offers_the_lan_model(self) -> None:
         fake = self.use(FakeJev("workbench-local"))
-        response = await self.client.post("/__guardian/tasks", json=payload(clearance="pc"))
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="pc", summary_cleared_for_jev=True))
         self.assertEqual(response.status, 202, await response.text())
         self.assertEqual(fake.offered, ["abstain", "workbench-local"])
 
     async def test_jev_failure_is_selection_failed_with_no_rules_fallback(self) -> None:
         self.use(FakeJev(status=503))
-        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", summary_cleared_for_jev=True))
         body = await response.json()
         self.assertEqual((response.status, body["status"], body["reason"]), (422, "selection_failed", "jev_error"))
         self.assertEqual(self.llama.hits, [])
@@ -360,22 +398,45 @@ class JevTaskApiTests(TaskHttpBase):
     async def test_missing_key_source_fails_tasks_with_a_reason(self) -> None:
         os.environ.pop("GUARDIAN_JEV_API_KEY")
         self.use(FakeJev("workbench-local"))
-        body = await (await self.client.post("/__guardian/tasks", json=payload())).json()
+        body = await (await self.client.post("/__guardian/tasks", json=payload(summary_cleared_for_jev=True))).json()
         self.assertEqual(body["reason"], "jev_reference_missing")
+
+
+class JevGateHttpTests(TaskHttpBase):
+    ENV = {"GUARDIAN_TASK_API": "true", "GUARDIAN_SELECTOR": "jev", "GUARDIAN_JEV_API_KEY": SECRET}
+
+    async def test_task_without_the_cleared_flag_is_selection_failed_and_jev_is_not_called(self) -> None:
+        fake = FakeJev("workbench-local")
+        self.module.JEV_TRANSPORT = fake
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
+        body = await response.json()
+        self.assertEqual((response.status, body["status"], body["reason"]), (422, "selection_failed", "jev_summary_not_cleared"))
+        self.assertEqual(fake.calls, [])
+
+    async def test_non_boolean_cleared_flag_is_rejected(self) -> None:
+        response = await self.client.post("/__guardian/tasks", json=payload(summary_cleared_for_jev="yes"))
+        self.assertEqual(response.status, 400)
+
+    async def test_unopenable_spend_ledger_is_selection_failed_not_a_500(self) -> None:
+        self.module.JEV_TRANSPORT = FakeJev("workbench-local")
+        self.module.QUEUE_DB_PATH = self.temp_dir.name  # a directory: sqlite cannot open it
+        response = await self.client.post("/__guardian/tasks", json=payload(summary_cleared_for_jev=True))
+        body = await response.json()
+        self.assertEqual((response.status, body["reason"]), (422, "jev_ledger_unavailable"))
 
 
 class RulesStaysDefaultTests(TaskHttpBase):
     async def test_selector_flag_off_uses_rules_and_never_calls_jev(self) -> None:
         fake = FakeJev("workbench-local")
         self.module.JEV_TRANSPORT = fake
-        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", summary_cleared_for_jev=True))
         self.assertEqual(response.status, 202)
         self.assertEqual(fake.calls, [])
         self.assertEqual((await response.json())["evidence"]["selector"], "rules")
 
     async def test_unknown_selector_value_stays_on_rules(self) -> None:
         os.environ["GUARDIAN_SELECTOR"] = "jve"
-        response = await self.client.post("/__guardian/tasks", json=payload())
+        response = await self.client.post("/__guardian/tasks", json=payload(summary_cleared_for_jev=True))
         self.assertEqual((await response.json())["evidence"]["selector"], "rules")
 
 

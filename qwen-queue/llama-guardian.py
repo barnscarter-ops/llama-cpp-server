@@ -1177,8 +1177,11 @@ def _selector():
     """One selector per process: the Jev ledger holds a SQLite connection that should not be reopened per request."""
     key = (jev_selector.selector_name(), QUEUE_DB_PATH, id(JEV_TRANSPORT))
     if key not in _selector_cache:
+        selector = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT)
+        if isinstance(selector, jev_selector.UnavailableSelector):
+            return selector  # not cached: a locked database or a late-arriving key should recover without a restart
         _selector_cache.clear()
-        _selector_cache[key] = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT)
+        _selector_cache[key] = selector
     return _selector_cache[key]
 
 
