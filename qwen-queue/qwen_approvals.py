@@ -6,6 +6,7 @@ a task consumes exactly once. Statuses: pending, approved, denied, used, expired
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -52,6 +53,9 @@ class ApprovalStore:
             )
             """
         )
+        # Additive migration: approvals created before scopes existed keep working with scope NULL.
+        if "scope_json" not in {r[1] for r in conn.execute("PRAGMA table_info(qwen_approvals)")}:
+            conn.execute("ALTER TABLE qwen_approvals ADD COLUMN scope_json TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS qwen_approvals_task ON qwen_approvals(task_id, status)")
         conn.commit()
 
@@ -64,7 +68,14 @@ class ApprovalStore:
 
     @staticmethod
     def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
-        return dict(row) if row else None
+        return ApprovalStore._shape(row) if row else None
+
+    @staticmethod
+    def _shape(row: sqlite3.Row) -> dict[str, Any]:
+        record = dict(row)
+        raw = record.pop("scope_json", None)
+        record["scope"] = json.loads(raw) if raw else None
+        return record
 
     def get(self, approval_id: str) -> dict[str, Any] | None:
         self._expire_due()
@@ -78,10 +89,15 @@ class ApprovalStore:
             ).fetchall()
         else:
             rows = self._conn.execute("SELECT * FROM qwen_approvals ORDER BY created ASC").fetchall()
-        return [dict(r) for r in rows]
+        return [self._shape(r) for r in rows]
 
-    def create_pending(self, task_id: str, ttl_s: float | None = None) -> dict[str, Any]:
-        """One live approval per task: a retry gets the same record back."""
+    def create_pending(
+        self, task_id: str, ttl_s: float | None = None, scope: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """One live approval per task: a retry gets the same record back.
+
+        scope is what Carter is approving (clearance, cost ceiling); the caller compares it before spending.
+        """
         self._expire_due()
         live = self._conn.execute(
             "SELECT * FROM qwen_approvals WHERE task_id = ? AND status IN ('pending','approved') "
@@ -89,12 +105,16 @@ class ApprovalStore:
             (task_id,),
         ).fetchone()
         if live:
-            return dict(live)
+            return self._shape(live)
         now = self._clock()
         approval_id = f"qa_{uuid.uuid4().hex}"
         self._conn.execute(
-            "INSERT INTO qwen_approvals (id, task_id, status, created, expires_at) VALUES (?, ?, 'pending', ?, ?)",
-            (approval_id, task_id, now, now + (ttl_s if ttl_s is not None else approval_ttl_s())),
+            "INSERT INTO qwen_approvals (id, task_id, status, created, expires_at, scope_json) "
+            "VALUES (?, ?, 'pending', ?, ?, ?)",
+            (
+                approval_id, task_id, now, now + (ttl_s if ttl_s is not None else approval_ttl_s()),
+                json.dumps(scope, sort_keys=True) if scope is not None else None,
+            ),
         )
         self._conn.commit()
         return self.get(approval_id)  # type: ignore[return-value]

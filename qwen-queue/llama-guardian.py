@@ -58,6 +58,7 @@ import fleet_router
 import model_registry
 import model_slots
 import qwen_session
+import task_dispatch
 from qwen_approvals import ApprovalError, ApprovalStore, qwen_approval_enabled
 from guardian_worker_descriptor import build_worker_descriptor
 from guardian_workers import (
@@ -297,6 +298,7 @@ class Guardian:
 
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.approvals = ApprovalStore(self.job_store.connection)
+        self.task_store = task_dispatch.TaskStore(self.job_store.connection)
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
         # One wake-up event per model queue (GUARDIAN_PER_MODEL_QUEUES); sharing one event would lose wake-ups.
@@ -1151,6 +1153,84 @@ async def worker_submit(request: web.Request) -> web.Response:
     return web.json_response(job.as_api(), status=202 if created else 200)
 
 
+def task_api_enabled() -> bool:
+    return os.environ.get("GUARDIAN_TASK_API", "false").strip().lower() in {"true", "1", "yes"}
+
+
+def cloud_dispatch_available() -> bool:
+    """No cloud backend exists in this build yet (step 8), so no task may be sent to a cloud model."""
+    return False
+
+
+_SEAT_ALIASES = {"glm": "local-llm", "clerk": SERVING_IDS["clerk"], "consult": SERVING_IDS["consult"]}
+
+
+def build_task_dispatcher() -> task_dispatch.TaskDispatcher:
+    def request_for(spec, task):
+        return {
+            "model": _SEAT_ALIASES.get(spec.seat or "", spec.id),
+            "messages": task.messages, "stream": False, **task.params,
+        }
+
+    def enqueue(*, request, decision, priority, idempotency_key, model_id):
+        return guardian.job_store.submit(
+            idempotency_key=idempotency_key, source="task-api", priority=priority,
+            request=request, decision=decision, model_id=model_id,
+        )
+
+    env = task_dispatch.DispatchEnv(
+        registry=model_registry.load_registry,
+        probe=build_readiness_probe,
+        store=guardian.task_store,
+        approvals=guardian.approvals,
+        enqueue=enqueue,
+        flags=lambda: {
+            "qwen_approval": qwen_approval_enabled(),
+            "fleet_router": fleet_router_enabled(),
+            "cloud_dispatch": cloud_dispatch_available(),
+        },
+        request_for=request_for,
+        notify=notify_queue,
+    )
+    return task_dispatch.TaskDispatcher(env, task_dispatch.RulesSelector())
+
+
+def _task_api_off() -> web.Response:
+    return guardian_error("The task API is disabled (GUARDIAN_TASK_API).", "task_api_disabled", 404)
+
+
+async def task_submit(request: web.Request) -> web.Response:
+    """Chief hands over a task with no model named; Guardian chooses, checks, and enqueues."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    if not task_api_enabled():
+        return _task_api_off()
+    if request.content_length and request.content_length > QUEUE_MAX_REQUEST_BYTES:
+        return guardian_error(f"Task exceeds {QUEUE_MAX_REQUEST_BYTES} bytes.", "invalid_task", 400)
+    try:
+        spec = task_dispatch.parse_task(await request.json())
+    except (json.JSONDecodeError, ValueError) as exc:  # TaskValidationError is a ValueError
+        return guardian_error(str(exc), "invalid_task", 400)
+    try:
+        outcome = await build_task_dispatcher().submit(spec)
+    except model_registry.RegistryError as exc:
+        return guardian_error(str(exc), "model_registry_invalid", 500)
+    return web.json_response(outcome.body, status=outcome.http_status)
+
+
+async def task_status(request: web.Request) -> web.Response:
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    if not task_api_enabled():
+        return _task_api_off()
+    row = guardian.task_store.get(request.match_info["task_id"])
+    if row is None:
+        return guardian_error("No such task.", "task_not_found", 404)
+    dispatcher = build_task_dispatcher()
+    job = guardian.job_store.get(row["job_id"]) if row["job_id"] else None
+    return web.json_response(dispatcher.view(row, job))
+
+
 async def approvals_list(request: web.Request) -> web.Response:
     if not _queue_authorized(request):
         return _queue_forbidden()
@@ -1197,6 +1277,8 @@ async def approvals_decide(request: web.Request) -> web.Response:
         record = guardian.approvals.decide(request.match_info["approval_id"], decision == "approve", decided_by.strip())
     except ApprovalError as exc:
         return qwen_session.approval_error_response(exc)
+    if task_api_enabled():
+        await build_task_dispatcher().on_approval(record)
     return web.json_response(record)
 
 
@@ -1567,7 +1649,7 @@ async def _run_aiwa_job_with_approval(job: QueueJob, seat: str, client) -> None:
         approval_id = (job.decision or {}).get("approval_id")
         try:
             await qwen_session.run_approved_qwen(
-                approvals=guardian.approvals, approval_id=approval_id, task_id=job.idempotency_key, client=client,
+                approvals=guardian.approvals, approval_id=approval_id, task_id=(job.decision or {}).get("task_id") or job.idempotency_key, client=client,
                 run=lambda: _post_aiwa_job(job, client, payload, seat, timeout),
             )
         except ApprovalError as exc:
@@ -2441,6 +2523,8 @@ def make_app() -> web.Application:
     app.router.add_post("/__guardian/workers", worker_submit)
     app.router.add_post("/__guardian/sleep", guardian_sleep)
     app.router.add_post("/__guardian/swap", guardian_swap)
+    app.router.add_post("/__guardian/tasks", task_submit)
+    app.router.add_get("/__guardian/tasks/{task_id}", task_status)
     app.router.add_get("/__guardian/approvals", approvals_list)
     app.router.add_post("/__guardian/approvals/{approval_id}/decide", approvals_decide)
     # Catch-all proxy: any method, any path → llama.
