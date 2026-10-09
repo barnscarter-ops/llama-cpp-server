@@ -46,6 +46,14 @@ class CloudRefused(Exception):
         self.code, self.message, self.status = code, message, status
 
 
+class CloudNotSent(Exception):
+    """A transport raises this only when it is certain no request bytes reached the provider (e.g. connect failed)."""
+
+
+# Rejections the provider issues before doing any work. 408/409/425/429 and every 5xx are deliberately absent: they can follow billed work.
+NOT_BILLED_STATUSES = frozenset({400, 401, 403, 404, 405, 413, 415, 422})
+
+
 @dataclass(frozen=True)
 class CloudResult:
     body: dict
@@ -59,10 +67,13 @@ async def aiohttp_cloud_transport(url: str, headers: dict, body: bytes, timeout_
     import aiohttp
 
     timeout = aiohttp.ClientTimeout(total=timeout_s)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, headers=headers, data=body, allow_redirects=False) as response:
-            data = await response.content.read(MAX_RESPONSE_BYTES + 1)
-            return response.status, data
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, headers=headers, data=body, allow_redirects=False) as response:
+                data = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                return response.status, data
+    except aiohttp.ClientConnectorError:
+        raise CloudNotSent from None
 
 
 def _float_env(name: str, default: float, *, positive: bool = True) -> float:
@@ -271,7 +282,8 @@ class CloudBackend:
         reserved = worst_case_microusd(spec, len(payload), max_tokens)
         if not self._ledger.reserve(spec.id, reserved, self.cap_microusd(), now):
             raise CloudRefused("spend_cap", f"{spec.id} daily spend cap reached.", 429)
-        refund = True  # give the reservation back unless the provider may have billed us
+        # Refund only on outcomes that definitely were not billed; a cancel, timeout, 5xx or post-send error keeps the reservation.
+        refund = True
         try:
             try:
                 key = await key_loader_for(spec, self._accessor)()
@@ -281,6 +293,7 @@ class CloudBackend:
                 raise CloudRefused("cloud_key_unavailable", "Credential could not be loaded.", 503)
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json"}
             del key
+            refund = False  # from here the provider may bill us, including when our caller disconnects and cancels us
             try:
                 timeout_s = _float_env("GUARDIAN_CLOUD_TIMEOUT_S", DEFAULT_TIMEOUT_S)
                 # Backstop in case a transport ignores its own timeout.
@@ -288,17 +301,19 @@ class CloudBackend:
                     self._transport(DEEPSEEK_ENDPOINT, headers, payload, timeout_s), timeout_s + 5
                 )
             except asyncio.TimeoutError:
-                refund = False  # the provider may have processed it
                 raise CloudRefused("cloud_timeout", "Provider call timed out.", 504) from None
             except CloudRefused:
                 raise
+            except CloudNotSent:
+                refund = True
+                raise CloudRefused("cloud_unreachable", "Provider unreachable.", 502) from None
             except Exception:  # noqa: BLE001 - transport errors can carry headers
                 raise CloudRefused("cloud_unreachable", "Provider unreachable.", 502) from None
             finally:
                 headers.pop("Authorization", None)
             if status != 200:
+                refund = status in NOT_BILLED_STATUSES
                 raise CloudRefused("cloud_upstream_error", f"Provider returned HTTP {status}.", 502)
-            refund = False  # a 200 was billed whatever we make of the body
             if len(raw) > MAX_RESPONSE_BYTES:
                 raise CloudRefused("cloud_response_invalid", "Provider response too large.", 502)
             try:

@@ -1262,8 +1262,11 @@ def _selector():
     """One selector per process: the Jev ledger holds a SQLite connection that should not be reopened per request."""
     key = (jev_selector.selector_name(), jev_selector.fallback_mode(), QUEUE_DB_PATH, id(JEV_TRANSPORT))
     if key not in _selector_cache:
+        selector = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT, on_fallback=_alert_jev_fallback)
+        if isinstance(selector, jev_selector.UnavailableSelector) or not getattr(selector, "cacheable", True):
+            return selector  # not cached: a locked database or a late-arriving key should recover without a restart
         _selector_cache.clear()
-        _selector_cache[key] = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT, on_fallback=_alert_jev_fallback)
+        _selector_cache[key] = selector
     return _selector_cache[key]
 
 
@@ -1391,7 +1394,7 @@ async def approvals_decide(request: web.Request) -> web.Response:
     except ApprovalError as exc:
         return qwen_session.approval_error_response(exc)
     if task_api_enabled():
-        build_task_dispatcher().on_approval(record)
+        await build_task_dispatcher().on_approval(record)
     return web.json_response(record)
 
 

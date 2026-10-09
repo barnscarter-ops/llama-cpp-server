@@ -82,6 +82,35 @@ class FallbackUnitTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(fallback_mode(), want)
 
 
+class FallbackNotClearedUnitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uncleared_task_is_routed_by_rules_with_no_alert_and_no_jev_call(self) -> None:
+        alerts = []
+        fake = FakeJev("nemotron-r9700")
+        primary = JevSelector(ledger(), key, transport=fake)
+        selector = FallbackSelector(primary, RulesSelector(), lambda t, r: alerts.append(r))
+        answer = await selector.choose(task(cleared=False), CANDS)
+        self.assertIsNotNone(answer.model_id)
+        self.assertEqual((answer.selector, answer.fallback_used, answer.note), ("rules", True, "jev_summary_not_cleared"))
+        self.assertEqual((alerts, fake.calls), ([], []))
+
+
+class FallbackLedgerUnitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unopenable_ledger_falls_back_with_an_alert_and_is_not_cached(self) -> None:
+        import tempfile
+        from jev_selector import selector_for_env
+
+        for name, value in (("GUARDIAN_SELECTOR", "jev"), ("GUARDIAN_JEV_FALLBACK", "rules"), ("GUARDIAN_JEV_API_KEY", SECRET)):
+            old = os.environ.get(name)
+            os.environ[name] = value
+            self.addCleanup(lambda n=name, o=old: os.environ.pop(n, None) if o is None else os.environ.__setitem__(n, o))
+        alerts = []
+        with tempfile.TemporaryDirectory() as directory:  # sqlite cannot open a directory as a database
+            selector = selector_for_env(directory, on_fallback=lambda t, r: alerts.append(r))
+        self.assertFalse(selector.cacheable)
+        answer = await selector.choose(task(), CANDS)
+        self.assertEqual((answer.fallback_used, answer.note, alerts), (True, "jev_ledger_unavailable", ["jev_ledger_unavailable"]))
+
+
 class FallbackHttpTests(TaskHttpBase):
     ENV = {
         "GUARDIAN_TASK_API": "true", "GUARDIAN_SELECTOR": "jev", "GUARDIAN_JEV_API_KEY": SECRET,
@@ -105,7 +134,7 @@ class FallbackHttpTests(TaskHttpBase):
 
     async def test_fallback_dispatches_records_evidence_and_emits_one_alert(self) -> None:
         await self.start_worker()
-        response = await self.submit(clearance="lan")
+        response = await self.submit(clearance="lan", summary_cleared_for_jev=True)
         self.assertEqual(response.status, 202, await response.text())
         body = await self.wait_status("t1", "succeeded")
         evidence = body["evidence"]
@@ -115,23 +144,33 @@ class FallbackHttpTests(TaskHttpBase):
         self.assertEqual([(a["kind"], a["task_id"], a["detail"]["reason"]) for a in alerts], [("jev_fallback", "t1", "jev_error")])
         self.assertEqual((await self.alerts(after=alerts[0]["id"])), [])
 
+    async def test_an_uncleared_summary_goes_to_rules_without_calling_jev_or_alerting(self) -> None:
+        await self.start_worker()
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
+        self.assertEqual(response.status, 202, await response.text())
+        evidence = (await self.wait_status("t1", "succeeded"))["evidence"]
+        self.assertEqual((evidence["selector"], evidence["fallback_used"], evidence["fallback_reason"]),
+                         ("rules", True, "jev_summary_not_cleared"))
+        self.assertEqual(self.jev.calls, [])
+        self.assertEqual(await self.alerts(), [])
+
     async def test_a_pc_job_never_falls_back_to_cloud(self) -> None:
         self.only_cloud_is_ready()
-        body = await (await self.submit(clearance="pc", cost_ceiling_usd=5)).json()
+        body = await (await self.submit(clearance="pc", cost_ceiling_usd=5, summary_cleared_for_jev=True)).json()
         self.assertEqual((body["status"], body["reason"]), ("selection_failed", "no_candidates"))
         self.assertEqual(self.provider.calls, [])
         self.assertEqual(self.jev.calls, [])  # nothing to choose from, so Jev is not even asked
 
     async def test_a_lan_job_never_falls_back_to_cloud(self) -> None:
         self.only_cloud_is_ready()
-        body = await (await self.submit(clearance="lan", cost_ceiling_usd=5)).json()
+        body = await (await self.submit(clearance="lan", cost_ceiling_usd=5, summary_cleared_for_jev=True)).json()
         self.assertEqual(body["reason"], "no_candidates")
         self.assertEqual(self.provider.calls, [])
 
     async def test_an_internet_job_may_fall_back_to_cloud(self) -> None:
         self.only_cloud_is_ready()
         await self.start_worker()
-        response = await self.submit(clearance="internet", cost_ceiling_usd=5)
+        response = await self.submit(clearance="internet", cost_ceiling_usd=5, summary_cleared_for_jev=True)
         self.assertEqual(response.status, 202, await response.text())
         body = await self.wait_status("t1", "succeeded")
         self.assertEqual((body["evidence"]["chosen_model"], body["evidence"]["fallback_used"]), ("deepseek-flash", True))
@@ -139,7 +178,7 @@ class FallbackHttpTests(TaskHttpBase):
 
     async def test_the_fallback_respects_the_cost_ceiling(self) -> None:
         self.only_cloud_is_ready()
-        body = await (await self.submit(clearance="internet", cost_ceiling_usd=0)).json()
+        body = await (await self.submit(clearance="internet", cost_ceiling_usd=0, summary_cleared_for_jev=True)).json()
         self.assertEqual(body["reason"], "no_candidates")
         self.assertEqual(self.provider.calls, [])
 
@@ -149,10 +188,17 @@ class FallbackOffTests(TaskHttpBase):
 
     async def test_without_the_flag_a_jev_failure_is_selection_failed_and_raises_no_alert(self) -> None:
         self.module.JEV_TRANSPORT = FakeJev(status=503)
-        body = await (await self.submit(clearance="lan")).json()
+        body = await (await self.submit(clearance="lan", summary_cleared_for_jev=True)).json()
         self.assertEqual((body["status"], body["reason"]), ("selection_failed", "jev_error"))
         self.assertEqual(body["evidence"]["fallback_used"], False)
         self.assertEqual((await (await self.client.get("/__guardian/alerts")).json())["alerts"], [])
+
+    async def test_without_the_flag_an_uncleared_task_is_selection_failed(self) -> None:
+        fake = FakeJev("workbench-local")
+        self.module.JEV_TRANSPORT = fake
+        body = await (await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))).json()
+        self.assertEqual((body["status"], body["reason"]), ("selection_failed", "jev_summary_not_cleared"))
+        self.assertEqual(fake.calls, [])
 
     async def test_alerts_endpoint_rejects_a_bad_cursor(self) -> None:
         self.assertEqual((await self.client.get("/__guardian/alerts?after=x")).status, 400)
