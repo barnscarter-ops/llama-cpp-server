@@ -39,7 +39,6 @@ Python 3.10+, aiohttp.  (Both already installed on this system.)
 """
 
 import asyncio
-import contextlib
 import hmac
 import json
 import logging
