@@ -38,9 +38,11 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
                 "AIWA_PROXY_LOOPBACK_ONLY",
                 "GUARDIAN_QUEUE_DB",
                 "GUARDIAN_MODEL_SLOTS",
+                "GUARDIAN_QWEN_APPROVAL",
             )
         }
         os.environ["GUARDIAN_MODEL_SLOTS"] = self.MODEL_SLOTS
+        os.environ["GUARDIAN_QWEN_APPROVAL"] = "false"
         model_slots.reset_slots()
         os.environ["GUARDIAN_QUEUE_DB"] = str(Path(self.temp_dir.name) / "guardian.sqlite3")
         os.environ["FLEET_ROUTER"] = "true"
