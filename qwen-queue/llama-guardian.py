@@ -55,6 +55,7 @@ from aiohttp import ClientError, ClientTimeout, web
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 import aiwa_swap
 import fleet_router
+import jev_selector
 import model_registry
 import model_slots
 import qwen_session
@@ -1165,6 +1166,25 @@ def cloud_dispatch_available() -> bool:
 _SEAT_ALIASES = {"glm": "local-llm", "clerk": SERVING_IDS["clerk"], "consult": SERVING_IDS["consult"]}
 
 
+# Tests replace this; production uses the real HTTPS transport.
+JEV_TRANSPORT = jev_selector.aiohttp_transport
+
+
+_selector_cache: dict = {}
+
+
+def _selector():
+    """One selector per process: the Jev ledger holds a SQLite connection that should not be reopened per request."""
+    key = (jev_selector.selector_name(), QUEUE_DB_PATH, id(JEV_TRANSPORT))
+    if key not in _selector_cache:
+        selector = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT)
+        if isinstance(selector, jev_selector.UnavailableSelector):
+            return selector  # not cached: a locked database or a late-arriving key should recover without a restart
+        _selector_cache.clear()
+        _selector_cache[key] = selector
+    return _selector_cache[key]
+
+
 def build_task_dispatcher() -> task_dispatch.TaskDispatcher:
     def request_for(spec, task):
         return {
@@ -1192,7 +1212,7 @@ def build_task_dispatcher() -> task_dispatch.TaskDispatcher:
         request_for=request_for,
         notify=notify_queue,
     )
-    return task_dispatch.TaskDispatcher(env, task_dispatch.RulesSelector())
+    return task_dispatch.TaskDispatcher(env, _selector())
 
 
 def _task_api_off() -> web.Response:

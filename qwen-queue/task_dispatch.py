@@ -46,6 +46,8 @@ class TaskSpec:
     quality_floor: int
     priority: int
     params: dict[str, Any]
+    # Chief marks the summary as safe to leave the machine; without it Jev is never asked.
+    summary_cleared_for_jev: bool = False
 
     def to_json(self) -> str:
         return json.dumps(self.__dict__, separators=(",", ":"))
@@ -131,6 +133,9 @@ def parse_task(payload: Any) -> TaskSpec:
     priority = payload.get("priority", 50)
     if isinstance(priority, bool) or not isinstance(priority, int) or not 0 <= priority <= 100:
         raise TaskValidationError("priority must be an integer 0-100.")
+    cleared = payload.get("summary_cleared_for_jev", False)
+    if not isinstance(cleared, bool):
+        raise TaskValidationError("summary_cleared_for_jev must be true or false.")
     params = {k: payload[k] for k in COMPLETION_PARAMS if k in payload}
     if "max_tokens" in params and (
         isinstance(params["max_tokens"], bool) or not isinstance(params["max_tokens"], int) or params["max_tokens"] < 1
@@ -139,7 +144,7 @@ def parse_task(payload: Any) -> TaskSpec:
     return TaskSpec(
         task_id=task_id, idempotency_key=key, summary=summary, messages=messages,
         clearance=payload.get("clearance"), cost_ceiling_usd=payload.get("cost_ceiling_usd"),
-        quality_floor=floor, priority=priority, params=params,
+        quality_floor=floor, priority=priority, params=params, summary_cleared_for_jev=cleared,
     )
 
 
@@ -151,6 +156,10 @@ class SelectorAnswer:
     model_id: str | None
     reason: str
     raw: Any = None
+    # A wrapper selector reports who actually decided and why the first choice did not.
+    selector: str | None = None
+    fallback_used: bool = False
+    note: str | None = None
 
 
 class Selector(Protocol):
@@ -340,6 +349,11 @@ class TaskDispatcher:
                 return self._fail(task, evidence, "no_candidates")
             answer = await self.selector.choose(task, result.candidates)
             evidence["selector_answer"] = {"model_id": answer.model_id, "reason": answer.reason}
+            if answer.selector:
+                evidence["selector"] = answer.selector
+            if answer.fallback_used:
+                evidence["fallback_used"] = True
+                evidence["fallback_reason"] = answer.note
             chosen = next((c for c in result.candidates if c.model_id == answer.model_id), None)
             if chosen is None:
                 # Includes a pick the selector invented: only offered ids are dispatchable.
