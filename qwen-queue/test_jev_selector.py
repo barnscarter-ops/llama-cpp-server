@@ -272,7 +272,8 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         fake = FakeJev("workbench-local")
         led = ledger()
         answer = await self.selector(fake, led).choose(task(cleared=False), self.CANDS)
-        self.assertEqual((answer.model_id, answer.reason), (None, "jev_summary_not_cleared"))
+        self.assertIsNotNone(answer.model_id)
+        self.assertEqual((answer.selector, answer.fallback_used, answer.note), ("rules", True, "jev_summary_not_cleared"))
         self.assertEqual(fake.calls, [])
         self.assertEqual(led.spent_microusd(1_000_000.0) if hasattr(led, "spent_microusd") else 0, 0)
 
@@ -405,12 +406,14 @@ class JevTaskApiTests(TaskHttpBase):
 class JevGateHttpTests(TaskHttpBase):
     ENV = {"GUARDIAN_TASK_API": "true", "GUARDIAN_SELECTOR": "jev", "GUARDIAN_JEV_API_KEY": SECRET}
 
-    async def test_task_without_the_cleared_flag_is_selection_failed_and_jev_is_not_called(self) -> None:
+    async def test_task_without_the_cleared_flag_is_routed_by_rules_and_jev_is_not_called(self) -> None:
         fake = FakeJev("workbench-local")
         self.module.JEV_TRANSPORT = fake
         response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
         body = await response.json()
-        self.assertEqual((response.status, body["status"], body["reason"]), (422, "selection_failed", "jev_summary_not_cleared"))
+        self.assertEqual(response.status, 202, body)
+        self.assertEqual((body["evidence"]["selector"], body["evidence"]["fallback_used"], body["evidence"]["fallback_reason"]),
+                         ("rules", True, "jev_summary_not_cleared"))
         self.assertEqual(fake.calls, [])
 
     async def test_non_boolean_cleared_flag_is_rejected(self) -> None:
