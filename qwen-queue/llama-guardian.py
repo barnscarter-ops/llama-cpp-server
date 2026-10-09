@@ -301,9 +301,8 @@ class Guardian:
         self.queue_events: dict[str, asyncio.Event] = {}
         # At most one queued worker runs. These handles let cancellation stop
         # the actual process tree before the durable row becomes terminal.
-        self.active_worker_job_id: str | None = None
-        self.active_worker_process = None
-        self.active_worker_cancel: asyncio.Event | None = None
+        # Keyed by job id: per-model queues can run one worker per model at once.
+        self.active_workers: dict[str, dict] = {}
 
         # AIWA activity clocks (fleet router). Never used by the GLM idle reaper.
         self.last_aiwa_activity = 0.0
@@ -1045,9 +1044,10 @@ async def queue_cancel(request: web.Request) -> web.Response:
     if not job:
         return web.json_response({"error": {"message": "Queue job not found.", "code": "queue_job_not_found"}}, status=404)
     if job.status == "running" and is_worker_job(job.request):
-        if guardian.active_worker_job_id != job.job_id or guardian.active_worker_cancel is None:
+        active = guardian.active_workers.get(job.job_id)
+        if active is None:
             return web.json_response({"error": {"message": "Running worker is not cancellable at this moment.", "code": "worker_cancel_unavailable"}}, status=409)
-        guardian.active_worker_cancel.set()
+        active["cancel"].set()
         # run_worker owns platform-correct process-tree termination; wait for
         # its task to observe the event and write the terminal state.
         for _ in range(100):
@@ -1597,12 +1597,11 @@ async def run_queued_job(job: QueueJob) -> None:
     """Run one durable job while holding the same one-slot generation lock."""
     if is_worker_job(job.request):
         cancel_event = asyncio.Event()
-        guardian.active_worker_job_id = job.job_id
-        guardian.active_worker_cancel = cancel_event
-        guardian.active_worker_process = None
+        active = {"cancel": cancel_event, "process": None}
+        guardian.active_workers[job.job_id] = active
         try:
             def remember_process(proc):
-                guardian.active_worker_process = proc
+                active["process"] = proc
                 if proc is not None:
                     guardian.job_store.set_worker_pid(job.job_id, proc.pid)
 
@@ -1619,9 +1618,7 @@ async def run_queued_job(job: QueueJob) -> None:
             guardian.job_store.fail(job.job_id, f"Guardian worker failed: {exc}")
             log.exception("guardian worker crashed %s", job.job_id)
         finally:
-            guardian.active_worker_job_id = None
-            guardian.active_worker_cancel = None
-            guardian.active_worker_process = None
+            guardian.active_workers.pop(job.job_id, None)
         return
     if fleet_router_enabled() and seat_for_model(job.request.get("model")) in {"clerk", "consult"}:
         await _run_aiwa_queued_job(
