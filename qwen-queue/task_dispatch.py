@@ -15,9 +15,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol, Sequence
 
-from candidates import Candidate, CandidateResult, TaskLimits, build_candidates
+from candidates import Candidate, CandidateResult, TaskLimits, build_candidates, normalize_ceiling, normalize_clearance
 from model_registry import (
-    NEEDS_APPROVAL, READY, UNAVAILABLE, WAKEABLE, ModelRegistry, ModelSpec, Readiness, ReadinessProbe,
+    NEEDS_APPROVAL, READY, UNAVAILABLE, WAKEABLE, ModelRegistry, ModelSpec, Readiness, ReadinessProbe, egress_rank,
 )
 from qwen_approvals import ApprovalError, ApprovalStore
 
@@ -49,13 +49,49 @@ class TaskSpec:
     def from_json(cls, text: str) -> "TaskSpec":
         return cls(**json.loads(text))
 
+    def approval_scope(self) -> dict[str, Any]:
+        """What an approval for this task covers: where its data may go and what it may cost."""
+        clearance, _note = normalize_clearance(self.clearance)
+        return {"clearance": clearance, "cost_ceiling_usd": normalize_ceiling(self.cost_ceiling_usd)}
+
     def limits(self) -> TaskLimits:
-        # Rough but conservative: a token is rarely under 3 bytes of English/code.
-        size = len(json.dumps(self.messages, separators=(",", ":")).encode("utf-8"))
         return TaskLimits(
-            input_tokens=math.ceil(size / 3),
+            input_tokens=estimate_input_tokens(self.messages),
             max_output_tokens=int(self.params.get("max_tokens", DEFAULT_MAX_TOKENS)),
         )
+
+
+def _message_text_bytes(message: dict) -> int:
+    """Bytes of what the model will actually read: string content, text parts, and any other structured part as JSON."""
+    total = 0
+    content = message.get("content")
+    if isinstance(content, str):
+        total += len(content.encode("utf-8"))
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                total += len(part["text"].encode("utf-8"))
+            else:
+                total += len(json.dumps(part, separators=(",", ":")).encode("utf-8"))
+    elif content is not None:
+        total += len(json.dumps(content, separators=(",", ":")).encode("utf-8"))
+    for key, value in message.items():
+        if key not in ("role", "content") and value is not None:
+            total += len(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+    return total
+
+
+def estimate_input_tokens(messages: list[dict]) -> int:
+    """Worst-case input tokens from the real message text.
+
+    Two bytes per token is deliberately pessimistic (dense code, hex and base64 run near it); a low guess would let a
+    paid call past its cost ceiling or an oversized prompt onto a model that cannot hold it.
+    """
+    return sum(math.ceil(_message_text_bytes(m) / 2) + _PER_MESSAGE_TOKENS for m in messages) + _REPLY_PRIMER_TOKENS
+
+
+_PER_MESSAGE_TOKENS = 4
+_REPLY_PRIMER_TOKENS = 3
 
 
 def _text(payload: dict, key: str, limit: int) -> str:
@@ -297,13 +333,33 @@ class TaskDispatcher:
 
     def _dispatch(self, task: TaskSpec, spec: ModelSpec, readiness: Readiness, evidence: dict) -> Outcome:
         if spec.needs_approval:
-            approval = self.env.approvals.create_pending(task.task_id)
+            approval = self.env.approvals.create_pending(task.task_id, scope=task.approval_scope())
             row = self.env.store.insert(task, "awaiting_approval", evidence, approval_id=approval["id"])
             if approval["status"] == "approved":
-                return self._enqueue(row, task_spec=task, spec=spec, approval_id=approval["id"])
+                return self._enqueue_approved(row, task, spec, approval)
             return Outcome(202, {"approval_id": approval["id"], **self.view(row)})
         row = self.env.store.insert(task, "queued", evidence)
         return self._enqueue(row, task_spec=task, spec=spec, approval_id=None)
+
+    @staticmethod
+    def scope_problem(task: TaskSpec, spec: ModelSpec, approval: dict) -> str | None:
+        """Why this approval does not cover this dispatch, or None. Carter approved a clearance and ceiling; nothing else runs."""
+        scope = task.approval_scope()
+        if approval.get("scope") != scope:
+            return "approval_scope_mismatch"
+        if egress_rank(spec.egress) > egress_rank(scope["clearance"]):
+            return "approval_scope_mismatch"
+        return None
+
+    def _enqueue_approved(self, row: dict, task: TaskSpec, spec: ModelSpec, approval: dict) -> Outcome:
+        problem = self.scope_problem(task, spec, approval)
+        if problem:
+            return self._fail_row(row, problem)
+        return self._enqueue(row, task_spec=task, spec=spec, approval_id=approval["id"])
+
+    def _fail_row(self, row: dict, reason: str) -> Outcome:
+        self.env.store.update(row["task_id"], status="failed", error=reason)
+        return Outcome(409, {"status": "failed", "reason": reason, **self.view(self.env.store.get(row["task_id"]))})  # type: ignore[arg-type]
 
     def _enqueue(self, row: dict, *, task_spec: TaskSpec, spec: ModelSpec, approval_id: str | None) -> Outcome:
         decision = {
@@ -328,7 +384,7 @@ class TaskDispatcher:
                 evidence = json.loads(row["evidence_json"])
                 spec = self.env.registry().get(evidence["chosen_model"])
                 if spec is not None:
-                    self._enqueue(row, task_spec=task, spec=spec, approval_id=approval["id"])
+                    self._enqueue_approved(row, task, spec, approval)
                     continue
             self.env.store.update(
                 row["task_id"], status="failed", error=f"approval_{approval['status']}"
@@ -350,6 +406,9 @@ class TaskDispatcher:
             "task_id": row["task_id"], "status": row["status"], "job_id": row["job_id"],
             "approval_id": row["approval_id"], "error": row["error"], "evidence": evidence,
         }
+        if row["approval_id"]:
+            approval = self.env.approvals.get(row["approval_id"])
+            body["approval_scope"] = approval["scope"] if approval else None
         if job is not None:
             body["status"] = job.status
             body["error"] = job.error

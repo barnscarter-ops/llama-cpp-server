@@ -229,7 +229,8 @@ class QwenTaskTests(QwenCase):
         await asyncio.sleep(0.05)
         self.assertEqual([], self.ssh_calls, "nothing loads before Carter decides")
         decided = await self.client.post(
-            f"/__guardian/approvals/{body['approval_id']}/decide", json={"decision": "approve", "decided_by": "carter"}
+            f"/__guardian/approvals/{body['approval_id']}/decide", json={"decision": "approve", "decided_by": "carter"},
+            headers=self.DECIDER,
         )
         self.assertEqual(200, decided.status)
         done = await self.client_wait("t1", "succeeded")
@@ -237,6 +238,32 @@ class QwenTaskTests(QwenCase):
         self.assertEqual(["consult", "clerk"], self.ssh_calls)
         self.assertEqual("qwen3.8-27b", done["evidence"]["served_model"])
         self.assertEqual("used", self.approvals.get(body["approval_id"])["status"])
+
+    async def test_the_pending_approval_states_what_carter_is_approving(self) -> None:
+        resp = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", quality_floor=2, cost_ceiling_usd=0))
+        body = await resp.json()
+        self.assertEqual({"clearance": "lan", "cost_ceiling_usd": 0.0}, body["approval_scope"])
+        self.assertEqual(body["approval_scope"], self.approvals.get(body["approval_id"])["scope"])
+
+    async def test_an_approval_for_a_different_clearance_is_not_spent(self) -> None:
+        # An approval already live for this task, granted for a narrower clearance than the task now carries.
+        stale = self.approvals.create_pending("t1", scope={"clearance": "pc", "cost_ceiling_usd": 0.0})
+        self.approvals.decide(stale["id"], True, "carter")
+        await self.start_worker()
+        resp = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", quality_floor=2))
+        body = await resp.json()
+        self.assertEqual(409, resp.status, body)
+        self.assertEqual(("failed", "approval_scope_mismatch"), (body["status"], body["error"]))
+        await asyncio.sleep(0.05)
+        self.assertEqual([], self.ssh_calls)
+        self.assertEqual("approved", self.approvals.get(stale["id"])["status"], "not consumed")
+
+    async def test_an_unscoped_approval_is_not_enough_for_a_task(self) -> None:
+        legacy = self.approvals.create_pending("t1")  # created by the direct/job path: no scope recorded
+        self.approvals.decide(legacy["id"], True, "carter")
+        resp = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", quality_floor=2))
+        self.assertEqual("approval_scope_mismatch", (await resp.json())["error"])
+        self.assertEqual([], self.ssh_calls)
 
     async def client_wait(self, task_id: str, want: str) -> dict:
         for _ in range(500):
@@ -251,7 +278,8 @@ class QwenTaskTests(QwenCase):
             "/__guardian/tasks", json=payload(clearance="lan", quality_floor=2)
         )).json()
         await self.client.post(
-            f"/__guardian/approvals/{body['approval_id']}/decide", json={"decision": "deny", "decided_by": "carter"}
+            f"/__guardian/approvals/{body['approval_id']}/decide", json={"decision": "deny", "decided_by": "carter"},
+            headers=self.DECIDER,
         )
         status = await (await self.client.get("/__guardian/tasks/t1")).json()
         self.assertEqual(("failed", "approval_denied"), (status["status"], status["error"]))
@@ -278,6 +306,33 @@ def cand(model_id, state=mr.READY, *, cost=0.0, tier=2, wake=0.0, needs_approval
 
 def task(**over) -> td.TaskSpec:
     return td.parse_task(payload(**over))
+
+
+class InputTokenEstimateTests(unittest.TestCase):
+    def tokens(self, messages: list[dict]) -> int:
+        return td.estimate_input_tokens(messages)
+
+    def test_counts_the_real_text_not_the_json_envelope(self) -> None:
+        small = self.tokens([{"role": "user", "content": "x" * 2000}])
+        self.assertGreaterEqual(small, 1000, "at most two bytes per token")
+        self.assertLess(small, 1100, "envelope overhead is small, not a second copy")
+
+    def test_every_message_and_text_part_counts(self) -> None:
+        one = self.tokens([{"role": "user", "content": "a" * 600}])
+        three = self.tokens([{"role": "user", "content": "a" * 600}] * 3)
+        self.assertGreater(three, 2.9 * one - 20)
+        parts = self.tokens([{"role": "user", "content": [{"type": "text", "text": "a" * 600}, {"type": "text", "text": "b" * 600}]}])
+        self.assertGreaterEqual(parts, 600)
+
+    def test_non_ascii_is_counted_by_bytes(self) -> None:
+        self.assertGreaterEqual(self.tokens([{"role": "user", "content": "漢" * 300}]), 450)
+
+    def test_a_long_prompt_cannot_slip_under_a_cost_ceiling_or_context_limit(self) -> None:
+        spec = td.TaskSpec(
+            task_id="t", idempotency_key="k", summary="s", messages=[{"role": "user", "content": "q" * 90_000}],
+            clearance="internet", cost_ceiling_usd=1, quality_floor=1, priority=50, params={"max_tokens": 10},
+        )
+        self.assertGreaterEqual(spec.limits().input_tokens, 45_000)
 
 
 class RulesSelectorTests(unittest.IsolatedAsyncioTestCase):

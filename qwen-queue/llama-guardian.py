@@ -183,6 +183,8 @@ QUEUE_MAX_RESULT_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_RESULT_BYTES", s
 QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
+# Separate from the queue token: queue clients (agents, Hermes) must not be able to approve their own Qwen loads.
+QWEN_APPROVAL_TOKEN = os.environ.get("GUARDIAN_QWEN_APPROVAL_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
 CONSULT_IDLE_RESTORE_S = int(os.environ.get("CONSULT_IDLE_RESTORE_S", "0"))  # 0 = never restore
 # PR5: Hermes no longer picks seats. When disabled (default) clerk/GLM jobs
@@ -304,9 +306,8 @@ class Guardian:
         self.queue_events: dict[str, asyncio.Event] = {}
         # At most one queued worker runs. These handles let cancellation stop
         # the actual process tree before the durable row becomes terminal.
-        self.active_worker_job_id: str | None = None
-        self.active_worker_process = None
-        self.active_worker_cancel: asyncio.Event | None = None
+        # Keyed by job id: per-model queues can run one worker per model at once.
+        self.active_workers: dict[str, dict] = {}
 
         # AIWA activity clocks (fleet router). Never used by the GLM idle reaper.
         self.last_aiwa_activity = 0.0
@@ -913,7 +914,7 @@ async def _consult_approval_for_submit(request: web.Request, idempotency_key: st
     if not isinstance(approval_id, str) or not approval_id.strip():
         approval = guardian.approvals.create_pending(idempotency_key)
         raise ApprovalError("needs_approval", "Waiting for Carter's decision.", 409, approval)
-    return guardian.approvals.check_usable(approval_id.strip())["id"]
+    return guardian.approvals.check_usable(approval_id.strip(), idempotency_key)["id"]
 
 
 async def queue_submit(request: web.Request) -> web.Response:
@@ -1048,9 +1049,10 @@ async def queue_cancel(request: web.Request) -> web.Response:
     if not job:
         return web.json_response({"error": {"message": "Queue job not found.", "code": "queue_job_not_found"}}, status=404)
     if job.status == "running" and is_worker_job(job.request):
-        if guardian.active_worker_job_id != job.job_id or guardian.active_worker_cancel is None:
+        active = guardian.active_workers.get(job.job_id)
+        if active is None:
             return web.json_response({"error": {"message": "Running worker is not cancellable at this moment.", "code": "worker_cancel_unavailable"}}, status=409)
-        guardian.active_worker_cancel.set()
+        active["cancel"].set()
         # run_worker owns platform-correct process-tree termination; wait for
         # its task to observe the event and write the terminal state.
         for _ in range(100):
@@ -1255,10 +1257,29 @@ async def approvals_list(request: web.Request) -> web.Response:
     return web.json_response({"approvals": guardian.approvals.list(status)})
 
 
+def _approval_decider_authorized(request: web.Request) -> web.Response | None:
+    """Deciding spends Carter's authority, so loopback alone is not enough: any local process could self-approve.
+
+    Fails closed when no decider token is configured.
+    """
+    if not QWEN_APPROVAL_TOKEN:
+        return guardian_error(
+            "Approval decisions are disabled until GUARDIAN_QWEN_APPROVAL_TOKEN is set.",
+            "approval_token_not_configured", 503,
+        )
+    supplied = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not supplied or not hmac.compare_digest(supplied, QWEN_APPROVAL_TOKEN):
+        return guardian_error("Approval decisions need the approval bearer token.", "approval_forbidden", 403)
+    return None
+
+
 async def approvals_decide(request: web.Request) -> web.Response:
-    """Record Carter's decision. Chief relays it from Room; same trust as the other write endpoints."""
+    """Record Carter's decision. Chief relays it from Room, holding the approval token."""
     if not _queue_authorized(request):
         return _queue_forbidden()
+    denied = _approval_decider_authorized(request)
+    if denied is not None:
+        return denied
     try:
         payload = await request.json()
     except (json.JSONDecodeError, ValueError):
@@ -1645,7 +1666,7 @@ async def _run_aiwa_job_with_approval(job: QueueJob, seat: str, client) -> None:
         approval_id = (job.decision or {}).get("approval_id")
         try:
             await qwen_session.run_approved_qwen(
-                approvals=guardian.approvals, approval_id=approval_id, client=client,
+                approvals=guardian.approvals, approval_id=approval_id, task_id=(job.decision or {}).get("task_id") or job.idempotency_key, client=client,
                 run=lambda: _post_aiwa_job(job, client, payload, seat, timeout),
             )
         except ApprovalError as exc:
@@ -1696,12 +1717,11 @@ async def run_queued_job(job: QueueJob) -> None:
     """Run one durable job while holding the same one-slot generation lock."""
     if is_worker_job(job.request):
         cancel_event = asyncio.Event()
-        guardian.active_worker_job_id = job.job_id
-        guardian.active_worker_cancel = cancel_event
-        guardian.active_worker_process = None
+        active = {"cancel": cancel_event, "process": None}
+        guardian.active_workers[job.job_id] = active
         try:
             def remember_process(proc):
-                guardian.active_worker_process = proc
+                active["process"] = proc
                 if proc is not None:
                     guardian.job_store.set_worker_pid(job.job_id, proc.pid)
 
@@ -1718,9 +1738,7 @@ async def run_queued_job(job: QueueJob) -> None:
             guardian.job_store.fail(job.job_id, f"Guardian worker failed: {exc}")
             log.exception("guardian worker crashed %s", job.job_id)
         finally:
-            guardian.active_worker_job_id = None
-            guardian.active_worker_cancel = None
-            guardian.active_worker_process = None
+            guardian.active_workers.pop(job.job_id, None)
         return
     if fleet_router_enabled() and seat_for_model(job.request.get("model")) in {"clerk", "consult"}:
         await _run_aiwa_queued_job(
@@ -2292,6 +2310,7 @@ async def guardian_health(request: web.Request) -> web.Response:
             ),
             "served": served["served"],
             "served_total": served["served_total"],
+            **qwen_session.health(),
         }
     )
 
@@ -2484,6 +2503,9 @@ async def on_startup(app: web.Application) -> None:
     app["consult_restore_task"] = asyncio.create_task(consult_idle_restorer(app))
     app["queue_worker_task"] = asyncio.create_task(queue_worker(app))
     app["qwen_recovery_task"] = asyncio.create_task(qwen_session.recover_resting_model(guardian._client))
+    app["qwen_reload_retry_task"] = asyncio.create_task(
+        qwen_session.reload_retrier(lambda: getattr(guardian, "_client", None))
+    )
     log.info(
         f"guardian up on {PROXY_HOST}:{PROXY_PORT} → {LLAMA_HOST}:{LLAMA_PORT} "
         f"(idle timeout {IDLE_TIMEOUT_MIN} min, prewarm ports {PREWARM_PORTS})"
@@ -2492,7 +2514,7 @@ async def on_startup(app: web.Application) -> None:
 
 async def on_cleanup(app: web.Application) -> None:
     """Clean shutdown — cancel background tasks, close client."""
-    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "consult_restore_task", "queue_worker_task", "qwen_recovery_task"):
+    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "consult_restore_task", "queue_worker_task", "qwen_recovery_task", "qwen_reload_retry_task"):
         app[t].cancel()
     await asyncio.gather(
         app["prewarm_task"], app["slot_poller_task"], app["enforcer_task"], app["reaper_task"], app["consult_restore_task"], app["queue_worker_task"],
