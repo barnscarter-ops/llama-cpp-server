@@ -77,8 +77,14 @@ class JevSelector:
         if not ids or len(ids) > MAX_CANDIDATES or "abstain" in ids or len(set(ids)) != len(ids):
             return SelectorAnswer(None, "jev_request_invalid")
         if not task.summary_cleared_for_jev:
-            # Checked before anything else: no key load, no spend, no network.
-            return SelectorAnswer(None, NOT_CLEARED)
+            # Checked before anything else: no key load, no spend, no network. Policy, not a Jev failure,
+            # so rules keep the task moving; failing it would break every task at the Chief flag's default.
+            from task_dispatch import RulesSelector
+
+            picked = await RulesSelector().choose(task, candidates)
+            return SelectorAnswer(
+                picked.model_id, picked.reason, picked.raw, selector="rules", fallback_used=True, note=NOT_CLEARED,
+            )
         summary, redactions = redact_summary((task.summary or "").strip()[:MAX_SUMMARY_CHARS])
         summary = summary.strip()
         if not summary.replace("[redacted]", "").strip():
