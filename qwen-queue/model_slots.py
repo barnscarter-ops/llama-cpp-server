@@ -21,6 +21,11 @@ def slots_enabled() -> bool:
     return os.environ.get("GUARDIAN_MODEL_SLOTS", "false").strip().lower() in {"true", "1", "yes"}
 
 
+def slots_active() -> bool:
+    """Slots are on by their own flag, or implied by the Qwen approval flag (its swap needs the host lock)."""
+    return slots_enabled() or os.environ.get("GUARDIAN_QWEN_APPROVAL", "false").strip().lower() in {"true", "1", "yes"}
+
+
 class DrainTimeout(asyncio.TimeoutError):
     """In-flight work on a host did not finish before an exclusive hold was due."""
 
@@ -102,6 +107,15 @@ class ModelSlots:
             self._in_flight[model_id] -= 1
             host.wake()
             sem.release()
+
+    async def wait_available(self, model_id: str) -> None:
+        """Block while a swap holds or awaits the model's host; lets queue workers leave jobs queued meanwhile."""
+        spec = self._registry.get(model_id)
+        if spec is None:
+            return
+        host = self._hosts[spec.host]
+        while host.exclusive or host.waiting_exclusive:
+            await host.wait_changed()
 
     @asynccontextmanager
     async def exclusive(self, host_name: str, *, timeout: float | None = None) -> AsyncIterator[None]:

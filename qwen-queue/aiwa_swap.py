@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import model_slots
+from qwen_approvals import qwen_approval_enabled
 from fleet_router import SERVING_IDS, guardian_error, occupant_cache
 
 log = logging.getLogger("guardian")
@@ -247,6 +248,14 @@ async def perform_swap(to: str, client, gate: str | None = None) -> object:
             400,
         )
 
+    if to == "consult" and qwen_approval_enabled():
+        # Qwen loads only inside an approved session; a string gate no longer authorizes it.
+        return guardian_error(
+            "GUARDIAN_QWEN_APPROVAL is on: Qwen loads only through an approved task, not a swap request.",
+            "consult_approval_required",
+            403,
+        )
+
     if to == "consult":
         approved = (gate or "").strip().lower()
         if approved not in CONSULT_SWAP_GATES:
@@ -283,9 +292,26 @@ async def perform_swap(to: str, client, gate: str | None = None) -> object:
         swap_slot.__exit__()
 
 
+async def swap_while_exclusive(to: str, client) -> object:
+    """Swap for a caller that already holds the R9700 exclusively (the approved-Qwen session)."""
+    if to not in SWAP_SCRIPTS:
+        return guardian_error(f"'to' must be one of {sorted(SWAP_SCRIPTS)}, got '{to}'.", "invalid_swap_target", 400)
+    if not swap_owner_enabled():
+        return guardian_error(
+            "FLEET_SWAP_OWNER is false: the Board console owns the AIWA SSH swap.", "swap_board_owns_ssh", 409
+        )
+    await warn_if_console_up()
+    if not swap_slot.__enter__():
+        return guardian_error("Another swap is already in flight.", "aiwa_busy", 409)
+    try:
+        return await _swap_locked(to, client)
+    finally:
+        swap_slot.__exit__()
+
+
 def _host_exclusive():
     """Hold the whole R9700 for the swap so no completion lands on a half-loaded model."""
-    if not model_slots.slots_enabled():
+    if not model_slots.slots_active():
         return model_slots.no_slot()
     return model_slots.get_slots().exclusive("r9700", timeout=SWAP_DRAIN_TIMEOUT_S)
 
