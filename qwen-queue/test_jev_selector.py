@@ -268,6 +268,16 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(fake.calls[0][2]["state"]["summary"]), 2000)
         self.assertGreater(len(fake.calls[0][2]["state"]["summary"]), 1900)
 
+    async def test_a_token_straddling_the_length_limit_is_redacted_not_cut(self) -> None:
+        secret = "sk-" + "abcdefghij" * 3
+        for pad in (1985, 1990, 1995, 1999):  # the token starts before 2000 and ends after it
+            with self.subTest(pad=pad):
+                fake = FakeJev("workbench-local")
+                await self.selector(fake).choose(task("word " * (pad // 5) + "x" * (pad % 5) + " " + secret), self.CANDS)
+                sent = fake.calls[0][2]["state"]["summary"]
+                self.assertLessEqual(len(sent), 2000)
+                self.assertNotIn("sk-", sent)
+
     async def test_uncleared_summary_never_reaches_jev_and_costs_nothing(self) -> None:
         fake = FakeJev("workbench-local")
         led = ledger()
