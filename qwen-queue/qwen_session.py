@@ -9,8 +9,9 @@ let the Nemotron queue resume. Leaves CONSULT_IDLE_RESTORE_S alone.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
-import uuid
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, TypeVar
 
@@ -26,6 +27,7 @@ T = TypeVar("T")
 
 RELOAD_ATTEMPTS = 3
 RELOAD_RETRY_S = 5.0
+RELOAD_RETRY_LOOP_S = 60.0
 
 
 class SessionError(Exception):
@@ -39,6 +41,8 @@ class QwenState:
     session_active: bool = False
     reload_failed: bool = False
     sessions_run: int = 0
+    reload_failed_at: float | None = None
+    reload_retries: int = 0
 
 
 state = QwenState()
@@ -47,6 +51,8 @@ state = QwenState()
 def reset_state() -> None:
     state.session_active = state.reload_failed = False
     state.sessions_run = 0
+    state.reload_failed_at = None
+    state.reload_retries = 0
 
 
 async def restore_resting_model(client) -> bool:
@@ -55,31 +61,92 @@ async def restore_resting_model(client) -> bool:
         fleet_router.occupant_cache.invalidate()
         occupant, _model_id, reachable = await fleet_router.occupant_cache.get(client)
         if reachable and occupant == "clerk":
-            state.reload_failed = False
+            _reload_ok()
             return True
         resp = await aiwa_swap.swap_while_exclusive("clerk", client)
         if resp.status == 200:
-            state.reload_failed = False
+            _reload_ok()
             return True
         log.error("nemotron reload attempt %d failed (HTTP %s)", attempt + 1, resp.status)
         if attempt + 1 < RELOAD_ATTEMPTS:
             await asyncio.sleep(RELOAD_RETRY_S)
     state.reload_failed = True
+    state.reload_failed_at = state.reload_failed_at or time.time()
     log.error("nemotron reload FAILED; the R9700 is not on its resting model")
     return False
 
 
+def _reload_ok() -> None:
+    state.reload_failed = False
+    state.reload_failed_at = None
+
+
+async def _finish_even_if_cancelled(awaitable: Awaitable[T]) -> T:
+    """Wait for awaitable to finish however many times we are cancelled, then re-raise the cancel.
+
+    The R9700 lock must outlive the reload: releasing it mid-reload would let a Nemotron request land on a half-loaded model.
+    """
+    task = asyncio.ensure_future(awaitable)
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if task.done():
+                result = task.result()
+                break
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
+async def retry_failed_reload(client) -> bool:
+    """One retry pass for a failed Nemotron reload; no-op unless one is outstanding and no session runs."""
+    if not state.reload_failed or state.session_active or client is None:
+        return False
+    state.reload_retries += 1
+    try:
+        async with model_slots.get_slots().exclusive("r9700", timeout=aiwa_swap.SWAP_DRAIN_TIMEOUT_S):
+            return await _finish_even_if_cancelled(restore_resting_model(client))
+    except model_slots.DrainTimeout:
+        log.error("nemotron reload retry skipped: R9700 work did not drain")
+        return False
+
+
+async def reload_retrier(get_client: Callable[[], object], interval_s: float | None = None) -> None:
+    """Keep trying until Nemotron is back; a failed reload must not be permanent."""
+    while True:
+        await asyncio.sleep(RELOAD_RETRY_LOOP_S if interval_s is None else interval_s)
+        try:
+            await retry_failed_reload(get_client())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("nemotron reload retry crashed")
+
+
+def health() -> dict:
+    return {
+        "qwen_session_active": state.session_active,
+        "nemotron_reload_failed": state.reload_failed,
+        "nemotron_reload_failed_since": state.reload_failed_at,
+        "nemotron_reload_retries": state.reload_retries,
+    }
+
+
 async def run_approved_qwen(
-    *, approvals: ApprovalStore, approval_id: str | None, client, run: Callable[[], Awaitable[T]]
+    *, approvals: ApprovalStore, approval_id: str | None, task_id: str, client, run: Callable[[], Awaitable[T]]
 ) -> T:
-    approvals.check_usable(approval_id)  # cheap early refusal before anything is drained
+    approvals.check_usable(approval_id, task_id)  # cheap early refusal before anything is drained
     slots = model_slots.get_slots()
     try:
         async with slots.exclusive("r9700", timeout=aiwa_swap.SWAP_DRAIN_TIMEOUT_S):
             state.session_active = True
             try:
                 # Consumed only after the drain: a drain timeout leaves the approval usable for a retry.
-                approvals.consume(approval_id)  # type: ignore[arg-type]
+                approvals.consume(approval_id, task_id)  # type: ignore[arg-type]
                 fleet_router.occupant_cache.invalidate()
                 occupant, _mid, reachable = await fleet_router.occupant_cache.get(client)
                 if not (reachable and occupant == "consult"):
@@ -89,9 +156,11 @@ async def run_approved_qwen(
                 state.sessions_run += 1
                 return await run()
             finally:
-                # Success, failure and cancel all end here; shielded so a second cancel cannot skip the reload.
-                await asyncio.shield(restore_resting_model(client))
-                state.session_active = False
+                # Success, failure and cancel all end here; repeated cancels cannot skip the reload or release the lock early.
+                try:
+                    await _finish_even_if_cancelled(restore_resting_model(client))
+                finally:
+                    state.session_active = False
     except model_slots.DrainTimeout as exc:
         raise SessionError(
             "aiwa_busy", "In-flight R9700 work did not finish in time; Qwen was not loaded.", 409
@@ -142,12 +211,13 @@ async def handle_completion(
     seat_hdrs, _rid = fleet_router.served_headers(seat, None)
     if seat == "consult":
         approval_id = request.headers.get("X-Guardian-Approval-Id") or request.query.get("approval_id")
+        # Same body, same task: a retry without headers still finds its own approval and nobody else's.
+        task_id = (
+            request.headers.get("X-Guardian-Task-Id")
+            or request.headers.get("Idempotency-Key")
+            or f"direct-{hashlib.sha256(body).hexdigest()[:16]}"
+        )
         if not approval_id:
-            task_id = (
-                request.headers.get("X-Guardian-Task-Id")
-                or request.headers.get("Idempotency-Key")
-                or f"direct-{uuid.uuid4().hex[:12]}"
-            )
             resp = needs_approval_response(guardian.approvals.create_pending(task_id))
             resp.headers.update(seat_hdrs)
             return resp
@@ -160,7 +230,7 @@ async def handle_completion(
 
         try:
             return await run_approved_qwen(
-                approvals=guardian.approvals, approval_id=approval_id, client=client, run=run
+                approvals=guardian.approvals, approval_id=approval_id, task_id=task_id, client=client, run=run
             )
         except ApprovalError as exc:
             resp = approval_error_response(exc)

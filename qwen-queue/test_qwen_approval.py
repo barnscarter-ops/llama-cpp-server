@@ -22,7 +22,8 @@ CONSULT = SERVING_IDS["consult"]
 
 
 class QwenCase(GuardianHarnessCase):
-    ENV = {"GUARDIAN_QWEN_APPROVAL": "true", "FLEET_SWAP_OWNER": "true"}
+    DECIDER = {"Authorization": "Bearer decider-secret"}
+    ENV = {"GUARDIAN_QWEN_APPROVAL": "true", "FLEET_SWAP_OWNER": "true", "GUARDIAN_QWEN_APPROVAL_TOKEN": "decider-secret"}
     swap_delay = 0.0
 
     async def asyncSetUp(self) -> None:
@@ -63,7 +64,8 @@ class QwenCase(GuardianHarnessCase):
         return {"model": model, "stream": stream, "messages": [{"role": "user", "content": "hi"}]}
 
     async def post(self, model: str, headers: dict | None = None, stream: bool = False):
-        resp = await self.client.post("/v1/chat/completions", json=self.completion(model, stream), headers=headers or {})
+        headers = {"X-Guardian-Task-Id": "t1", **(headers or {})}
+        resp = await self.client.post("/v1/chat/completions", json=self.completion(model, stream), headers=headers)
         await resp.read()
         return resp
 
@@ -112,13 +114,13 @@ class DirectRequestTests(QwenCase):
         self.assertEqual([], self.ssh_calls)
 
     async def test_pending_approval_is_not_enough(self) -> None:
-        record = self.approvals.create_pending("t")
+        record = self.approvals.create_pending("t1")
         resp = await self.post(CONSULT, headers={"X-Guardian-Approval-Id": record["id"]})
         self.assertEqual("needs_approval", (await resp.json())["error"]["code"])
         self.assertEqual([], self.ssh_calls)
 
     async def test_denied_approval_is_403(self) -> None:
-        record = self.approvals.create_pending("t")
+        record = self.approvals.create_pending("t1")
         self.approvals.decide(record["id"], False, "carter")
         resp = await self.post(CONSULT, headers={"X-Guardian-Approval-Id": record["id"]})
         self.assertEqual(403, resp.status)
@@ -147,6 +149,16 @@ class DirectRequestTests(QwenCase):
         self.assertEqual("used", self.approvals.get(approval_id)["status"])
         self.assertFalse(qwen_session.state.session_active)
 
+    async def test_approval_cannot_be_spent_by_another_task(self) -> None:
+        approval_id = self.approve("t1")
+        resp = await self.post(CONSULT, headers={"X-Guardian-Approval-Id": approval_id, "X-Guardian-Task-Id": "intruder"})
+        self.assertEqual(403, resp.status)
+        body = await resp.json()
+        self.assertEqual("approval_wrong_task", body["error"]["code"])
+        self.assertNotIn("approval_id", body)
+        self.assertEqual([], self.ssh_calls)
+        self.assertEqual("approved", self.approvals.get(approval_id)["status"], "the owner can still use it")
+
     async def test_approval_cannot_be_used_twice(self) -> None:
         approval_id = self.approve()
         ok = await self.post(CONSULT, headers={"X-Guardian-Approval-Id": approval_id})
@@ -158,7 +170,7 @@ class DirectRequestTests(QwenCase):
         self.assertEqual(["consult", "clerk"], self.ssh_calls)
 
     async def test_expired_approval_is_rejected(self) -> None:
-        record = self.approvals.create_pending("t", ttl_s=0.05)
+        record = self.approvals.create_pending("t1", ttl_s=0.05)
         self.approvals.decide(record["id"], True, "carter")
         await asyncio.sleep(0.08)
         resp = await self.post(CONSULT, headers={"X-Guardian-Approval-Id": record["id"]})
@@ -223,7 +235,7 @@ class SessionUnitTests(QwenCase):
 
         task = asyncio.create_task(
             qwen_session.run_approved_qwen(
-                approvals=self.approvals, approval_id=approval_id, client=self.module.guardian._client, run=run
+                approvals=self.approvals, approval_id=approval_id, task_id="t1", client=self.module.guardian._client, run=run
             )
         )
         await started.wait()
@@ -234,6 +246,69 @@ class SessionUnitTests(QwenCase):
         self.assertEqual(CLERK, self.aiwa.occupant_id)
         self.assertFalse(model_slots.get_slots().exclusive_held("r9700"))
 
+    async def test_second_cancel_during_reload_keeps_the_lock_until_it_finishes(self) -> None:
+        approval_id = self.approve()
+        started = asyncio.Event()
+
+        async def run():
+            started.set()
+            await asyncio.sleep(30)
+
+        task = asyncio.create_task(
+            qwen_session.run_approved_qwen(
+                approvals=self.approvals, approval_id=approval_id, task_id="t1",
+                client=self.module.guardian._client, run=run,
+            )
+        )
+        await started.wait()
+        type(self).swap_delay = 0.3  # make the Nemotron reload slow enough to cancel into
+        self.addCleanup(setattr, type(self), "swap_delay", 0.0)
+        task.cancel()
+        await self.until(lambda: self.ssh_calls == ["consult", "clerk"])  # reload in flight
+        task.cancel()
+        await asyncio.sleep(0.05)
+        self.assertTrue(model_slots.get_slots().exclusive_held("r9700"), "lock released while reload still running")
+        self.assertTrue(qwen_session.state.session_active)
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(CLERK, self.aiwa.occupant_id)
+        self.assertFalse(model_slots.get_slots().exclusive_held("r9700"))
+        self.assertFalse(qwen_session.state.session_active)
+
+    async def test_failed_reload_is_reported_on_health_and_retried_until_it_works(self) -> None:
+        approval_id = self.approve()
+        self.swap_fail = {"clerk"}
+
+        async def run():
+            return "ok"
+
+        await qwen_session.run_approved_qwen(
+            approvals=self.approvals, approval_id=approval_id, task_id="t1",
+            client=self.module.guardian._client, run=run,
+        )
+        health = await (await self.client.get("/__guardian/health")).json()
+        self.assertTrue(health["nemotron_reload_failed"])
+        self.assertIsNotNone(health["nemotron_reload_failed_since"])
+        self.assertEqual(CONSULT, self.aiwa.occupant_id)
+
+        self.assertFalse(await qwen_session.retry_failed_reload(self.module.guardian._client))  # still failing
+        self.assertTrue(qwen_session.state.reload_failed)
+        self.swap_fail = set()
+        retrier = asyncio.create_task(qwen_session.reload_retrier(lambda: self.module.guardian._client, 0.01))
+        self.addCleanup(retrier.cancel)
+        await self.until(lambda: not qwen_session.state.reload_failed)
+        self.assertEqual(CLERK, self.aiwa.occupant_id)
+        health = await (await self.client.get("/__guardian/health")).json()
+        self.assertFalse(health["nemotron_reload_failed"])
+        self.assertGreaterEqual(health["nemotron_reload_retries"], 2)
+
+    async def test_retry_does_nothing_when_no_reload_is_outstanding_or_a_session_runs(self) -> None:
+        self.assertFalse(await qwen_session.retry_failed_reload(self.module.guardian._client))
+        qwen_session.state.reload_failed = True
+        qwen_session.state.session_active = True
+        self.assertFalse(await qwen_session.retry_failed_reload(self.module.guardian._client))
+        self.assertEqual([], self.ssh_calls)
+
     async def test_exception_in_run_reloads_nemotron_and_propagates(self) -> None:
         approval_id = self.approve()
 
@@ -242,7 +317,7 @@ class SessionUnitTests(QwenCase):
 
         with self.assertRaises(RuntimeError):
             await qwen_session.run_approved_qwen(
-                approvals=self.approvals, approval_id=approval_id, client=self.module.guardian._client, run=run
+                approvals=self.approvals, approval_id=approval_id, task_id="t1", client=self.module.guardian._client, run=run
             )
         self.assertEqual(["consult", "clerk"], self.ssh_calls)
 
@@ -254,7 +329,7 @@ class SessionUnitTests(QwenCase):
             return "ok"
 
         result = await qwen_session.run_approved_qwen(
-            approvals=self.approvals, approval_id=approval_id, client=self.module.guardian._client, run=run
+            approvals=self.approvals, approval_id=approval_id, task_id="t1", client=self.module.guardian._client, run=run
         )
         self.assertEqual("ok", result)
         self.assertEqual(["consult"] + ["clerk"] * qwen_session.RELOAD_ATTEMPTS, self.ssh_calls)
@@ -326,7 +401,8 @@ class QueuedJobTests(QwenCase):
         first = await self.client.post("/__guardian/jobs", json=self.job_body("k1", "qwen3.8-27b"))
         approval_id = (await first.json())["approval_id"]
         decided = await self.client.post(
-            f"/__guardian/approvals/{approval_id}/decide", json={"decision": "approve", "decided_by": "carter"}
+            f"/__guardian/approvals/{approval_id}/decide", json={"decision": "approve", "decided_by": "carter"},
+            headers=self.DECIDER,
         )
         self.assertEqual("approved", (await decided.json())["status"])
         qwen_job = await self.client.post("/__guardian/jobs", json=self.job_body("k1", "qwen3.8-27b", approval_id))
@@ -360,14 +436,15 @@ class QueuedJobTests(QwenCase):
         self.assertEqual(202, resp.status)
         job = await self.wait_done((await resp.json())["job_id"])
         self.assertEqual("succeeded", job["status"])
-        replay = await self.client.post("/__guardian/jobs", json=self.job_body("k6", "qwen3.8-27b", approval_id))
-        self.assertEqual(409, replay.status)
-        self.assertEqual("approval_used", (await replay.json())["error"]["code"])
+        replay = await self.client.post("/__guardian/jobs", json=self.job_body("k5b", "qwen3.8-27b", approval_id))
+        self.assertEqual(403, replay.status, "another task cannot spend this approval")
+        self.assertEqual("approval_wrong_task", (await replay.json())["error"]["code"])
+        self.assertNotIn("approval_id", await replay.json(), "must not echo the other task's record")
 
 
 class ApprovalEndpointTests(QwenCase):
     async def decide(self, approval_id: str, **body):
-        return await self.client.post(f"/__guardian/approvals/{approval_id}/decide", json=body)
+        return await self.client.post(f"/__guardian/approvals/{approval_id}/decide", json=body, headers=self.DECIDER)
 
     async def test_decide_validation_and_state_rules(self) -> None:
         record = self.approvals.create_pending("t")
@@ -380,6 +457,29 @@ class ApprovalEndpointTests(QwenCase):
         again = await self.decide(record["id"], decision="deny", decided_by="carter")
         self.assertEqual(409, again.status)
         self.assertEqual("approved", self.approvals.get(record["id"])["status"])
+
+    async def test_deciding_needs_the_approval_token_even_from_loopback(self) -> None:
+        record = self.approvals.create_pending("t1")
+        url = f"/__guardian/approvals/{record['id']}/decide"
+        body = {"decision": "approve", "decided_by": "carter"}
+        for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": "Bearer "}):
+            resp = await self.client.post(url, json=body, headers=headers)
+            self.assertEqual(403, resp.status)
+            self.assertEqual("approval_forbidden", (await resp.json())["error"]["code"])
+        self.assertEqual("pending", self.approvals.get(record["id"])["status"])
+        ok = await self.client.post(url, json=body, headers=self.DECIDER)
+        self.assertEqual(200, ok.status)
+
+    async def test_deciding_is_disabled_when_no_token_is_configured(self) -> None:
+        record = self.approvals.create_pending("t1")
+        self.module.QWEN_APPROVAL_TOKEN = ""
+        resp = await self.client.post(
+            f"/__guardian/approvals/{record['id']}/decide",
+            json={"decision": "approve", "decided_by": "x"}, headers=self.DECIDER,
+        )
+        self.assertEqual(503, resp.status)
+        self.assertEqual("approval_token_not_configured", (await resp.json())["error"]["code"])
+        self.assertEqual("pending", self.approvals.get(record["id"])["status"])
 
     async def test_list_filters_by_status(self) -> None:
         a = self.approvals.create_pending("a")
@@ -422,6 +522,17 @@ class StoreTests(unittest.TestCase):
         self.now += 11
         second = self.store.create_pending("t", ttl_s=10)
         self.assertNotEqual(first["id"], second["id"])
+
+    def test_check_and_consume_are_bound_to_their_task(self) -> None:
+        record = self.store.create_pending("owner")
+        self.store.decide(record["id"], True, "carter")
+        for call in (self.store.check_usable, self.store.consume):
+            with self.assertRaises(ApprovalError) as ctx:
+                call(record["id"], "intruder")
+            self.assertEqual(("approval_wrong_task", 403), (ctx.exception.code, ctx.exception.status))
+            self.assertIsNone(ctx.exception.approval)
+        self.assertEqual("approved", self.store.get(record["id"])["status"])
+        self.assertEqual("used", self.store.consume(record["id"], "owner")["status"])
 
     def test_consume_is_once_only(self) -> None:
         record = self.store.create_pending("t")
