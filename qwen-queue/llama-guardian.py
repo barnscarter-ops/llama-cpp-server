@@ -1278,7 +1278,7 @@ async def approvals_decide(request: web.Request) -> web.Response:
     except ApprovalError as exc:
         return qwen_session.approval_error_response(exc)
     if task_api_enabled():
-        build_task_dispatcher().on_approval(record)
+        await build_task_dispatcher().on_approval(record)
     return web.json_response(record)
 
 

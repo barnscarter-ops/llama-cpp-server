@@ -8,6 +8,7 @@ rejected, whoever made it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import sqlite3
@@ -28,6 +29,10 @@ MAX_SUMMARY_CHARS = 12_000
 
 class TaskValidationError(ValueError):
     pass
+
+
+class TaskConflict(Exception):
+    """A task row with this id or idempotency key already exists."""
 
 
 @dataclass(frozen=True)
@@ -215,12 +220,15 @@ class TaskStore:
 
     def insert(self, spec: TaskSpec, status: str, evidence: dict, *, job_id: str | None = None,
                approval_id: str | None = None, error: str | None = None) -> dict:
-        self._conn.execute(
-            "INSERT INTO guardian_tasks (task_id, idempotency_key, status, job_id, approval_id, spec_json, "
-            "evidence_json, error, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (spec.task_id, spec.idempotency_key, status, job_id, approval_id,
-             spec.to_json(), json.dumps(evidence, separators=(",", ":")), error, time.time()),
-        )
+        try:
+            self._conn.execute(
+                "INSERT INTO guardian_tasks (task_id, idempotency_key, status, job_id, approval_id, spec_json, "
+                "evidence_json, error, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (spec.task_id, spec.idempotency_key, status, job_id, approval_id,
+                 spec.to_json(), json.dumps(evidence, separators=(",", ":")), error, time.time()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise TaskConflict(str(exc)) from exc
         self._conn.commit()
         return self.get(spec.task_id)  # type: ignore[return-value]
 
@@ -233,6 +241,17 @@ class TaskStore:
 
 
 # ── dispatcher ──────────────────────────────────────────────────────────────
+
+_KEY_LOCKS: dict[str, "asyncio.Lock"] = {}
+
+
+def _key_lock(key: str) -> "asyncio.Lock":
+    lock = _KEY_LOCKS.setdefault(key, asyncio.Lock())
+    # Dropped when idle so the table cannot grow with every key ever seen.
+    if len(_KEY_LOCKS) > 1024:
+        for k in [k for k, v in _KEY_LOCKS.items() if not v.locked() and k != key]:
+            del _KEY_LOCKS[k]
+    return lock
 
 
 @dataclass(frozen=True)
@@ -284,6 +303,18 @@ class TaskDispatcher:
         return pair[1]
 
     async def submit(self, task: TaskSpec) -> Outcome:
+        # Selection awaits probes and a selector, so two submits of one key would both pass the lookup below.
+        async with _key_lock(task.idempotency_key):
+            try:
+                return await self._submit_locked(task)
+            except TaskConflict:
+                # Another dispatcher won the insert (e.g. a different key claimed this task_id first).
+                existing = self.env.store.get_by_key(task.idempotency_key)
+                if existing:
+                    return Outcome(200, {"idempotent": True, **self.view(existing)})
+                return Outcome(409, {"error": {"code": "task_exists", "message": "task_id already used with another idempotency_key."}})
+
+    async def _submit_locked(self, task: TaskSpec) -> Outcome:
         existing = self.env.store.get_by_key(task.idempotency_key)
         if existing:
             return Outcome(200, {"idempotent": True, **self.view(existing)})
@@ -324,19 +355,19 @@ class TaskDispatcher:
                     evidence["reselected"] = True
                     continue
                 return self._fail(task, evidence, f"chosen_model_unavailable:{now.reason or 'unknown'}")
-            return self._dispatch(task, spec, now, evidence)  # type: ignore[arg-type]
+            return await self._dispatch(task, spec, now, evidence)  # type: ignore[arg-type]
         return self._fail(task, evidence, "chosen_model_unavailable")
 
     def _fail(self, task: TaskSpec, evidence: dict, reason: str) -> Outcome:
         row = self.env.store.insert(task, "selection_failed", evidence, error=reason)
         return Outcome(422, {"status": "selection_failed", "reason": reason, **self.view(row)})
 
-    def _dispatch(self, task: TaskSpec, spec: ModelSpec, readiness: Readiness, evidence: dict) -> Outcome:
+    async def _dispatch(self, task: TaskSpec, spec: ModelSpec, readiness: Readiness, evidence: dict) -> Outcome:
         if spec.needs_approval:
             approval = self.env.approvals.create_pending(task.task_id, scope=task.approval_scope())
             row = self.env.store.insert(task, "awaiting_approval", evidence, approval_id=approval["id"])
             if approval["status"] == "approved":
-                return self._enqueue_approved(row, task, spec, approval)
+                return await self._enqueue_approved(row, task, spec, approval)
             return Outcome(202, {"approval_id": approval["id"], **self.view(row)})
         row = self.env.store.insert(task, "queued", evidence)
         return self._enqueue(row, task_spec=task, spec=spec, approval_id=None)
@@ -351,10 +382,14 @@ class TaskDispatcher:
             return "approval_scope_mismatch"
         return None
 
-    def _enqueue_approved(self, row: dict, task: TaskSpec, spec: ModelSpec, approval: dict) -> Outcome:
+    async def _enqueue_approved(self, row: dict, task: TaskSpec, spec: ModelSpec, approval: dict) -> Outcome:
         problem = self.scope_problem(task, spec, approval)
         if problem:
             return self._fail_row(row, problem)
+        # The model was ready when picked; the approval can arrive much later, so look again before queuing.
+        now = await self._readiness_now(spec)
+        if now.state == UNAVAILABLE:
+            return self._fail_row(row, f"chosen_model_unavailable:{now.reason or 'unknown'}")
         return self._enqueue(row, task_spec=task, spec=spec, approval_id=approval["id"])
 
     def _fail_row(self, row: dict, reason: str) -> Outcome:
@@ -377,14 +412,14 @@ class TaskDispatcher:
         return Outcome(202, self.view(self.env.store.get(task_spec.task_id)))  # type: ignore[arg-type]
 
     # Called when Carter decides an approval (Chief relays it).
-    def on_approval(self, approval: dict) -> None:
+    async def on_approval(self, approval: dict) -> None:
         for row in self.env.store.awaiting(approval["id"]):
             if approval["status"] == "approved":
                 task = TaskSpec.from_json(row["spec_json"])
                 evidence = json.loads(row["evidence_json"])
                 spec = self.env.registry().get(evidence["chosen_model"])
                 if spec is not None:
-                    self._enqueue_approved(row, task, spec, approval)
+                    await self._enqueue_approved(row, task, spec, approval)
                     continue
             self.env.store.update(
                 row["task_id"], status="failed", error=f"approval_{approval['status']}"
