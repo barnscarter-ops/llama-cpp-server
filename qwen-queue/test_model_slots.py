@@ -102,7 +102,7 @@ class ModelSlotsUnitTests(unittest.IsolatedAsyncioTestCase):
         log: list[str] = []
         running = asyncio.create_task(self.hold("nemotron-r9700", log, "inflight", hold_s=0.2))
         await asyncio.sleep(0.01)
-        with self.assertRaises(asyncio.TimeoutError):
+        with self.assertRaises(model_slots.DrainTimeout):
             async with self.slots.exclusive("r9700", timeout=0.05):
                 self.fail("must not enter")
         await running
@@ -218,8 +218,29 @@ class HttpSlotTests(GuardianHarnessCase):
         self.assertFalse(aiwa_swap.swap_slot.busy)
 
 
+class SwapErrorMappingTests(GuardianHarnessCase):
+    ENV = {"GUARDIAN_MODEL_SLOTS": "true"}
+
+    async def test_ssh_timeout_is_not_reported_as_drain_failure(self) -> None:
+        wb = Path(self.temp_dir.name) / "WORKBOARD.md"
+        wb.write_text("# board\n", encoding="utf-8")
+
+        async def ssh_times_out(to: str):
+            raise asyncio.TimeoutError("ssh stalled")
+
+        env = {"FLEET_SWAP_OWNER": "true", "WORKBOARD_PATH": str(wb)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(aiwa_swap, "run_swap_ssh", ssh_times_out):
+            with self.assertRaises(asyncio.TimeoutError) as ctx:
+                await aiwa_swap.perform_swap("consult", self.module.guardian._client, gate="operator")
+        self.assertNotIsInstance(ctx.exception, model_slots.DrainTimeout)
+        self.assertFalse(aiwa_swap.swap_slot.busy)
+        self.assertFalse(model_slots.get_slots().exclusive_held("r9700"))
+
+
 class FlagOffTests(GuardianHarnessCase):
     """Default behavior is untouched: the missing R9700 lock is still missing with the flag off."""
+
+    ENV = {"GUARDIAN_MODEL_SLOTS": "false"}
 
     async def test_flag_off_does_not_serialize_r9700(self) -> None:
         self.aiwa.delay_s = 0.1
