@@ -235,6 +235,8 @@ class PerModelQueueHttpTests(QueueHttpBase):
 
 
 class SingleWorkerStillDefaultTests(QueueHttpBase):
+    ENV = {"GUARDIAN_PER_MODEL_QUEUES": "false"}
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.module.guardian._llama_up = True
