@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 import tempfile
 import time
@@ -232,6 +233,68 @@ class PerModelQueueHttpTests(QueueHttpBase):
         self.assertIsNotNone(clerk["running_job_id"])
         self.assertGreaterEqual(clerk["oldest_wait_s"], 0)
         self.assertEqual(0, body["queues"][WB]["queued"])
+
+
+class ConcurrentWorkerCancelTests(QueueHttpBase):
+    ENV = {"GUARDIAN_PER_MODEL_QUEUES": "true"}
+
+    def build_routes(self, app) -> None:
+        super().build_routes(app)
+        app.router.add_post("/__guardian/workers", self.module.worker_submit)
+        app.router.add_post("/__guardian/jobs/{job_id}/cancel", self.module.queue_cancel)
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.module.guardian._llama_up = True
+        os.environ["LOCAL_WORKER_ENABLED"] = "true"
+        os.environ["LOCAL_WORKER_ROOT"] = self.temp_dir.name
+        self.addCleanup(os.environ.pop, "LOCAL_WORKER_ENABLED", None)
+        self.addCleanup(os.environ.pop, "LOCAL_WORKER_ROOT", None)
+        self.running: set[str] = set()
+
+        async def fake_run_worker(spec, cancel_event=None, on_process=None):
+            self.running.add(spec["task"])
+            try:
+                await cancel_event.wait()
+            finally:
+                self.running.discard(spec["task"])
+            raise self.module.WorkerCancelled("cancelled")
+
+        self.module.run_worker = fake_run_worker
+
+    async def submit_worker(self, key: str, work_class: str) -> str:
+        resp = await self.client.post("/__guardian/workers", json={
+            "source": "t", "idempotency_key": key, "work_class": work_class,
+            "workspace": self.temp_dir.name, "task": key,
+        })
+        self.assertEqual(202, resp.status, await resp.text())
+        return (await resp.json())["job_id"]
+
+    async def wait_running(self, job_id: str) -> None:
+        for _ in range(200):
+            if self.module.guardian.job_store.get(job_id).status == "running":
+                return
+            await asyncio.sleep(0.01)
+        self.fail(f"{job_id} never started")
+
+    async def test_cancelling_either_of_two_concurrent_workers_works(self) -> None:
+        await self.start_worker()
+        clerk = await self.submit_worker("clerk-task", "mechanical_execution")
+        glm = await self.submit_worker("glm-task", "tool_execution")
+        await self.wait_running(clerk)
+        await self.wait_running(glm)
+        self.assertEqual({"clerk-task", "glm-task"}, self.running)
+
+        # The first-started worker used to lose its handles to the second one.
+        resp = await self.client.post(f"/__guardian/jobs/{clerk}/cancel")
+        self.assertEqual(200, resp.status, await resp.text())
+        self.assertEqual("cancelled", (await resp.json())["status"])
+        # Finishing the first must not clear the second's handles.
+        self.assertEqual("running", self.module.guardian.job_store.get(glm).status)
+        resp = await self.client.post(f"/__guardian/jobs/{glm}/cancel")
+        self.assertEqual(200, resp.status, await resp.text())
+        self.assertEqual("cancelled", (await resp.json())["status"])
+        self.assertEqual({}, self.module.guardian.active_workers)
 
 
 class SingleWorkerStillDefaultTests(QueueHttpBase):
