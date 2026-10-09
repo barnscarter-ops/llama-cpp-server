@@ -431,6 +431,53 @@ class DispatcherUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("selection_failed", "pick_not_offered"), (outcome.body["status"], outcome.body["reason"]))
         self.assertEqual([], self.jobs)
 
+    async def test_concurrent_submits_of_one_key_return_the_same_task(self) -> None:
+        class Slow:
+            name = "slow"
+
+            async def choose(self, t, candidates):
+                await asyncio.sleep(0.05)
+                return await td.RulesSelector().choose(t, candidates)
+
+        d = self.dispatcher(ScriptedProbe(self.registry, {}), Slow())
+        first, second = await asyncio.gather(d.submit(task(clearance="pc")), d.submit(task(clearance="pc")))
+        self.assertEqual([200, 202], sorted([first.http_status, second.http_status]))
+        self.assertEqual(1, len(self.jobs))
+        self.assertEqual(first.body["task_id"], second.body["task_id"])
+
+    async def test_different_keys_racing_for_one_task_id_conflict_cleanly(self) -> None:
+        class Slow:
+            name = "slow"
+
+            async def choose(self, t, candidates):
+                await asyncio.sleep(0.05)
+                return await td.RulesSelector().choose(t, candidates)
+
+        d = self.dispatcher(ScriptedProbe(self.registry, {}), Slow())
+        a, b = await asyncio.gather(
+            d.submit(task(clearance="pc", idempotency_key="ka")), d.submit(task(clearance="pc", idempotency_key="kb"))
+        )
+        self.assertEqual([202, 409], sorted([a.http_status, b.http_status]))
+        self.assertEqual(1, len(self.jobs))
+
+    async def test_approval_arriving_after_the_model_went_away_does_not_enqueue(self) -> None:
+        class PickQwen:
+            name = "qwen"
+
+            async def choose(self, t, candidates):
+                return td.SelectorAnswer("qwen27b-r9700", "test")
+
+        gone = mr.Readiness(mr.UNAVAILABLE, reason="aiwa_unreachable")
+        probe = ScriptedProbe(self.registry, {"qwen27b-r9700": [mr.Readiness(mr.NEEDS_APPROVAL, seconds=60), gone]})
+        d = self.dispatcher(probe, PickQwen())
+        outcome = await d.submit(task(clearance="lan", quality_floor=2))
+        self.assertEqual(("awaiting_approval", 202), (outcome.body["status"], outcome.http_status), outcome.body)
+        record = d.env.approvals.decide(outcome.body["approval_id"], True, "carter")
+        await d.on_approval(record)
+        row = d.env.store.get("t1")
+        self.assertEqual(("failed", "chosen_model_unavailable:aiwa_unreachable"), (row["status"], row["error"]))
+        self.assertEqual([], self.jobs)
+
     async def test_selector_only_sees_filtered_candidates(self) -> None:
         seen = []
 
