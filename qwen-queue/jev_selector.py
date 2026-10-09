@@ -27,6 +27,7 @@ from task_dispatch import SelectorAnswer, TaskSpec
 log = logging.getLogger("guardian.jev")
 
 MAX_SUMMARY_CHARS = 2_000
+MAX_REDACTION_INPUT_CHARS = 50_000
 NOT_CLEARED = "jev_summary_not_cleared"
 MAX_CANDIDATES = 8  # Jev's contract; more would have to be silently dropped, so refuse instead.
 INSTRUCTIONS = (
@@ -85,8 +86,10 @@ class JevSelector:
             return SelectorAnswer(
                 picked.model_id, picked.reason, picked.raw, selector="rules", fallback_used=True, note=NOT_CLEARED,
             )
-        summary, redactions = redact_summary((task.summary or "").strip()[:MAX_SUMMARY_CHARS])
-        summary = summary.strip()
+        # Redact before cutting: a secret straddling the limit would otherwise leave an unmatched fragment.
+        # The pre-cap only bounds regex cost; anything it cuts is far past the final limit and dropped anyway.
+        summary, redactions = redact_summary((task.summary or "").strip()[:MAX_REDACTION_INPUT_CHARS])
+        summary = summary[:MAX_SUMMARY_CHARS].strip()
         if not summary.replace("[redacted]", "").strip():
             return SelectorAnswer(None, "jev_request_invalid")
         try:
