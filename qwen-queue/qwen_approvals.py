@@ -115,13 +115,16 @@ class ApprovalStore:
         self._conn.commit()
         return self.get(approval_id)  # type: ignore[return-value]
 
-    def check_usable(self, approval_id: str | None) -> dict[str, Any]:
-        """Raise ApprovalError unless the approval is approved and live. Does not consume it."""
+    def check_usable(self, approval_id: str | None, task_id: str | None = None) -> dict[str, Any]:
+        """Raise ApprovalError unless the approval is approved, live and (when given) issued for task_id. Does not consume it."""
         if not approval_id:
             raise ApprovalError("approval_required", "Loading Qwen needs Carter's approval.", 409)
         row = self.get(approval_id)
         if row is None:
             raise ApprovalError("approval_not_found", "No such approval.", 404)
+        if task_id is not None and row["task_id"] != task_id:
+            # No record attached: do not echo another task's approval back to the caller.
+            raise ApprovalError("approval_wrong_task", "This approval was issued for a different task.", 403)
         status = row["status"]
         if status == "approved":
             return row
@@ -134,15 +137,17 @@ class ApprovalStore:
         code, message, http = codes[status]
         raise ApprovalError(code, message, http, row)
 
-    def consume(self, approval_id: str) -> dict[str, Any]:
-        """approved -> used, once. A second call, or an expired approval, is rejected."""
+    def consume(self, approval_id: str, task_id: str | None = None) -> dict[str, Any]:
+        """approved -> used, once, by the task it was issued for. A second call, another task, or an expired approval is rejected."""
         self._expire_due()
-        cursor = self._conn.execute(
-            "UPDATE qwen_approvals SET status = 'used' WHERE id = ? AND status = 'approved' AND expires_at > ?",
-            (approval_id, self._clock()),
-        )
+        sql = "UPDATE qwen_approvals SET status = 'used' WHERE id = ? AND status = 'approved' AND expires_at > ?"
+        args: tuple = (approval_id, self._clock())
+        if task_id is not None:
+            sql += " AND task_id = ?"
+            args += (task_id,)
+        cursor = self._conn.execute(sql, args)
         self._conn.commit()
         if cursor.rowcount != 1:
-            self.check_usable(approval_id)  # raises with the precise reason
+            self.check_usable(approval_id, task_id)  # raises with the precise reason
             raise ApprovalError("approval_used", "This approval was already used.", 409)
         return self.get(approval_id)  # type: ignore[return-value]
