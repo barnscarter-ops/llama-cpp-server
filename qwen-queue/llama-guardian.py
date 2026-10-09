@@ -63,6 +63,7 @@ from guardian_workers import (
     is_worker_job,
     profiles_as_api,
     run_worker,
+    worker_policies,
     WorkerCancelled,
     validate_worker_submission,
     workers_enabled,
@@ -294,6 +295,8 @@ class Guardian:
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
+        # One wake-up event per model queue (GUARDIAN_PER_MODEL_QUEUES); sharing one event would lose wake-ups.
+        self.queue_events: dict[str, asyncio.Event] = {}
         # At most one queued worker runs. These handles let cancellation stop
         # the actual process tree before the durable row becomes terminal.
         self.active_worker_job_id: str | None = None
@@ -791,6 +794,42 @@ def normalize_legacy_model_alias(body: bytes) -> tuple[bytes, bool]:
     return json.dumps(payload, separators=(",", ":")).encode("utf-8"), True
 
 
+def per_model_queues_enabled() -> bool:
+    return os.environ.get("GUARDIAN_PER_MODEL_QUEUES", "false").strip().lower() in {"true", "1", "yes"}
+
+
+_WORKER_ROUTE_SEATS = {"aiwa-clerk": "clerk", "workbench-executor": "glm", "aiwa-consult": "consult"}
+
+
+def queue_model_id(request: dict) -> str | None:
+    """Which model's queue a stored job request belongs to (None if the registry cannot place it)."""
+    try:
+        registry = model_registry.load_registry()
+    except model_registry.RegistryError:
+        return None
+    if is_worker_job(request):
+        policy = worker_policies().get(str(request["_guardian_worker"].get("work_class")))
+        seat = _WORKER_ROUTE_SEATS.get(policy.route if policy else "")
+    elif fleet_router_enabled():
+        model = request.get("model")
+        seat = seat_for_model(model)
+        if seat == "cloud":
+            spec = registry.get(str(model))
+            return spec.id if spec else None
+    else:
+        seat = "glm"  # fleet off forces every queued job onto the Workbench model
+    spec = registry.for_seat(seat) if seat else None
+    return spec.id if spec else None
+
+
+def notify_queue(model_id: str | None) -> None:
+    """Wake the worker for one model's queue (and the legacy single worker)."""
+    guardian.queue_event.set()
+    event = guardian.queue_events.get(model_id) if model_id else None
+    if event is not None:
+        event.set()
+
+
 def _queue_authorized(request: web.Request) -> bool:
     """Queue control is local-only unless an explicit token is configured."""
     remote = request.remote or ""
@@ -952,14 +991,16 @@ async def queue_submit(request: web.Request) -> web.Response:
         if decision["route"] != CANONICAL_LOCAL_ROUTE:
             return web.json_response({"status": "not_queued", "decision": decision})
 
+    job_model_id = queue_model_id(completion)
     job, created = guardian.job_store.submit(
         idempotency_key=idempotency_key,
         source=source,
         priority=decision["priority"],
         request=completion,
         decision=decision,
+        model_id=job_model_id,
     )
-    guardian.queue_event.set()
+    notify_queue(job_model_id)
     log.info(f"queue accepted {job.job_id} from {source} at priority {job.priority}")
     return web.json_response(job.as_api(), status=202 if created else 200)
 
@@ -1070,14 +1111,16 @@ async def worker_submit(request: web.Request) -> web.Response:
         {"work_class": spec["work_class"], "route": decision["route"],
          "parent_run_id": spec["parent_run_id"], "workspace": spec["workspace"]},
     )
+    worker_model_id = queue_model_id({"_guardian_worker": spec})
     job, created = guardian.job_store.submit(
         idempotency_key=submitted["idempotency_key"],
         source=submitted["source"],
         priority=submitted["priority"],
         request={"_guardian_worker": spec},
         decision=decision,
+        model_id=worker_model_id,
     )
-    guardian.queue_event.set()
+    notify_queue(worker_model_id)
     log.info("worker accepted %s from %s for %s", job.job_id, job.source, spec["work_class"])
     return web.json_response(job.as_api(), status=202 if created else 200)
 
@@ -1549,31 +1592,78 @@ async def run_queued_job(job: QueueJob) -> None:
         log.exception(f"queue worker crashed while running {job.job_id}")
 
 
+async def _queue_loop(model_id: str | None) -> None:
+    """Claim and run jobs one at a time. model_id None is the legacy single global queue."""
+    event = guardian.queue_event if model_id is None else guardian.queue_events.setdefault(model_id, asyncio.Event())
+    while True:
+        job = guardian.job_store.claim_next(model_id)
+        if job:
+            await run_queued_job(job)
+            continue
+
+        event.clear()
+        # Prevent a submit between claim_next() and clear() from being
+        # missed and waiting for the next polling timeout.
+        if guardian.job_store.has_queued_work(model_id):
+            continue
+        try:
+            await asyncio.wait_for(event.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            pass
+
+
+def _local_queue_model_ids() -> list[str] | None:
+    """Models that get their own worker, or None when the registry cannot be read."""
+    try:
+        return [s.id for s in model_registry.load_registry() if s.locality == "local"]
+    except model_registry.RegistryError as exc:
+        log.error(f"per-model queues disabled, registry unreadable: {exc}")
+        return None
+
+
 async def queue_worker(app: web.Application) -> None:
     """Claim queued work in priority/FIFO order and retain it across restarts."""
     recovered = guardian.job_store.recover_interrupted()
     if recovered:
         log.warning(f"queue requeued {recovered} interrupted job(s) after guardian restart")
+    model_ids = _local_queue_model_ids() if per_model_queues_enabled() else None
+    if model_ids:
+        placed = guardian.job_store.backfill_model_ids(queue_model_id)
+        if placed:
+            log.info(f"queue assigned {placed} pre-migration job(s) to a model queue")
+        log.info(f"per-model queue workers started: {', '.join(model_ids)}")
+        # Cloud models get their own workers with the cloud backend (step 8).
+        loops = [asyncio.create_task(_queue_loop(mid)) for mid in model_ids]
+        try:
+            await asyncio.gather(*loops)
+        except asyncio.CancelledError:
+            log.info("per-model queue workers cancelled")
+            for task in loops:
+                task.cancel()
+            await asyncio.gather(*loops, return_exceptions=True)
+            raise
+        return
     log.info("Hermes-decided local queue worker started")
     try:
-        while True:
-            job = guardian.job_store.claim_next()
-            if job:
-                await run_queued_job(job)
-                continue
-
-            guardian.queue_event.clear()
-            # Prevent a submit between claim_next() and clear() from being
-            # missed and waiting for the next polling timeout.
-            if guardian.job_store.has_queued_work():
-                continue
-            try:
-                await asyncio.wait_for(guardian.queue_event.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                pass
+        await _queue_loop(None)
     except asyncio.CancelledError:
         log.info("Hermes-decided local queue worker cancelled")
         raise
+
+
+async def guardian_queues(request: web.Request) -> web.Response:
+    """Read-only per-model queue depth, running job and oldest wait."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    stats = guardian.job_store.queue_stats()
+    try:
+        ids = model_registry.load_registry().ids()
+    except model_registry.RegistryError:
+        ids = []
+    empty = {"queued": 0, "running": 0, "running_job_id": None, "oldest_wait_s": None}
+    queues = {mid: stats.pop(mid, dict(empty)) for mid in ids}
+    queues.update(stats)  # e.g. 'unassigned' rows the registry cannot place
+    return web.json_response({"per_model_queues": per_model_queues_enabled(), "queues": queues})
 
 
 async def guardian_sleep(request: web.Request) -> web.Response:
@@ -2231,6 +2321,7 @@ def make_app() -> web.Application:
     app.router.add_get("/__guardian/health", guardian_health)
     app.router.add_get("/__guardian/seats", guardian_seats)
     app.router.add_get("/__guardian/models", guardian_models)
+    app.router.add_get("/__guardian/queues", guardian_queues)
     app.router.add_post("/__guardian/jobs", queue_submit)
     app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
     app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
