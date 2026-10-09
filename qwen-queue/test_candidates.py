@@ -88,12 +88,17 @@ class TableTests(unittest.TestCase):
         self.assertEqual(0.0, normalize_ceiling(None))
 
     def test_missing_or_garbled_clearance_defaults_to_narrowest(self) -> None:
-        for clearance in (None, "", "none", "WAN", 3, ["internet"], "internet; lan"):
+        for clearance in (None, "", "WAN", 3, ["internet"], "internet; lan"):
             with self.subTest(clearance=clearance):
                 result = build_candidates(state(), clearance, 10.0)
                 self.assertEqual(NARROWEST, result.clearance)
                 self.assertEqual(["workbench-local"], ids(result))
                 self.assertTrue(result.clearance_note)
+
+    def test_chiefs_none_means_pc(self) -> None:
+        result = build_candidates(state(), "none", 10.0)
+        self.assertEqual(("pc", None), (result.clearance, result.clearance_note))
+        self.assertEqual(["workbench-local"], ids(result))
 
     def test_clearance_is_case_and_space_tolerant(self) -> None:
         self.assertEqual(("lan", None), normalize_clearance("  LAN "))
