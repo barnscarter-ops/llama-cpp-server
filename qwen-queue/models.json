@@ -1,0 +1,65 @@
+{
+  "models": [
+    {
+      "id": "workbench-local",
+      "seat": "glm",
+      "locality": "local",
+      "host": "workbench",
+      "egress": "pc",
+      "cost_per_1k_in": 0,
+      "cost_per_1k_out": 0,
+      "context_tokens": 131072,
+      "quality_tier": 2,
+      "max_concurrent": 1,
+      "readiness_source": "workbench_state",
+      "needs_approval": false,
+      "wake_seconds": 45
+    },
+    {
+      "id": "nemotron-r9700",
+      "seat": "clerk",
+      "locality": "local",
+      "host": "r9700",
+      "egress": "lan",
+      "cost_per_1k_in": 0,
+      "cost_per_1k_out": 0,
+      "context_tokens": 131072,
+      "quality_tier": 1,
+      "max_concurrent": 1,
+      "readiness_source": "aiwa_occupant",
+      "needs_approval": false,
+      "wake_seconds": 60
+    },
+    {
+      "id": "qwen27b-r9700",
+      "seat": "consult",
+      "locality": "local",
+      "host": "r9700",
+      "egress": "lan",
+      "cost_per_1k_in": 0,
+      "cost_per_1k_out": 0,
+      "context_tokens": 262144,
+      "quality_tier": 2,
+      "max_concurrent": 1,
+      "readiness_source": "aiwa_occupant",
+      "needs_approval": true,
+      "wake_seconds": 60
+    },
+    {
+      "id": "deepseek-flash",
+      "seat": null,
+      "locality": "cloud",
+      "host": "provider",
+      "egress": "internet",
+      "cost_per_1k_in": 0.0003,
+      "cost_per_1k_out": 0.0012,
+      "context_tokens": 64000,
+      "quality_tier": 3,
+      "max_concurrent": 2,
+      "readiness_source": "cloud_state",
+      "needs_approval": false,
+      "wake_seconds": 0,
+      "key_env": "GUARDIAN_DEEPSEEK_API_KEY"
+    }
+  ]
+}
