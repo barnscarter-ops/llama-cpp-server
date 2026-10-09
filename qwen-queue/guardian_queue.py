@@ -48,6 +48,7 @@ class QueueJob:
     error: str | None
     worker_pid: int | None = None
     cancel_reason: str | None = None
+    model_id: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "QueueJob":
@@ -67,6 +68,7 @@ class QueueJob:
             error=row["error"],
             worker_pid=row["worker_pid"] if "worker_pid" in row.keys() else None,
             cancel_reason=row["cancel_reason"] if "cancel_reason" in row.keys() else None,
+            model_id=row["model_id"] if "model_id" in row.keys() else None,
         )
 
     def as_api(self, *, include_result: bool = True) -> dict[str, Any]:
@@ -81,6 +83,7 @@ class QueueJob:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "error": self.error,
+            "model_id": self.model_id,
         }
         if include_result:
             result["result"] = self.result
@@ -121,13 +124,17 @@ class JobStore:
             )
             """
         )
-        for column, declaration in (("worker_pid", "INTEGER"), ("cancel_reason", "TEXT")):
+        for column, declaration in (("worker_pid", "INTEGER"), ("cancel_reason", "TEXT"), ("model_id", "TEXT")):
             try:
                 self._conn.execute(f"ALTER TABLE guardian_jobs ADD COLUMN {column} {declaration}")
             except sqlite3.OperationalError:
                 pass
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS guardian_jobs_next ON guardian_jobs(status, priority DESC, created_at ASC)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS guardian_jobs_next_model "
+            "ON guardian_jobs(model_id, status, priority DESC, created_at ASC)"
         )
         self._conn.execute(
             """
@@ -189,6 +196,7 @@ class JobStore:
         priority: int,
         request: dict[str, Any],
         decision: dict[str, Any],
+        model_id: str | None = None,
     ) -> tuple[QueueJob, bool]:
         existing = self.get_by_idempotency_key(idempotency_key)
         if existing:
@@ -200,8 +208,8 @@ class JobStore:
             """
             INSERT INTO guardian_jobs (
                 job_id, idempotency_key, source, priority, request_json,
-                decision_json, status, attempts, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?)
+                decision_json, status, attempts, created_at, model_id
+            ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?)
             """,
             (
                 job_id,
@@ -211,22 +219,28 @@ class JobStore:
                 json.dumps(request, separators=(",", ":")),
                 json.dumps(decision, separators=(",", ":")),
                 now,
+                model_id,
             ),
         )
         self._conn.commit()
         return self.get(job_id), True  # type: ignore[return-value]
 
-    def claim_next(self) -> QueueJob | None:
-        """Atomically claim the highest-priority oldest queued job."""
+    def claim_next(self, model_id: str | None = None) -> QueueJob | None:
+        """Atomically claim the highest-priority oldest queued job.
+
+        With model_id, only that model's queue is considered, so a long job on one
+        model never holds up another model's work. None keeps the single global queue.
+        """
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
                 """
                 SELECT job_id FROM guardian_jobs
-                WHERE status = 'queued'
+                WHERE status = 'queued' AND (? IS NULL OR model_id = ?)
                 ORDER BY priority DESC, created_at ASC
                 LIMIT 1
-                """
+                """,
+                (model_id, model_id),
             ).fetchone()
             if not row:
                 self._conn.commit()
@@ -307,11 +321,55 @@ class JobStore:
         result.update({row["status"]: row["count"] for row in rows})
         return result
 
-    def has_queued_work(self) -> bool:
+    def has_queued_work(self, model_id: str | None = None) -> bool:
         row = self._conn.execute(
-            "SELECT 1 FROM guardian_jobs WHERE status = 'queued' LIMIT 1"
+            "SELECT 1 FROM guardian_jobs WHERE status = 'queued' AND (? IS NULL OR model_id = ?) LIMIT 1",
+            (model_id, model_id),
         ).fetchone()
         return row is not None
+
+    def backfill_model_ids(self, resolve) -> int:
+        """Give pre-migration rows a queue. resolve(request_dict) -> model id; rows it cannot place stay NULL."""
+        rows = self._conn.execute(
+            "SELECT job_id, request_json FROM guardian_jobs WHERE model_id IS NULL"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            try:
+                model_id = resolve(json.loads(row["request_json"]))
+            except (ValueError, TypeError):
+                model_id = None
+            if model_id:
+                self._conn.execute(
+                    "UPDATE guardian_jobs SET model_id = ? WHERE job_id = ? AND model_id IS NULL",
+                    (model_id, row["job_id"]),
+                )
+                updated += 1
+        self._conn.commit()
+        return updated
+
+    def queue_stats(self) -> dict[str, dict[str, Any]]:
+        """Per-model depth, running job and oldest queued wait. NULL model rows report as 'unassigned'."""
+        now = time.time()
+        stats: dict[str, dict[str, Any]] = {}
+        for row in self._conn.execute(
+            """
+            SELECT COALESCE(model_id, 'unassigned') AS mid, status, COUNT(*) AS n,
+                   MIN(created_at) AS oldest
+            FROM guardian_jobs WHERE status IN ('queued', 'running') GROUP BY mid, status
+            """
+        ):
+            entry = stats.setdefault(
+                row["mid"], {"queued": 0, "running": 0, "running_job_id": None, "oldest_wait_s": None}
+            )
+            entry[row["status"]] = row["n"]
+            if row["status"] == "queued":
+                entry["oldest_wait_s"] = round(now - row["oldest"], 3)
+        for row in self._conn.execute(
+            "SELECT COALESCE(model_id, 'unassigned') AS mid, job_id FROM guardian_jobs WHERE status = 'running'"
+        ):
+            stats[row["mid"]]["running_job_id"] = row["job_id"]
+        return stats
 
     def log_decision(self, source: str, decision: dict[str, Any], context: dict[str, Any]) -> None:
         """Record every routing decision for auditability, including rejections."""
