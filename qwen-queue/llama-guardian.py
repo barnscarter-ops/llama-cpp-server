@@ -55,6 +55,7 @@ from aiohttp import ClientError, ClientTimeout, web
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 import aiwa_swap
 import fleet_router
+import model_registry
 from guardian_worker_descriptor import build_worker_descriptor
 from guardian_workers import (
     is_worker_job,
@@ -2031,6 +2032,38 @@ async def guardian_seats(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def build_readiness_probe() -> model_registry.ReadinessProbe:
+    """Wire registry readiness to in-process state. Never calls llama on 8081 (that wakes it)."""
+
+    def workbench() -> model_registry.WorkbenchState:
+        return model_registry.WorkbenchState(
+            llama_up=bool(guardian._llama_up),
+            ram_ok=bool(ram_snapshot()["cold_start_allowed"]),
+            cooldown_remaining_s=STOP_START_COOLDOWN_S - (time.time() - guardian.last_stop_time),
+            last_start_failure=guardian.last_start_failure,
+        )
+
+    async def aiwa() -> tuple[str, str | None, bool]:
+        client = getattr(guardian, "_client", None)
+        if client is None:
+            return "unknown", None, False
+        return await fleet_router.occupant_cache.get(client)
+
+    return model_registry.ReadinessProbe(workbench, aiwa)
+
+
+async def guardian_models(request: web.Request) -> web.Response:
+    """Read-only registry + live readiness. Same auth as the other control routes."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    try:
+        registry = model_registry.load_registry()
+    except model_registry.RegistryError as exc:
+        return guardian_error(str(exc), "model_registry_invalid", 500)
+    models = await build_readiness_probe().snapshot(registry)
+    return web.json_response({"models": models, "timestamp": datetime.now(timezone.utc).isoformat()})
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  LISTENER WATCHDOG  (keeps port 8080 alive)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2181,6 +2214,7 @@ def make_app() -> web.Application:
     # Guardian's own health endpoint. Everything else proxies to llama.
     app.router.add_get("/__guardian/health", guardian_health)
     app.router.add_get("/__guardian/seats", guardian_seats)
+    app.router.add_get("/__guardian/models", guardian_models)
     app.router.add_post("/__guardian/jobs", queue_submit)
     app.router.add_get("/__guardian/jobs/{job_id}", queue_status)
     app.router.add_post("/__guardian/jobs/{job_id}/cancel", queue_cancel)
