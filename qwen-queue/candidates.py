@@ -13,6 +13,8 @@ from typing import Any, Sequence
 from model_registry import EGRESS_ORDER, UNAVAILABLE, ModelSpec, Readiness, egress_rank
 
 NARROWEST = EGRESS_ORDER[0]
+# Chief's route policy calls "stays on this PC" `none`; Guardian calls it `pc`.
+CLEARANCE_ALIASES = {"none": "pc"}
 NO_CANDIDATES = "no_candidates"
 OK = "ok"
 
@@ -73,8 +75,11 @@ def normalize_clearance(clearance: Any) -> tuple[str, str | None]:
     """Returns (effective clearance, note). Missing or unrecognized falls to the narrowest class."""
     if clearance is None:
         return NARROWEST, "clearance absent; defaulted to narrowest"
-    if isinstance(clearance, str) and clearance.strip().lower() in EGRESS_ORDER:
-        return clearance.strip().lower(), None
+    if isinstance(clearance, str):
+        word = clearance.strip().lower()
+        word = CLEARANCE_ALIASES.get(word, word)
+        if word in EGRESS_ORDER:
+            return word, None
     return NARROWEST, f"clearance {clearance!r} not recognized; defaulted to narrowest"
 
 
