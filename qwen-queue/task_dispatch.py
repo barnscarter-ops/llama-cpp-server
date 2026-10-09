@@ -110,6 +110,10 @@ class SelectorAnswer:
     model_id: str | None
     reason: str
     raw: Any = None
+    # A wrapper selector reports who actually decided and why the first choice did not.
+    selector: str | None = None
+    fallback_used: bool = False
+    note: str | None = None
 
 
 class Selector(Protocol):
@@ -273,6 +277,11 @@ class TaskDispatcher:
                 return self._fail(task, evidence, "no_candidates")
             answer = await self.selector.choose(task, result.candidates)
             evidence["selector_answer"] = {"model_id": answer.model_id, "reason": answer.reason}
+            if answer.selector:
+                evidence["selector"] = answer.selector
+            if answer.fallback_used:
+                evidence["fallback_used"] = True
+                evidence["fallback_reason"] = answer.note
             chosen = next((c for c in result.candidates if c.model_id == answer.model_id), None)
             if chosen is None:
                 # Includes a pick the selector invented: only offered ids are dispatchable.
