@@ -280,7 +280,7 @@ def apply_flags(pairs: list[tuple[ModelSpec, Readiness]], flags: dict[str, bool]
         if spec.host != "workbench" and spec.locality == "local" and not flags.get("fleet_router"):
             reason = "fleet_router_off"
         elif spec.locality == "cloud" and not flags.get("cloud_dispatch"):
-            reason = "cloud_backend_missing"
+            reason = "cloud_disabled"
         elif readiness.state == NEEDS_APPROVAL and not flags.get("qwen_approval"):
             reason = "qwen_approval_disabled"
         out.append((spec, Readiness(UNAVAILABLE, reason=reason) if reason else readiness))

@@ -143,15 +143,15 @@ class TaskApiTests(TaskHttpBase):
         self.assertEqual("selection_failed", body["status"])
         self.assertEqual("no_candidate_meets_quality_floor", body["reason"])
 
-    async def test_cloud_is_never_dispatched_before_the_cloud_backend_exists(self) -> None:
+    async def test_cloud_is_never_dispatched_while_the_cloud_flag_is_off(self) -> None:
         self.module.guardian._llama_up = False
         self.module.ram_snapshot = lambda: {"cold_start_allowed": False}
         self.aiwa.models_status = 503
-        with mock.patch.dict("os.environ", {"GUARDIAN_CLOUD": "true", "GUARDIAN_DEEPSEEK_API_KEY": "k"}):
+        with mock.patch.dict("os.environ", {"GUARDIAN_CLOUD": "false", "GUARDIAN_DEEPSEEK_API_KEY": "k"}):
             body = await (await self.submit(clearance="internet", cost_ceiling_usd=5)).json()
         self.assertEqual("selection_failed", body["status"])
         reasons = {e["id"]: e["reason"] for e in body["evidence"]["excluded"]}
-        self.assertEqual("unavailable:cloud_backend_missing", reasons["deepseek-flash"])
+        self.assertEqual("unavailable:cloud_disabled", reasons["deepseek-flash"])
 
     async def test_validation_errors(self) -> None:
         cases = [

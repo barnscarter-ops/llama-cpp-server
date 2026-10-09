@@ -54,6 +54,7 @@ from aiohttp import ClientError, ClientTimeout, web
 
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
 import aiwa_swap
+import cloud_backend
 import fleet_router
 import jev_selector
 import model_registry
@@ -938,7 +939,7 @@ async def queue_submit(request: web.Request) -> web.Response:
         # The code table owns the seat. Hermes (if enabled at all) only gets
         # wait-vs-reject for capacity.
         seat = seat_for_model(completion.get("model"))
-        if seat == "cloud":
+        if seat == "cloud" and cloud_spec_for(completion.get("model")) is None:
             return guardian_error(
                 f"Model '{completion.get('model')}' is not a local fleet seat; use cloud.",
                 "route_cloud",
@@ -1159,8 +1160,84 @@ def task_api_enabled() -> bool:
 
 
 def cloud_dispatch_available() -> bool:
-    """No cloud backend exists in this build yet (step 8), so no task may be sent to a cloud model."""
-    return False
+    return model_registry.cloud_flag_enabled()
+
+
+# Tests replace this; production uses the real HTTPS transport.
+CLOUD_TRANSPORT = cloud_backend.aiohttp_cloud_transport
+_cloud_cache: dict = {}
+
+
+def get_cloud_backend() -> "cloud_backend.CloudBackend":
+    """One backend per process: it owns the concurrency counters and call window."""
+    key = (QUEUE_DB_PATH, id(CLOUD_TRANSPORT))
+    if key not in _cloud_cache:
+        _cloud_cache.clear()
+        _cloud_cache[key] = cloud_backend.CloudBackend(
+            model_registry.load_registry(), cloud_backend.CloudSpendLedger.open(QUEUE_DB_PATH), transport=CLOUD_TRANSPORT
+        )
+    return _cloud_cache[key]
+
+
+def cloud_spec_for(model) -> "model_registry.ModelSpec | None":
+    """The registry's cloud model a request names, if cloud dispatch is on."""
+    if not cloud_dispatch_available() or not model:
+        return None
+    try:
+        spec = model_registry.load_registry().get(str(model).strip())
+    except model_registry.RegistryError:
+        return None
+    return spec if spec and spec.locality == "cloud" else None
+
+
+def _registry_cloud_spec(model) -> "model_registry.ModelSpec | None":
+    if not model:
+        return None
+    try:
+        spec = model_registry.load_registry().get(str(model).strip())
+    except model_registry.RegistryError:
+        return None
+    return spec if spec and spec.locality == "cloud" else None
+
+
+def cloud_refusal_response(exc: "cloud_backend.CloudRefused") -> web.Response:
+    return guardian_error(exc.message, exc.code, exc.status)
+
+
+async def handle_cloud_completion(request: web.Request, body: bytes, spec) -> web.Response:
+    """Direct (non-queued) cloud call. Streaming is not offered; a busy model answers 429 instead of waiting."""
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return guardian_error("Request body must be valid JSON.", "invalid_request", 400)
+    if not isinstance(payload, dict):
+        return guardian_error("Request body must be a JSON object.", "invalid_request", 400)
+    if payload.get("stream") is True:
+        return guardian_error("Cloud models do not stream through Guardian; send stream=false.", "cloud_stream_unsupported", 400)
+    try:
+        result = await get_cloud_backend().complete(spec, payload, wait=False)
+    except cloud_backend.CloudRefused as exc:
+        return cloud_refusal_response(exc)
+    return web.json_response(result.body)
+
+
+async def _run_cloud_job(job: QueueJob, spec) -> None:
+    log.info(f"queue running {job.job_id} on cloud model {spec.id}")
+    try:
+        result = await get_cloud_backend().complete(spec, dict(job.request), wait=True)
+    except cloud_backend.CloudRefused as exc:
+        guardian.job_store.fail(job.job_id, f"{exc.code}: {exc.message}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        guardian.job_store.fail(job.job_id, f"Cloud queue job failed: {type(exc).__name__}")
+        log.exception(f"cloud queue worker crashed while running {job.job_id}")
+        return
+    guardian.job_store.finish(job.job_id, {
+        "upstream_status": 200, "response": result.body,
+        "cloud": {"model": spec.id, "cost_microusd": result.cost_microusd,
+                  "prompt_tokens": result.prompt_tokens, "completion_tokens": result.completion_tokens},
+    })
+    log.info(f"queue succeeded {job.job_id} (cloud {spec.id})")
 
 
 _SEAT_ALIASES = {"glm": "local-llm", "clerk": SERVING_IDS["clerk"], "consult": SERVING_IDS["consult"]}
@@ -1367,6 +1444,9 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
                 log.info("defaulted_model=%s", default_seat)
             seat = seat_for_model(model, default_seat=default_seat)
             if seat == "cloud":
+                cloud_spec = cloud_spec_for(model)
+                if cloud_spec is not None:
+                    return await handle_cloud_completion(request, prefetched_body, cloud_spec)
                 return guardian_error(
                     f"Model '{model}' is not a local fleet seat; use cloud.",
                     "route_cloud",
@@ -1743,6 +1823,15 @@ async def run_queued_job(job: QueueJob) -> None:
         finally:
             guardian.active_workers.pop(job.job_id, None)
         return
+    named = job.request.get("model")
+    cloud_named = _registry_cloud_spec(named)
+    if cloud_named is not None:
+        # Never fall through to the GLM path with a cloud model name.
+        if cloud_dispatch_available():
+            await _run_cloud_job(job, cloud_named)
+        else:
+            guardian.job_store.fail(job.job_id, "cloud_disabled: Cloud dispatch is disabled (GUARDIAN_CLOUD).")
+        return
     if fleet_router_enabled() and seat_for_model(job.request.get("model")) in {"clerk", "consult"}:
         await _run_aiwa_queued_job(
             job, seat_for_model(job.request.get("model"))
@@ -1829,6 +1918,14 @@ def _local_queue_model_ids() -> list[str] | None:
         return None
 
 
+def _cloud_queue_workers() -> dict[str, int]:
+    try:
+        registry = model_registry.load_registry()
+    except model_registry.RegistryError:
+        return {}
+    return {s.id: cloud_backend.CloudBackend._limit_for(s) for s in registry if s.locality == "cloud"}
+
+
 async def queue_worker(app: web.Application) -> None:
     """Claim queued work in priority/FIFO order and retain it across restarts."""
     recovered = guardian.job_store.recover_interrupted()
@@ -1840,8 +1937,11 @@ async def queue_worker(app: web.Application) -> None:
         if placed:
             log.info(f"queue assigned {placed} pre-migration job(s) to a model queue")
         log.info(f"per-model queue workers started: {', '.join(model_ids)}")
-        # Cloud models get their own workers with the cloud backend (step 8).
         loops = [asyncio.create_task(_queue_loop(mid)) for mid in model_ids]
+        # One loop per allowed concurrent call, so a cloud model works its queue in parallel up to max_concurrent.
+        for mid, count in (_cloud_queue_workers() if cloud_dispatch_available() else {}).items():
+            log.info(f"cloud queue workers started: {mid} x{count}")
+            loops += [asyncio.create_task(_queue_loop(mid)) for _ in range(count)]
         try:
             await asyncio.gather(*loops)
         except asyncio.CancelledError:
@@ -2364,7 +2464,12 @@ def build_readiness_probe() -> model_registry.ReadinessProbe:
             return "unknown", None, False
         return await fleet_router.occupant_cache.get(client)
 
-    return model_registry.ReadinessProbe(workbench, aiwa)
+    def cloud(spec: model_registry.ModelSpec) -> model_registry.CloudState:
+        if not cloud_dispatch_available():
+            return model_registry.env_cloud_state(spec)
+        return get_cloud_backend().state(spec)
+
+    return model_registry.ReadinessProbe(workbench, aiwa, cloud)
 
 
 async def guardian_models(request: web.Request) -> web.Response:
