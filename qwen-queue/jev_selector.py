@@ -1,8 +1,8 @@
 """JevSelector: Jev decides the model, Guardian only checks the answer is one it offered.
 
-Every failure is a `selection_failed` reason; there is deliberately no rules fallback here
-(Step 10 is pending Carter's confirmation). Only the compact task summary and candidate
-profiles leave the machine, never the messages.
+Every failure is a `selection_failed` reason here; the rules fallback is the FallbackSelector wrapper (step 10).
+Only the compact task summary and candidate profiles leave the machine, never the messages, and the summary
+leaves only when Chief marked it cleared for Jev, after a redaction pass.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import time
 from typing import Awaitable, Callable, Sequence
 
@@ -20,11 +21,13 @@ from jev_client import (
 )
 from jev_secret import JevCredentialUnavailable, build_key_loader
 from jev_spend import JevSpendLedger
+from summary_redaction import redact_summary
 from task_dispatch import SelectorAnswer, TaskSpec
 
 log = logging.getLogger("guardian.jev")
 
 MAX_SUMMARY_CHARS = 2_000
+NOT_CLEARED = "jev_summary_not_cleared"
 MAX_CANDIDATES = 8  # Jev's contract; more would have to be silently dropped, so refuse instead.
 INSTRUCTIONS = (
     "Choose the one listed model best suited to this task, or abstain. Prefer the cheaper model "
@@ -73,10 +76,19 @@ class JevSelector:
         ids = [c.model_id for c in candidates]
         if not ids or len(ids) > MAX_CANDIDATES or "abstain" in ids or len(set(ids)) != len(ids):
             return SelectorAnswer(None, "jev_request_invalid")
-        summary = (task.summary or "").strip()[:MAX_SUMMARY_CHARS]
-        if not summary:
+        if not task.summary_cleared_for_jev:
+            # Checked before anything else: no key load, no spend, no network.
+            return SelectorAnswer(None, NOT_CLEARED)
+        summary, redactions = redact_summary((task.summary or "").strip()[:MAX_SUMMARY_CHARS])
+        summary = summary.strip()
+        if not summary.replace("[redacted]", "").strip():
             return SelectorAnswer(None, "jev_request_invalid")
-        if not self._ledger.reserve(self._clock()):
+        try:
+            reserved = self._ledger.reserve(self._clock())
+        except sqlite3.Error:
+            log.exception("jev spend ledger unavailable")
+            return SelectorAnswer(None, "jev_ledger_unavailable")
+        if not reserved:
             return SelectorAnswer(None, "jev_cap_reached")
         criteria = {"abstain": ABSTAIN, **{c.model_id: profile_for(c) for c in candidates}}
         try:
@@ -88,7 +100,8 @@ class JevSelector:
             log.warning("jev pick failed: %s", exc.code)
             return SelectorAnswer(None, _FAILURE_REASON.get(exc.code, "jev_error"))
         raw = {"choice": answer.choice, "confidence": answer.confidence,
-               "input_tokens": answer.input_tokens, "output_tokens": answer.output_tokens}
+               "input_tokens": answer.input_tokens, "output_tokens": answer.output_tokens,
+               "summary_redactions": redactions}
         if answer.choice == "abstain":
             return SelectorAnswer(None, "jev_abstain", raw)
         if answer.choice not in ids:  # parse_response already enforces this; kept as the dispatch-side guarantee
@@ -145,6 +158,10 @@ def selector_for_env(db_path: str, *, transport: JevTransport = aiohttp_transpor
     except JevCredentialUnavailable as exc:
         log.error("jev selector unavailable: %s", exc.code)
         primary = UnavailableSelector(f"jev_{exc.code}")
+    except (sqlite3.Error, OSError):
+        # The shared queue database can be locked or unwritable; that is a failed selection, not a 500.
+        log.exception("jev spend ledger could not be opened")
+        primary = UnavailableSelector("jev_ledger_unavailable")
     if fallback_mode() == "rules":
         return FallbackSelector(primary, RulesSelector(), on_fallback)
     return primary
@@ -166,12 +183,15 @@ class FallbackSelector:
 
     def __init__(self, primary, fallback, on_fallback: Callable[[TaskSpec, str], None] | None = None) -> None:
         self._primary, self._fallback, self._on_fallback = primary, fallback, on_fallback
+        # An unavailable primary (locked database, late key) should be rebuilt on the next task, not cached.
+        self.cacheable = not isinstance(primary, UnavailableSelector)
 
     async def choose(self, task: TaskSpec, candidates: Sequence[Candidate]) -> SelectorAnswer:
         answer = await self._primary.choose(task, candidates)
         if answer.model_id is not None or not answer.reason.startswith("jev_"):
             return answer
-        if self._on_fallback:
+        # Not cleared for Jev is policy, not a Jev failure: route by rules quietly, no alert.
+        if self._on_fallback and answer.reason != NOT_CLEARED:
             try:
                 self._on_fallback(task, answer.reason)
             except Exception:  # noqa: BLE001 - alerting must not block dispatch

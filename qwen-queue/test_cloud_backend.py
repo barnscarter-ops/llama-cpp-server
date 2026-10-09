@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import unittest
+from unittest import mock
 
 import cloud_backend as cb
 import model_registry as mr
@@ -167,16 +168,56 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         self.now += 3601
         await backend.complete(SPEC, dict(MSG), wait=False)
 
-    async def test_reservation_is_refunded_unless_the_provider_may_have_billed(self) -> None:
-        for provider, expect_zero in ((FakeProvider(status=500), True), (FakeProvider(error=ConnectionError("x")), True),
-                                      (FakeProvider(error=asyncio.TimeoutError()), False),
-                                      (FakeProvider(body={"choices": []}), False)):
-            with self.subTest(status=provider.status, error=provider.error):
+    async def test_reservation_is_refunded_only_for_outcomes_that_were_definitely_not_billed(self) -> None:
+        cases = (
+            (FakeProvider(error=cb.CloudNotSent()), True),   # never connected
+            (FakeProvider(status=401), True),                # rejected before any work
+            (FakeProvider(status=422), True),
+            (FakeProvider(status=500), False),
+            (FakeProvider(status=503), False),
+            (FakeProvider(status=429), False),
+            (FakeProvider(error=ConnectionError("reset after send")), False),
+            (FakeProvider(error=asyncio.TimeoutError()), False),
+            (FakeProvider(body={"choices": []}), False),     # a 200 is billed whatever the body
+        )
+        for provider, refunded in cases:
+            with self.subTest(status=provider.status, error=repr(provider.error)):
                 self.ledger = cb.CloudSpendLedger(sqlite3.connect(":memory:", isolation_level=None))
-                await self.refused(self.backend(provider).complete(SPEC, dict(MSG), wait=False)) if provider.body is None else \
+                try:
                     await self.backend(provider).complete(SPEC, dict(MSG), wait=False)
-                spent = self.ledger.spent("deepseek-flash", self.now)
-                self.assertEqual(spent == 0, expect_zero)
+                except cb.CloudRefused:
+                    pass
+                self.assertEqual(self.ledger.spent("deepseek-flash", self.now) == 0, refunded)
+
+    async def test_client_disconnect_mid_call_keeps_the_reservation(self) -> None:
+        provider = FakeProvider()
+        provider.gate = asyncio.Event()
+        task = asyncio.create_task(self.backend(provider).complete(SPEC, dict(MSG), wait=False))
+        for _ in range(200):
+            if provider.in_flight:
+                break
+            await asyncio.sleep(0.005)
+        self.assertEqual(1, provider.in_flight, "the request was sent")
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertGreater(self.ledger.spent("deepseek-flash", self.now), 0, "it may already have been billed")
+
+    async def test_cancel_before_the_request_is_sent_still_refunds(self) -> None:
+        provider = FakeProvider()
+        backend = self.backend(provider)
+
+        async def slow_key():
+            await asyncio.sleep(30)
+
+        with mock.patch.object(cb, "key_loader_for", lambda spec, accessor: slow_key):
+            task = asyncio.create_task(backend.complete(SPEC, dict(MSG), wait=False))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual([], provider.calls)
+        self.assertEqual(0, self.ledger.spent("deepseek-flash", self.now))
 
     async def test_missing_key_flag_off_and_oversize_never_call_the_provider(self) -> None:
         provider = FakeProvider()
