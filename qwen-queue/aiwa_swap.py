@@ -20,6 +20,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import model_slots
 from fleet_router import SERVING_IDS, guardian_error, occupant_cache
 
 log = logging.getLogger("guardian")
@@ -35,6 +36,8 @@ CONSOLE_PORTS = (17890, 17891)
 SWAP_POLL_S = 2.0
 SWAP_POLL_TIMEOUT_S = 360.0
 SWAP_ETA_TEXT = "~1 min"
+# How long a swap waits for in-flight R9700 work to finish before giving up (never kills it).
+SWAP_DRAIN_TIMEOUT_S = float(os.environ.get("GUARDIAN_SWAP_DRAIN_TIMEOUT_S", "900"))
 # Completions that ask for Qwen while clerk occupies are served on clerk.
 # Loading consult requires Carter (operator) or a frontier model (frontier).
 CONSULT_SWAP_GATES = frozenset({"operator", "frontier"})
@@ -269,44 +272,61 @@ async def perform_swap(to: str, client, gate: str | None = None) -> object:
             "Another swap is already in flight.", "aiwa_busy", 409
         )
     try:
-        path = workboard_path()
-        if not announce_workboard(path, to):
-            return guardian_error(
-                f"WORKBOARD missing or unwritable at {path}; refusing to swap.",
-                "workboard_missing",
-                503,
-            )
-
-        exit_code, combined = await run_swap_ssh(to)
-        code = classify_ssh(exit_code, combined)
-        if code == "aiwa_busy":
-            return guardian_error(
-                f"CT 210 swap mutex is held: {combined.strip()[:200]}",
-                "aiwa_busy",
-                409,
-            )
-        if code == "swap_scripts_missing":
-            return guardian_error(
-                f"Swap script missing on CT 210: {combined.strip()[:200]}",
-                "swap_scripts_missing",
-                502,
-            )
-        if code == "swap_ssh_failed":
-            return guardian_error(
-                f"SSH swap to {SSH_HOST} failed: {combined.strip()[:200]}",
-                "swap_ssh_failed",
-                502,
-            )
-
-        if not await wait_for_occupant(client, to):
-            return guardian_error(
-                f"AIWA did not serve {SERVING_IDS[to]} within {SWAP_POLL_TIMEOUT_S:.0f}s.",
-                "aiwa_unreachable",
-                502,
-            )
-        from aiohttp import web
-        return web.json_response(
-            {"status": "ok", "occupant": to, "model_id": SERVING_IDS[to]}
+        async with _host_exclusive():
+            return await _swap_locked(to, client)
+    except model_slots.DrainTimeout:
+        # Only the drain wait: an SSH or poll timeout inside the swap must not be reported as this.
+        return guardian_error(
+            "In-flight AIWA work did not finish in time; swap not started.", "aiwa_busy", 409
         )
     finally:
         swap_slot.__exit__()
+
+
+def _host_exclusive():
+    """Hold the whole R9700 for the swap so no completion lands on a half-loaded model."""
+    if not model_slots.slots_enabled():
+        return model_slots.no_slot()
+    return model_slots.get_slots().exclusive("r9700", timeout=SWAP_DRAIN_TIMEOUT_S)
+
+
+async def _swap_locked(to: str, client) -> object:
+    path = workboard_path()
+    if not announce_workboard(path, to):
+        return guardian_error(
+            f"WORKBOARD missing or unwritable at {path}; refusing to swap.",
+            "workboard_missing",
+            503,
+        )
+
+    exit_code, combined = await run_swap_ssh(to)
+    code = classify_ssh(exit_code, combined)
+    if code == "aiwa_busy":
+        return guardian_error(
+            f"CT 210 swap mutex is held: {combined.strip()[:200]}",
+            "aiwa_busy",
+            409,
+        )
+    if code == "swap_scripts_missing":
+        return guardian_error(
+            f"Swap script missing on CT 210: {combined.strip()[:200]}",
+            "swap_scripts_missing",
+            502,
+        )
+    if code == "swap_ssh_failed":
+        return guardian_error(
+            f"SSH swap to {SSH_HOST} failed: {combined.strip()[:200]}",
+            "swap_ssh_failed",
+            502,
+        )
+
+    if not await wait_for_occupant(client, to):
+        return guardian_error(
+            f"AIWA did not serve {SERVING_IDS[to]} within {SWAP_POLL_TIMEOUT_S:.0f}s.",
+            "aiwa_unreachable",
+            502,
+        )
+    from aiohttp import web
+    return web.json_response(
+        {"status": "ok", "occupant": to, "model_id": SERVING_IDS[to]}
+    )
