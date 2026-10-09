@@ -6,6 +6,7 @@ Inference routing is ONLY seat_for_model(model). No prompt classifiers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -14,6 +15,8 @@ import uuid
 from typing import Any
 
 from aiohttp import ClientError, ClientTimeout, web
+
+import model_slots
 
 log = logging.getLogger("guardian")
 
@@ -248,6 +251,14 @@ def is_glm_metadata_get(request: web.Request) -> bool:
     return request.method == "GET" and request.path in GLM_METADATA_GET_PATHS
 
 
+def seat_slot(seat: str):
+    """Async context manager serializing work on one seat's model; a no-op with the flag off."""
+    if not model_slots.slots_enabled():
+        return contextlib.nullcontext()
+    slots = model_slots.get_slots()
+    return slots.acquire(slots.model_id_for_seat(seat))
+
+
 class OccupantCache:
     """HTTP GET AIWA /v1/models with 2s timeout and 2s TTL. No SSH."""
 
@@ -424,11 +435,19 @@ async def handle_aiwa_completion(
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }
     fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
-    return await forward_aiwa(
-        request,
-        body=body,
-        fwd_headers=fwd_headers,
-        client=client,
-        guardian=guardian,
-        seat=effective_seat,
-    )
+    async with seat_slot(effective_seat):
+        if model_slots.slots_enabled():
+            # A swap may have finished between the first check and getting the slot.
+            occupant, model_id, reachable = await occupant_cache.get(client)
+            if not reachable or occupant != effective_seat:
+                resp = aiwa_wrong_occupant_response(occupant, model_id, effective_seat)
+                resp.headers.update(seat_hdrs)
+                return resp
+        return await forward_aiwa(
+            request,
+            body=body,
+            fwd_headers=fwd_headers,
+            client=client,
+            guardian=guardian,
+            seat=effective_seat,
+        )

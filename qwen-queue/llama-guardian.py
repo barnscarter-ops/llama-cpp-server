@@ -39,6 +39,7 @@ Python 3.10+, aiohttp.  (Both already installed on this system.)
 """
 
 import asyncio
+import contextlib
 import hmac
 import json
 import logging
@@ -56,6 +57,7 @@ from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionE
 import aiwa_swap
 import fleet_router
 import model_registry
+import model_slots
 from guardian_worker_descriptor import build_worker_descriptor
 from guardian_workers import (
     is_worker_job,
@@ -1375,7 +1377,7 @@ async def _glm_proxy(
     if is_real_work:
         # A direct generation cannot bypass the one-slot queue and evict its
         # context. It waits here rather than competing with queued work.
-        async with guardian.generation_lock:
+        async with fleet_router.seat_slot("glm"), guardian.generation_lock:
             if req_json is not None:
                 return await forward_with_length_retry()
             return await forward()
@@ -1416,37 +1418,51 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
         payload = dict(job.request)
         payload["model"] = fleet_router.SERVING_IDS[seat]
         payload["stream"] = False
-        guardian.last_aiwa_activity = time.time()
-        if seat == "consult":
-            guardian.last_aiwa_consult_activity = time.time()
         timeout = ClientTimeout(
             total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S
         )
-        async with client.post(
-            f"{fleet_router.aiwa_base()}/v1/chat/completions", json=payload, timeout=timeout
-        ) as upstream_resp:
-            body = await upstream_resp.read()
-            if len(body) > QUEUE_MAX_RESULT_BYTES:
-                guardian.job_store.fail(
-                    job.job_id,
-                    f"Local-model result exceeded durable queue limit of {QUEUE_MAX_RESULT_BYTES} bytes.",
-                )
-                return
-            text = body.decode(errors="replace")
-            if upstream_resp.status >= 400:
-                guardian.job_store.fail(job.job_id, f"AIWA returned HTTP {upstream_resp.status}: {text[:1200]}")
-                return
-            try:
-                result = json.loads(text)
-            except json.JSONDecodeError:
-                result = {"text": text}
-            guardian.job_store.finish(
-                job.job_id, {"upstream_status": upstream_resp.status, "response": result}
-            )
-            log.info(f"queue succeeded {job.job_id} (aiwa {seat})")
+        async with fleet_router.seat_slot(seat):
+            if model_slots.slots_enabled():
+                # A swap may have finished between the first check and getting the slot.
+                occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+                if not reachable or occupant != seat:
+                    guardian.job_store.fail(
+                        job.job_id, f"AIWA occupant is {occupant} ({model_id}); {seat} job requires an operator swap."
+                    )
+                    return
+            await _post_aiwa_job(job, client, payload, seat, timeout)
     except Exception as exc:
         guardian.job_store.fail(job.job_id, f"AIWA queue job failed: {exc}")
         log.exception(f"queue worker crashed while running {job.job_id} on AIWA")
+
+
+async def _post_aiwa_job(job: QueueJob, client, payload: dict, seat: str, timeout: ClientTimeout) -> None:
+    """Send one AIWA job. The caller holds the seat slot."""
+    guardian.last_aiwa_activity = time.time()
+    if seat == "consult":
+        guardian.last_aiwa_consult_activity = time.time()
+    async with client.post(
+        f"{fleet_router.aiwa_base()}/v1/chat/completions", json=payload, timeout=timeout
+    ) as upstream_resp:
+        body = await upstream_resp.read()
+        if len(body) > QUEUE_MAX_RESULT_BYTES:
+            guardian.job_store.fail(
+                job.job_id,
+                f"Local-model result exceeded durable queue limit of {QUEUE_MAX_RESULT_BYTES} bytes.",
+            )
+            return
+        text = body.decode(errors="replace")
+        if upstream_resp.status >= 400:
+            guardian.job_store.fail(job.job_id, f"AIWA returned HTTP {upstream_resp.status}: {text[:1200]}")
+            return
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError:
+            result = {"text": text}
+        guardian.job_store.finish(
+            job.job_id, {"upstream_status": upstream_resp.status, "response": result}
+        )
+        log.info(f"queue succeeded {job.job_id} (aiwa {seat})")
 
 
 async def run_queued_job(job: QueueJob) -> None:
@@ -1486,7 +1502,7 @@ async def run_queued_job(job: QueueJob) -> None:
         return
     log.info(f"queue running {job.job_id} from {job.source}")
     try:
-        async with guardian.generation_lock:
+        async with fleet_router.seat_slot("glm"), guardian.generation_lock:
             if not await ensure_llama_started(reason=f"queue:{job.job_id}"):
                 guardian.job_store.fail(job.job_id, start_failure_message())
                 return
