@@ -21,6 +21,24 @@ def slots_enabled() -> bool:
     return os.environ.get("GUARDIAN_MODEL_SLOTS", "false").strip().lower() in {"true", "1", "yes"}
 
 
+class DrainTimeout(asyncio.TimeoutError):
+    """In-flight work on a host did not finish before an exclusive hold was due."""
+
+
+class _NoSlot:
+    """Flag-off stand-in. contextlib.nullcontext only became async-capable in 3.10."""
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc) -> None:
+        return None
+
+
+def no_slot() -> _NoSlot:
+    return _NoSlot()
+
+
 class _Host:
     def __init__(self) -> None:
         self.active = 0
@@ -87,7 +105,7 @@ class ModelSlots:
 
     @asynccontextmanager
     async def exclusive(self, host_name: str, *, timeout: float | None = None) -> AsyncIterator[None]:
-        """Hold a whole host. Raises asyncio.TimeoutError if in-flight work does not drain in time."""
+        """Hold a whole host. Raises DrainTimeout if in-flight work does not drain in time."""
         host = self._hosts[host_name]
         host.waiting_exclusive += 1
 
@@ -96,7 +114,10 @@ class ModelSlots:
                 await host.wait_changed()
 
         try:
-            await asyncio.wait_for(drain(), timeout)
+            try:
+                await asyncio.wait_for(drain(), timeout)
+            except asyncio.TimeoutError as exc:
+                raise DrainTimeout(f"{host_name} did not drain within {timeout}s") from exc
             host.exclusive = True
         finally:
             host.waiting_exclusive -= 1

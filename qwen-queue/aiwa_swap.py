@@ -15,7 +15,6 @@ never refuse a swap. In-process swap queue capacity is 1 (reject-second)
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 from datetime import datetime
@@ -275,7 +274,8 @@ async def perform_swap(to: str, client, gate: str | None = None) -> object:
     try:
         async with _host_exclusive():
             return await _swap_locked(to, client)
-    except asyncio.TimeoutError:
+    except model_slots.DrainTimeout:
+        # Only the drain wait: an SSH or poll timeout inside the swap must not be reported as this.
         return guardian_error(
             "In-flight AIWA work did not finish in time; swap not started.", "aiwa_busy", 409
         )
@@ -286,7 +286,7 @@ async def perform_swap(to: str, client, gate: str | None = None) -> object:
 def _host_exclusive():
     """Hold the whole R9700 for the swap so no completion lands on a half-loaded model."""
     if not model_slots.slots_enabled():
-        return contextlib.nullcontext()
+        return model_slots.no_slot()
     return model_slots.get_slots().exclusive("r9700", timeout=SWAP_DRAIN_TIMEOUT_S)
 
 

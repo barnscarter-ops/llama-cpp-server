@@ -6,7 +6,6 @@ Inference routing is ONLY seat_for_model(model). No prompt classifiers.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -254,7 +253,7 @@ def is_glm_metadata_get(request: web.Request) -> bool:
 def seat_slot(seat: str):
     """Async context manager serializing work on one seat's model; a no-op with the flag off."""
     if not model_slots.slots_enabled():
-        return contextlib.nullcontext()
+        return model_slots.no_slot()
     slots = model_slots.get_slots()
     return slots.acquire(slots.model_id_for_seat(seat))
 
