@@ -193,12 +193,15 @@ class FallbackOffTests(TaskHttpBase):
         self.assertEqual(body["evidence"]["fallback_used"], False)
         self.assertEqual((await (await self.client.get("/__guardian/alerts")).json())["alerts"], [])
 
-    async def test_without_the_flag_an_uncleared_task_is_selection_failed(self) -> None:
+    async def test_without_the_flag_an_uncleared_task_is_still_routed_by_rules(self) -> None:
         fake = FakeJev("workbench-local")
         self.module.JEV_TRANSPORT = fake
-        body = await (await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))).json()
-        self.assertEqual((body["status"], body["reason"]), ("selection_failed", "jev_summary_not_cleared"))
-        self.assertEqual(fake.calls, [])
+        response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan"))
+        body = await response.json()
+        self.assertEqual(response.status, 202, body)
+        self.assertEqual(body["evidence"]["selector"], "rules")
+        self.assertEqual(body["evidence"]["fallback_reason"], "jev_summary_not_cleared")
+        self.assertEqual((fake.calls, (await (await self.client.get("/__guardian/alerts")).json())["alerts"]), ([], []))
 
     async def test_alerts_endpoint_rejects_a_bad_cursor(self) -> None:
         self.assertEqual((await self.client.get("/__guardian/alerts?after=x")).status, 400)
