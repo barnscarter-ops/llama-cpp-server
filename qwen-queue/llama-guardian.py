@@ -56,6 +56,7 @@ from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionE
 import aiwa_swap
 import cloud_backend
 import fleet_router
+import guardian_alerts
 import jev_selector
 import model_registry
 import model_slots
@@ -301,6 +302,7 @@ class Guardian:
         self.job_store = JobStore(QUEUE_DB_PATH)
         self.approvals = ApprovalStore(self.job_store.connection)
         self.task_store = task_dispatch.TaskStore(self.job_store.connection)
+        self.alerts = guardian_alerts.AlertStore(self.job_store.connection)
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
         # One wake-up event per model queue (GUARDIAN_PER_MODEL_QUEUES); sharing one event would lose wake-ups.
@@ -1250,12 +1252,18 @@ JEV_TRANSPORT = jev_selector.aiohttp_transport
 _selector_cache: dict = {}
 
 
+def _alert_jev_fallback(task, reason: str) -> None:
+    """One durable event per fallback so Chief can relay it; the task's evidence carries the same reason."""
+    guardian.alerts.emit("jev_fallback", task.task_id, {"reason": reason, "fallback": "rules", "clearance": task.clearance})
+    log.warning("jev pick failed (%s); task %s falls back to the rules selector", reason, task.task_id)
+
+
 def _selector():
     """One selector per process: the Jev ledger holds a SQLite connection that should not be reopened per request."""
-    key = (jev_selector.selector_name(), QUEUE_DB_PATH, id(JEV_TRANSPORT))
+    key = (jev_selector.selector_name(), jev_selector.fallback_mode(), QUEUE_DB_PATH, id(JEV_TRANSPORT))
     if key not in _selector_cache:
-        selector = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT)
-        if isinstance(selector, jev_selector.UnavailableSelector):
+        selector = jev_selector.selector_for_env(QUEUE_DB_PATH, transport=JEV_TRANSPORT, on_fallback=_alert_jev_fallback)
+        if isinstance(selector, jev_selector.UnavailableSelector) or not getattr(selector, "cacheable", True):
             return selector  # not cached: a locked database or a late-arriving key should recover without a restart
         _selector_cache.clear()
         _selector_cache[key] = selector
@@ -1326,6 +1334,17 @@ async def task_status(request: web.Request) -> web.Response:
     dispatcher = build_task_dispatcher()
     job = guardian.job_store.get(row["job_id"]) if row["job_id"] else None
     return web.json_response(dispatcher.view(row, job))
+
+
+async def alerts_list(request: web.Request) -> web.Response:
+    """Alert events for Chief to relay. Read-only; poll with ?after=<last id seen>."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    try:
+        after = int(request.query.get("after", "0"))
+    except ValueError:
+        return guardian_error("after must be an integer.", "invalid_after", 400)
+    return web.json_response({"alerts": guardian.alerts.list(after)})
 
 
 async def approvals_list(request: web.Request) -> web.Response:
@@ -2651,6 +2670,7 @@ def make_app() -> web.Application:
     app.router.add_post("/__guardian/tasks", task_submit)
     app.router.add_get("/__guardian/tasks/{task_id}", task_status)
     app.router.add_get("/__guardian/approvals", approvals_list)
+    app.router.add_get("/__guardian/alerts", alerts_list)
     app.router.add_post("/__guardian/approvals/{approval_id}/decide", approvals_decide)
     # Catch-all proxy: any method, any path → llama.
     app.router.add_route("*", "/{tail:.*}", proxy_handler)
