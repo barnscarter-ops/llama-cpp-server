@@ -61,7 +61,8 @@
         "\\GPU Adapter Memory(*)\\Shared Usage",
         "-sc",
         "1"
-      ]
+      ],
+      "execute_model_code": false
     },
     "r9700": {
       "gpu": "AMD R9700 32 GB",
@@ -143,7 +144,9 @@
         ],
         "nemotron_regex": "(?i)nemotron",
         "qwen_regex": "(?i)qwen3\\.8"
-      }
+      },
+      "execute_model_code": true,
+      "code_run_as": "nobody"
     }
   },
   "hermes_bench": null,

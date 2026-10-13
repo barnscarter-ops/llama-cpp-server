@@ -1,7 +1,9 @@
 """Findings from the independent review of PR #25: fail-closed status, swap put-back, spill reading, UPS, signals."""
 
+import os
 import signal
 import sys
+import lane_fixture
 import unittest
 from pathlib import Path
 
@@ -286,23 +288,29 @@ class CodexFindings(unittest.TestCase):
         self.assertGreater(sum(1 for r in env2.lane.ledger.records() if r.get("kind") == "tuned"), n_before)
         self.assertIsNotNone(env2.lane.tuned_cfg(cid))
 
-    def test_cloud_arm_reaches_https_but_never_the_local_ports(self):
+    def test_cloud_arm_reaches_the_named_https_host_only(self):
         import run_lane, argparse, os
-        env = make_env("workbench", oracle=False, approvals={"cloud_spend_cap_usd": 5})
+        from bench_v2 import cloud
+        approvals = {"cloud_spend_cap_usd": 5, "cloud_endpoint_host": "api.example.invalid"}
+        env = make_env("workbench", oracle=False, approvals=approvals)
         ns = argparse.Namespace(lane="workbench", window=str(env.window_path), ledger_dir=str(env.root / "l"), runs_dir=str(env.root / "r"),
                                 lanes=None, candidates=None, frozen_dir=str(lane_fixture_dir()), maverick=None, humaneval=None, only="",
                                 endpoint="http://127.0.0.1:8080/v1/chat/completions", model="m", key_env="K", price_in=1.0, price_out=1.0)
         run_lane._real_backend = lambda a: env.backend
         os.environ["K"] = "x"
-        with self.assertRaises(Exception) as cm:
-            run_lane.cmd_cloud(ns)
-        self.assertIn("public https", str(cm.exception))
-        ns.endpoint = "https://api.example.invalid/v1/chat/completions"
-        res = run_lane.cmd_cloud(ns)
-        self.assertEqual(res, 0)
+        real = cloud._resolve
+        cloud._resolve = lambda host: ["93.184.216.34"]
+        try:
+            with self.assertRaises(Exception) as cm:
+                run_lane.cmd_cloud(ns)
+            self.assertIn("https endpoint", str(cm.exception))
+            ns.endpoint = "https://api.example.invalid/v1/chat/completions"
+            self.assertEqual(run_lane.cmd_cloud(ns), 0)
+        finally:
+            cloud._resolve = real
+            del os.environ["K"]
         urls = [u for u, _ in env.world.requests]
         self.assertTrue(urls and all(u.startswith("https://api.example.invalid") for u in urls))
-        del os.environ["K"]
 
     def test_failed_swap_exits_nonzero(self):
         import run_lane, argparse
@@ -320,6 +328,8 @@ class CodexFindings(unittest.TestCase):
 
     def test_model_code_cannot_outlive_its_timeout_or_eat_memory(self):
         from bench_v2.suites import scoring
+        if lane_fixture.enable_code_runner() != "nobody":
+            self.skipTest("needs root to drop to nobody")
         self.assertEqual(scoring.score_python("```python\nwhile True: pass\n```", {"tests": "assert True"}), (False, "timeout"))
         ok, why = scoring.score_python("```python\nx = bytearray(6 * 1024**3)\n```", {"tests": "assert True"})
         self.assertFalse(ok)
@@ -337,3 +347,185 @@ def resweep(env, cid):
     last = env.lane._last_event("levers_done", cid)
     skip = {"schema", "seq", "ts", "phase", "prev", "hash", "kind"}
     env.lane.ledger.event("levers_done", **{k: v for k, v in last.items() if k not in skip})
+
+
+class CloudEndpointRules(unittest.TestCase):
+    OK = staticmethod(lambda host: ["93.184.216.34"])
+
+    def check(self, url, host="api.example.com", resolver=None):
+        from bench_v2 import cloud
+        return cloud.validate_endpoint(url, host, resolver or self.OK)
+
+    def refuses(self, url, host="api.example.com", resolver=None):
+        from bench_v2.errors import AbortRun
+        with self.assertRaises(AbortRun):
+            self.check(url, host, resolver)
+
+    def test_good_endpoint(self):
+        self.assertEqual(self.check("https://API.example.com/v1/chat"), ("api.example.com", 443))
+
+    def test_window_must_name_the_host(self):
+        self.refuses("https://api.example.com/v1", host="")
+        self.refuses("https://api.example.com/v1", host="other.example.com")
+
+    def test_scheme_names_and_ports(self):
+        self.refuses("http://api.example.com/v1")
+        self.refuses("https://printer.local/v1", host="printer.local")
+        self.refuses("https://svc.internal/v1", host="svc.internal")
+        self.refuses("https://box.tailnet.ts.net/v1", host="box.tailnet.ts.net")
+        self.refuses("https://intranet/v1", host="intranet")
+        self.refuses("https://api.example.com:8080/v1")
+        self.refuses("https://api.example.com:8081/v1")
+
+    def test_non_public_addresses_refused(self):
+        for addr in ("10.1.2.3", "192.168.1.240", "127.0.0.1", "169.254.1.1", "100.64.0.5", "100.100.100.100", "172.16.0.9",
+                     "172.31.255.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "224.0.0.1"):
+            self.refuses("https://api.example.com/v1", resolver=lambda h, a=addr: [a])
+
+    def test_one_private_address_among_public_ones_refuses(self):
+        self.refuses("https://api.example.com/v1", resolver=lambda h: ["93.184.216.34", "10.0.0.2"])
+
+    def test_unresolvable_refused(self):
+        def boom(h):
+            raise OSError("no dns")
+        self.refuses("https://api.example.com/v1", resolver=boom)
+        self.refuses("https://api.example.com/v1", resolver=lambda h: [])
+
+    def test_public_ipv6_ok(self):
+        self.check("https://api.example.com/v1", resolver=lambda h: ["2606:2800:220:1:248:1893:25c8:1946"])
+
+
+class CloudItemsAndRedirects(unittest.TestCase):
+    def test_maverick_items_withheld_without_window_approval(self):
+        from bench_v2 import cloud
+        env = make_env("workbench", oracle=False)
+        items = [{"id": "maverick-0001", "category": "maverick", "messages": [{"role": "user", "content": "client secret task"}],
+                  "scorer": {"type": "exact", "answers": ["1"]}, "max_tokens": 10},
+                 {"id": "reasoning-0001", "category": "reasoning", "messages": [{"role": "user", "content": "2+2"}],
+                  "scorer": {"type": "exact", "answers": ["4"]}, "max_tokens": 10}]
+        cloud.run_anchor(env.backend, env.lane.ledger, items, "https://api.example.invalid/v1", "m", "K", 1, 1, 5.0, "r", environ={"K": "x"})
+        self.assertEqual(env.world.request_count, 1)
+        self.assertTrue(any(r.get("kind") == "cloud_items_withheld" for r in env.lane.ledger.records()))
+        env2 = make_env("workbench", oracle=False)
+        cloud.run_anchor(env2.backend, env2.lane.ledger, items, "https://api.example.invalid/v1", "m", "K", 1, 1, 5.0, "r",
+                         environ={"K": "x"}, allow_maverick=True)
+        self.assertEqual(env2.world.request_count, 2)
+
+    def test_redirects_are_not_followed_so_the_key_stays_put(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        hits = []
+
+        class Target(BaseHTTPRequestHandler):
+            def do_POST(self):
+                hits.append(self.headers.get("Authorization"))
+                self.send_response(200); self.end_headers()
+            def log_message(self, *a):
+                pass
+
+        target = HTTPServer(("127.0.0.1", 0), Target)
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(307)
+                self.send_header("Location", f"http://127.0.0.1:{target.server_port}/steal")
+                self.end_headers()
+            def log_message(self, *a):
+                pass
+
+        red = HTTPServer(("127.0.0.1", 0), Redirect)
+        for srv in (target, red):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            r = SystemBackend().chat(f"http://127.0.0.1:{red.server_port}/v1", {"messages": []}, timeout=5, headers={"Authorization": "Bearer secret"})
+        finally:
+            for srv in (target, red):
+                srv.shutdown(); srv.server_close()
+        self.assertFalse(r.ok)
+        self.assertEqual(hits, [])
+
+
+class DeferredCode(unittest.TestCase):
+    def test_workbench_never_executes_model_code_and_saves_raw_outputs(self):
+        from bench_v2.suites import scoring
+        calls = []
+        real = scoring.score_python
+        scoring.score_python = lambda *a, **k: calls.append(1) or (True, "")
+        try:
+            env = make_env("workbench")
+            env.lane.run_stages(["smoke", "tune", "confirm", "ladder", "quality"])
+        finally:
+            scoring.score_python = real
+        self.assertEqual(calls, [])
+        recs = list(env.lane.ledger.records())
+        self.assertTrue(any(r.get("kind") == "code_deferred" for r in recs))
+        raw = [r for r in recs if r.get("kind") == "raw_outputs"]
+        self.assertTrue(raw and all(Path(r["path"]).exists() and r["n"] > 0 for r in raw))
+        code_rows = [r for r in recs if r.get("phase") == "quality" and "quality" in r and r["quality"]["suite"] in ("code_easy", "code_fix")]
+        self.assertTrue(code_rows and all(r["quality"]["pass"] is None for r in code_rows))
+
+    def test_r9700_executes_only_when_it_can_drop_privileges_or_sandbox(self):
+        from bench_v2.suites import scoring
+        scoring.configure_runner(None, None)
+        env = make_env("r9700")
+        env.lane.s.sandbox_cmd = []
+        env.lane.lane.raw["code_run_as"] = "no-such-user-xyz"
+        defer, why = env.lane.code_deferred()
+        self.assertTrue(defer)
+        self.assertIn("does not exist", why)
+        env.lane.lane.raw["code_run_as"] = "nobody"
+        defer, _ = env.lane.code_deferred()
+        self.assertEqual(defer, os.geteuid() != 0)
+
+    def test_score_python_refuses_without_an_unprivileged_runner(self):
+        from bench_v2.suites import scoring
+        scoring.configure_runner(None, None)
+        try:
+            with self.assertRaises(RuntimeError):
+                scoring.score_python("```python\npass\n```", {"tests": "assert True"})
+        finally:
+            lane_fixture.enable_code_runner()
+
+    def test_child_runs_as_nobody_not_root(self):
+        from bench_v2.suites import scoring
+        if lane_fixture.enable_code_runner() != "nobody":
+            self.skipTest("needs root")
+        ok, why = scoring.score_python("```python\nimport os\n```", {"tests": "assert os.getuid() != 0 and os.geteuid() != 0"})
+        self.assertTrue(ok, why)
+
+    def test_windows_child_env_keeps_what_python_needs(self):
+        from bench_v2.suites import scoring
+        env = scoring.child_env("C:\\tmp", True, {"SYSTEMROOT": "C:\\Windows", "PATH": "x", "AWS_SECRET": "no", "TEMP": "t"})
+        self.assertEqual(env["SYSTEMROOT"], "C:\\Windows")
+        self.assertNotIn("AWS_SECRET", env)
+        self.assertNotIn("AWS_SECRET", scoring.child_env("/tmp/x", False, {"AWS_SECRET": "no", "PATH": "p"}))
+
+    def test_verdict_waits_for_the_score_step(self):
+        from bench_v2.quality import role_verdict
+        summary = {"categories": {"code_fix": {"scored": 0, "unscored": 20, "passed": 0}, "reasoning": {"scored": 20, "unscored": 0, "passed": 18}}}
+        v = role_verdict("slow_reasoner", {"within_points_of_anchor": 5}, summary, {"categories": {}})
+        self.assertIsNone(v["pass"])
+        self.assertIn("score step", v["detail"])
+
+    def test_score_step_finishes_the_job_without_touching_the_source_ledger(self):
+        import argparse, hashlib, run_lane
+        from bench_v2.ledger import Ledger, read_all
+        if lane_fixture.enable_code_runner() is None:
+            self.skipTest("no runner")
+        env = make_env("workbench")
+        env.lane.run_stages(["smoke", "tune", "confirm", "ladder", "quality"])
+        src = env.root / "ledger" / "workbench.jsonl"
+        before = hashlib.sha256(src.read_bytes()).hexdigest()
+        ns = argparse.Namespace(lanes=None, candidates=None, ledger_dir=str(env.root / "ledger"), frozen_dir=str(lane_fixture_dir()),
+                                raw_dir=str(Path(env.lane.run_dir) / "raw"), source_ledger=str(src), out_ledger=None, run_as="nobody",
+                                sandbox_cmd=None if lane_fixture.enable_code_runner() == "nobody" else ["env"], lane="workbench")
+        res = run_lane.cmd_score(ns)
+        self.assertEqual(res, 0)
+        self.assertEqual(hashlib.sha256(src.read_bytes()).hexdigest(), before)
+        scored = env.root / "ledger" / "workbench.scored.jsonl"
+        self.assertGreater(Ledger(scored).verify(), 10)
+        recs = read_all(env.root / "ledger")
+        late = [r for r in recs if r.get("kind") == "role_verdict" and r.get("scored_late")]
+        self.assertTrue(late)
+        self.assertTrue(any(r.get("phase") == "quality" and str(r.get("mode", "")).endswith(":scored") for r in recs))

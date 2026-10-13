@@ -15,7 +15,7 @@ Python 3 stdlib only. Everything is testable on a fake machine; the tests never 
 - One model per machine at a time (flock on the lane lock; the R9700 uses the same lock file as the swap scripts). Workbench and R9700 lanes can run in parallel in separate terminals.
 - The production Nemotron on the R9700 is touched only by `swap` (the real swap scripts, logged) and by the lane stop/restore above. `swap` stops the loop if a script fails or times out, and always ends by putting Nemotron back and checking which model is resident; if that fails the marker stays and the command exits with an error.
 - Every lane takes a lock (`safety.lock_file`; the R9700 shares the swap scripts' lock, the Workbench uses `runs/workbench.lock`), so two harness runs on one machine refuse.
-- Cloud spend needs `cloud_spend_cap_usd > 0` in the window and a key in a named environment variable; the key is never printed or written.
+- Cloud spend needs `cloud_spend_cap_usd > 0` and `cloud_endpoint_host` in the window and a key in a named environment variable; the key is never printed or written.
 
 ## Stages (all take `--lane workbench|r9700`)
 | Command | What it does | Touches the machine? |
@@ -29,7 +29,8 @@ Python 3 stdlib only. Everything is testable on a fake machine; the tests never 
 | `run --stages ladder` | S4: 8k/32k/(128k-3000) checks, max safe context, three cold loads, wake seconds. | Yes |
 | `run --stages quality` | S5: frozen role mix in production reasoning mode, other mode and sampling spot-check on 60 items, role verdict. | Yes |
 | `swap` | R9700: time Nemotron to Qwen and back through the real swap scripts, three round trips. Needs `qwen_load` and `swap_test` approvals. | Yes |
-| `cloud` | DeepSeek reference arm on the reasoner mix, capped spend. | Network |
+| `cloud` | DeepSeek reference arm on the reasoner mix, capped spend, window-approved host. | Network |
+| `score` | Runs deferred model-generated code on Linux as `nobody`/in a sandbox and finishes the verdicts. | No (no GPU, no lane) |
 | `jev` | Writes the 200 Jev cases (120 dev / 80 held-out by family), grades arm answers, built-in rules/majority/oracle arms. Never calls Jev. | No |
 | `registry` | Ledger to a Guardian `models.json` plus `RESULTS.md`, validated by Guardian's own `model_registry.parse_registry`. | No |
 | `status`, `restore`, `dry-run` | Ledger chain and markers; finish a restore; whole lane on the fake machine. | status/dry-run no |
@@ -61,7 +62,15 @@ The R9700 lane queries `upsc cp1500@localhost ups.status` (CyberPower CP1500 und
 `nvidia-smi` memory does not show WDDM spilling into system RAM, so the Workbench reads `\GPU Adapter Memory(*)\Shared Usage` with `typeperf` (every 5 s), takes a baseline with the production services stopped, and treats growth above 256 MiB as a spill. If that reading is unavailable the run aborts (`require_shared_reading`) and `preflight` says so. Also set the NVIDIA driver to "Prefer No Sysmem Fallback" before a run; that makes an overfull load fail instead of silently spilling.
 
 ## Model-generated code
-Scored Python runs in a child process with CPU, memory and file-size limits, a scrubbed environment and a killed process group on timeout. That limits damage; it is not an OS sandbox. Run the quality stage as an unprivileged user or in a container on any machine that matters.
+Nothing runs model-written Python as the person who owns the machine. The Workbench (Windows PC) never executes it: the quality stage saves raw answers to `runs/<run>/raw/*.jsonl`, leaves code items unscored and writes a provisional verdict. Copy that folder and the lane ledger to Linux and run the score step, which runs the code as root-dropped-to-`nobody` (or inside `--sandbox-cmd`, for example `docker run --rm -i --network=none <image>`), with CPU, memory and file-size limits, a scrubbed environment and a killed process group on timeout. It writes `ledger/<lane>.scored.jsonl` (the source ledger is untouched) and the final `role_verdict`:
+
+    sudo python3 benchmarks/v2/run_lane.py --ledger-dir benchmarks/v2/ledger score --lane workbench \
+        --raw-dir <copied>/raw --source-ledger benchmarks/v2/ledger/workbench.jsonl
+
+The R9700 lane scores inline only when it runs as root (drops to `nobody`) or has `--sandbox-cmd`; otherwise it defers the same way. Without an unprivileged runner `score_python` refuses to execute anything.
+
+## Cloud arm rules
+The window must name the endpoint host (`cloud_endpoint_host`); the URL must be https on exactly that host, not an internal name, not port 8080/8081, and every address it resolves to must be public (no private, loopback, link-local, CGNAT/Tailscale, ULA or multicast). Redirects are never followed, so the API key cannot travel to another host. Maverick-derived items are withheld unless the window sets `cloud_allow_maverick_items`. Code items from the anchor are deferred to the score step too. DNS is resolved at start; a rebinding attack between the check and the connection is not defended.
 
 ## Layout
 `bench_v2/` modules (see each docstring), `candidates.json` (models, criteria, registry mapping), `lanes.json` (machines, ports, safety commands), `data/` (tool schema snapshot, guard text slice), `frozen/` (suites + hashes), `ledger/` (results, hash-chained JSONL, one file per lane), `tests/`.

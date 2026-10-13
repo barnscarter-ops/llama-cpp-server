@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -62,7 +63,10 @@ class ItemResult:
 
 
 def run_items(backend: Backend, url: str, alias: str, items: list[dict], sampler: dict | None, mode_extra: dict | None,
-              think: bool, on_item=None, cost_guard=None, judge=None) -> list[ItemResult]:
+              think: bool, on_item=None, cost_guard=None, judge=None, defer_code: bool = False,
+              raw_sink: list | None = None) -> list[ItemResult]:
+    """With `defer_code`, items whose scorer runs Python are not executed here: the raw answer goes to `raw_sink`
+    and the item is left unscored until the separate score step."""
     out = []
     for it in items:
         if on_item:
@@ -85,6 +89,12 @@ def run_items(backend: Backend, url: str, alias: str, items: list[dict], sampler
         if not r.ok:
             out.append(ItemResult(it["id"], it["category"], False, f"request failed: {r.error}", 0, wall, "error", None, False))
             continue
+        if defer_code and scorer.get("type") == "python":
+            if raw_sink is not None:
+                raw_sink.append({"item_id": it["id"], "text": r.text})
+            out.append(ItemResult(it["id"], it["category"], None, "deferred: code is scored in the separate score step",
+                                  r.completion_tokens, wall, r.finish_reason, None))
+            continue
         passed, detail, extra = score_item({**it, "tools": it.get("tools")}, scorer, r.text, r.tool_calls)
         if passed is None and judge is not None:
             passed, detail = judge(it, r.text)
@@ -101,7 +111,7 @@ def summarize(results: list[ItemResult]) -> dict:
         scored = [r for r in rs if r.passed is not None]
         p = sum(1 for r in scored if r.passed)
         lo, hi = wilson(p, len(scored))
-        cats[c] = {"n": len(rs), "scored": len(scored), "passed": p, "rate": (p / len(scored)) if scored else None,
+        cats[c] = {"n": len(rs), "scored": len(scored), "unscored": len(rs) - len(scored), "passed": p, "rate": (p / len(scored)) if scored else None,
                    "ci": [round(lo, 3), round(hi, 3)], "mean_tokens_out": sum(r.tokens_out for r in rs) / len(rs),
                    "wall_s": sum(r.wall_s for r in rs)}
     tools = by.get("tool", [])
@@ -123,6 +133,10 @@ def rate(summary: dict, cats: tuple[str, ...]) -> float | None:
     return (p / n) if n else None
 
 
+def _unscored(summary: dict, cats: tuple[str, ...]) -> int:
+    return sum(summary["categories"].get(c, {}).get("unscored", 0) for c in cats)
+
+
 def role_verdict(role: str, criteria: dict, summary: dict, anchor: dict | None = None) -> dict:
     """Apply the per-role pass criteria (fixed before any result is seen)."""
     if role in ("worker_bee", "fast_executor"):
@@ -133,6 +147,8 @@ def role_verdict(role: str, criteria: dict, summary: dict, anchor: dict | None =
         return {"pass": ok, "tier": 1 if ok else None, "strict_tool_validity": tv, "instruction": inst,
                 "detail": "tier 1 (clerk grade)" if ok else "below the 95% bars; not tier 1"}
     mine = rate(summary, ("analysis", "reasoning", "code_fix", "code_hard"))
+    if _unscored(summary, ("analysis", "reasoning", "code_fix", "code_hard")):
+        return {"pass": None, "tier": None, "reasoning_rate": mine, "detail": "code items await the score step"}
     if anchor is None:
         return {"pass": None, "tier": None, "reasoning_rate": mine, "detail": "anchor (DeepSeek Flash) results not available"}
     ref = rate(anchor, ("analysis", "reasoning", "code_fix", "code_hard"))
@@ -146,12 +162,24 @@ class QualityStage:
     """Runs inside a `PointRunner.run(..., during=...)` so the server lifecycle and safety stay in one place."""
 
     def __init__(self, backend: Backend, ledger: Ledger, cand, role: str, items: list[dict], run_id: str,
-                 safety_check=None, judge=None, strict_greedy_spotcheck: bool = True, extra_runner=None) -> None:
+                 safety_check=None, judge=None, strict_greedy_spotcheck: bool = True, extra_runner=None,
+                 defer_code: bool = False, raw_dir: str | None = None) -> None:
         self.b, self.ledger, self.cand, self.role, self.items, self.run_id = backend, ledger, cand, role, items, run_id
         self.safety_check, self.judge = safety_check, judge
         self.do_greedy = strict_greedy_spotcheck
+        self.defer_code, self.raw_dir = defer_code, raw_dir
         self.extra_runner = extra_runner  # e.g. Hermes bench adapter: (url) -> list[ItemResult]
         self.results: dict[str, list[ItemResult]] = {}
+
+    def _save_raw(self, label: str, sink: list) -> None:
+        if not (self.defer_code and self.raw_dir):
+            return
+        os.makedirs(self.raw_dir, exist_ok=True)
+        path = os.path.join(self.raw_dir, f"{self.cand.id}.{label}.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in sink:
+                fh.write(json.dumps({**row, "model": self.cand.id, "label": label, "run_id": self.run_id}, sort_keys=True) + "\n")
+        self.ledger.event("raw_outputs", model=self.cand.id, label=label, path=path, n=len(sink))
 
     def _record(self, label: str, results: list[ItemResult], think: bool) -> None:
         for r in results:
@@ -166,7 +194,10 @@ class QualityStage:
 
         def during(url: str, mode: dict) -> dict:
             sampler = dict(self.cand.get("sampler_card") or {})
-            res = run_items(self.b, url, self.cand.id, self.items, sampler, mode, think, self.safety_check, judge=self.judge)
+            sink: list = []
+            res = run_items(self.b, url, self.cand.id, self.items, sampler, mode, think, self.safety_check, judge=self.judge,
+                            defer_code=self.defer_code, raw_sink=sink)
+            self._save_raw(f"production-{mode_name}", sink)
             if self.extra_runner:
                 res = res + list(self.extra_runner(url))
             self.results[f"production-{mode_name}"] = res
@@ -175,7 +206,10 @@ class QualityStage:
             if self.do_greedy:
                 sub = subset(self.items)
                 greedy = {"temperature": 0, "top_k": 1}
-                gres = run_items(self.b, url, self.cand.id, sub, greedy, mode, think, self.safety_check, judge=self.judge)
+                gsink: list = []
+                gres = run_items(self.b, url, self.cand.id, sub, greedy, mode, think, self.safety_check, judge=self.judge,
+                                 defer_code=self.defer_code, raw_sink=gsink)
+                self._save_raw("greedy-subset", gsink)
                 self.results["greedy-subset"] = gres
                 self._record("greedy-subset", gres, think)
                 out["greedy_subset"] = summarize(gres)
@@ -192,7 +226,10 @@ class QualityStage:
         def during(url: str, mode: dict) -> dict:
             sub = subset(self.items)
             sampler = dict(self.cand.get("sampler_card") or {})
-            res = run_items(self.b, url, self.cand.id, sub, sampler, mode, think, self.safety_check, judge=self.judge)
+            osink: list = []
+            res = run_items(self.b, url, self.cand.id, sub, sampler, mode, think, self.safety_check, judge=self.judge,
+                            defer_code=self.defer_code, raw_sink=osink)
+            self._save_raw(f"other-{mode_name}", osink)
             self.results[f"other-{mode_name}"] = res
             self._record(f"other-{mode_name}", res, think)
             return {"subset": summarize(res), "mode": mode_name}

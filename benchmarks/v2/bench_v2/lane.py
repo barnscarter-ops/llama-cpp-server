@@ -25,7 +25,7 @@ from .points import PointRunner
 from .quality import ItemResult, QualityStage, role_verdict, summarize, toggle_effect
 from .safety import SafetyController
 from .server import BenchServer, ServerConfig
-from .suites import builder
+from .suites import builder, scoring
 from .telemetry import Telemetry
 from .tuning import LaneState, Tuner, TuneSettings
 from .window import RunMarkers, Window, load_window
@@ -56,6 +56,7 @@ class LaneSettings:
     allow_unguarded: bool = False
     tune: TuneSettings = field(default_factory=TuneSettings)
     judge: object = None
+    sandbox_cmd: list = field(default_factory=list)   # e.g. a throwaway container prefix for model-generated code
 
 
 class Lane:
@@ -412,7 +413,11 @@ class Lane:
                 def extra(url, _c=c):  # noqa: E306
                     res = hermes.run(_c.id, self.lane.base_url, self.run_id)
                     return [ItemResult(f"hermes-{k}", "hermes", v, "bench task", 0, 0.0, "stop") for k, v in res["tasks"].items()]
-            stage = QualityStage(self.backend, self.ledger, c, c.role, items, self.run_id, safety.check, self.s.judge, extra_runner=extra)
+            defer, why = self.code_deferred()
+            if defer:
+                self.ledger.event("code_deferred", model=c.id, reason=why)
+            stage = QualityStage(self.backend, self.ledger, c, c.role, items, self.run_id, safety.check, self.s.judge, extra_runner=extra,
+                                 defer_code=defer, raw_dir=str(Path(self.run_dir) / "raw"))
             prod = c["production_reasoning"]
             p = runner.run(dataclasses.replace(cfg, reasoning=prod), "quality-production", phase="quality", passes=0,
                            skip_speed=True, during=stage.production_pass(prod))
@@ -438,10 +443,20 @@ class Lane:
                 out[c.id] = {"error": p.status, "notes": p.notes}
         return out
 
+    def code_deferred(self) -> tuple[bool, str]:
+        """True when model-generated code must not run here (it is scored later by the score step)."""
+        if not self.lane.raw.get("execute_model_code"):
+            return True, "this lane never executes model-generated code (score step runs it on Linux as an unprivileged user)"
+        scoring.configure_runner(drop_user=self.lane.raw.get("code_run_as", "nobody"), sandbox_cmd=self.s.sandbox_cmd or None)
+        ok, why = scoring.can_execute()
+        return (not ok), why
+
     def _anchor(self) -> dict | None:
+        """Newest scored DeepSeek anchor summary from any ledger in the directory (the score step writes its own)."""
+        from .ledger import read_all
         last = None
-        for r in self.ledger.records():
-            if r.get("phase") == "event" and r.get("kind") == "anchor_summary":
+        for r in read_all(self.s.ledger_dir):
+            if r.get("phase") == "event" and r.get("kind") == "anchor_summary" and not r.get("deferred"):
                 last = r
         return last["summary"] if last else None
 

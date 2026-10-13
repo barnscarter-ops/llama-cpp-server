@@ -203,20 +203,24 @@ def cmd_registry(args) -> int:
 
 def cmd_cloud(args) -> int:
     from bench_v2 import cloud
-    from bench_v2.window import load_window
-    from urllib.parse import urlsplit
     from bench_v2.backend import GuardedBackend
     lane = Lane(_settings(args), _real_backend(args))
     w = lane.load_window()
-    u = urlsplit(args.endpoint)
-    if u.scheme != "https" or not u.hostname or u.hostname in ("localhost",) or u.hostname.startswith(("127.", "192.168.", "10.")):
-        raise BenchError("the cloud arm only talks to a public https endpoint")
-    cloud_backend = GuardedBackend(lane.raw_backend, {u.port or 443})  # own guard: the lane's local bench-port guard would block it
+    host, port = cloud.validate_endpoint(args.endpoint, str(w.approvals.get("cloud_endpoint_host", "")))
+    cloud_backend = GuardedBackend(lane.raw_backend, {port})  # own guard: the lane's local bench-port guard would block it
     cap = float(w.approvals.get("cloud_spend_cap_usd", 0) or 0)
     items = builder.load_frozen("slow_reasoner", Path(args.frozen_dir) if args.frozen_dir else None, lane.snap, _external(args))
+    defer, why = lane.code_deferred()
     res = cloud.run_anchor(cloud_backend, lane.ledger, items, args.endpoint, args.model, args.key_env,
-                           args.price_in, args.price_out, cap, lane.run_id)
-    _print(res)
+                           args.price_in, args.price_out, cap, lane.run_id, allow_maverick=w.allows("cloud_allow_maverick_items"),
+                           defer_code=defer, raw_dir=str(Path(lane.run_dir) / "raw"))
+    _print({**res, "code_deferred": defer, "why": why})
+    return 0
+
+
+def cmd_score(args) -> int:
+    from bench_v2 import score
+    _print(score.score_dir(args))
     return 0
 
 
@@ -267,6 +271,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--qwen-queue", required=True, help="dir holding model_registry.py")
     sp.add_argument("--out", required=True)
     sp.set_defaults(fn=cmd_registry)
+    sp = sub.add_parser("score", help="run deferred model-generated code on Linux as an unprivileged user and finish the verdicts")
+    sp.add_argument("--raw-dir", required=True, help="runs/<run>/raw copied from the machine that produced it")
+    sp.add_argument("--source-ledger", required=True, help="the lane ledger file the raw outputs belong to")
+    sp.add_argument("--out-ledger", help="where scored records go (default: <ledger-dir>/<lane>.scored.jsonl)")
+    sp.add_argument("--run-as", default="nobody"), sp.add_argument("--sandbox-cmd", nargs="*", help="command prefix, e.g. docker run --rm -i --network=none IMAGE")
+    sp.add_argument("--lane", required=True, choices=["workbench", "r9700"])
+    sp.set_defaults(fn=cmd_score)
     sp = sub.add_parser("cloud", help="DeepSeek reference arm; needs a window with cloud_spend_cap_usd > 0")
     lane_args(sp)
     sp.add_argument("--endpoint", required=True), sp.add_argument("--model", required=True)

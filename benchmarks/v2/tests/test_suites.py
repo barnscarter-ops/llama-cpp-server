@@ -10,6 +10,7 @@ from bench_v2.errors import FrozenSuiteMismatch
 from bench_v2.suites import builder, generators, scoring
 
 SNAP = lane_fixture.SNAP
+RUNNER = lane_fixture.enable_code_runner()
 
 
 class GeneratorTests(unittest.TestCase):

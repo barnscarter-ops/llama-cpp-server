@@ -175,6 +175,16 @@ class _RealProc:
             return []
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: an API key must not travel to a host nobody approved."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, f"redirect to {newurl} refused", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 class SystemBackend:
     """Real subprocess/HTTP/GPU access. Never constructed by tests."""
 
@@ -230,7 +240,7 @@ class SystemBackend:
         timings: dict = {}
         finish = ""
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with _OPENER.open(req, timeout=timeout) as r:
                 for raw in r:
                     line = raw.decode("utf-8", "replace").strip()
                     if not line.startswith("data:"):

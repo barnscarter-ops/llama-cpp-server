@@ -84,54 +84,113 @@ def score_needle(text: str, spec: dict) -> tuple[bool, str]:
 
 
 MEM_LIMIT_BYTES = 2 * 1024 ** 3
+_RUNNER: dict = {"drop_user": None, "sandbox_cmd": None}
+WINDOWS_ENV_KEYS = ("SYSTEMROOT", "SYSTEMDRIVE", "PATH", "PATHEXT", "COMSPEC", "TEMP", "TMP", "WINDIR")
 
 
-def _limits() -> None:  # POSIX only; runs in the child before exec
-    import resource
-    resource.setrlimit(resource.RLIMIT_CPU, (CODE_TIMEOUT_S, CODE_TIMEOUT_S))
-    resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT_BYTES, MEM_LIMIT_BYTES))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (16 * 1024 ** 2, 16 * 1024 ** 2))
+def configure_runner(drop_user: str | None = None, sandbox_cmd: list[str] | None = None) -> None:
+    """How model-generated code is run: as an unprivileged user (needs root) and/or inside a sandbox command prefix."""
+    _RUNNER["drop_user"], _RUNNER["sandbox_cmd"] = drop_user, sandbox_cmd
+
+
+def can_execute() -> tuple[bool, str]:
+    """Whether this process may run model-generated code at all. Never as the person who owns the machine."""
+    if _RUNNER["sandbox_cmd"]:
+        return True, "sandbox command"
+    if os.name != "posix":
+        return False, "not POSIX: no way to drop privileges"
+    if _RUNNER["drop_user"]:
+        try:
+            import pwd
+            pwd.getpwnam(_RUNNER["drop_user"])
+        except KeyError:
+            return False, f"user {_RUNNER['drop_user']!r} does not exist"
+        if os.geteuid() != 0:
+            return False, f"cannot drop to {_RUNNER['drop_user']!r} without root"
+        return True, f"runs as {_RUNNER['drop_user']}"
+    return False, "no unprivileged user or sandbox configured"
+
+
+def child_env(tmp: str, windows: bool, environ=None) -> dict:
+    """Scrubbed environment for the child. Windows Python will not start without SYSTEMROOT and friends."""
+    environ = os.environ if environ is None else environ
+    if windows:
+        env = {k: environ[k] for k in WINDOWS_ENV_KEYS if k in environ}
+    else:
+        env = {"PATH": environ.get("PATH", ""), "HOME": tmp}
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _limits(uid_gid: tuple[int, int] | None) -> "callable":
+    def run() -> None:  # POSIX only; runs in the child before exec
+        import resource
+        resource.setrlimit(resource.RLIMIT_CPU, (CODE_TIMEOUT_S, CODE_TIMEOUT_S))
+        resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT_BYTES, MEM_LIMIT_BYTES))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (16 * 1024 ** 2, 16 * 1024 ** 2))
+        if uid_gid:
+            os.setgroups([])
+            os.setgid(uid_gid[1])
+            os.setuid(uid_gid[0])
+    return run
 
 
 def score_python(text: str, spec: dict) -> tuple[bool, str]:
     """Run the model's code plus tests in a child interpreter: own process group, CPU/memory/file-size limits,
-    scrubbed environment, temp cwd, hard timeout that kills the whole group.
+    scrubbed environment, temp cwd, hard timeout that kills the whole group. Refuses unless `can_execute()`:
+    the child runs as an unprivileged user or inside the configured sandbox command, never as the machine's owner.
 
-    This is damage limiting, not an OS sandbox: the code can still reach the filesystem and network as this
-    user. Run the quality stage as an unprivileged user (or a container) on machines that matter."""
+    Still not a full OS sandbox: filesystem and network are reachable as that user unless the sandbox command
+    (for example a throwaway container with --network=none) removes them."""
+    ok_run, why_not = can_execute()
+    if not ok_run:
+        raise RuntimeError(f"refusing to execute model-generated code: {why_not}")
     code = extract_code(text)
     program = code + "\n\n" + spec["tests"] + "\n"
+    posix = os.name == "posix"
+    sandbox = _RUNNER["sandbox_cmd"]
+    uid_gid = None
+    if posix and _RUNNER["drop_user"] and not sandbox:
+        import pwd
+        pw = pwd.getpwnam(_RUNNER["drop_user"])
+        uid_gid = (pw.pw_uid, pw.pw_gid)
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "case.py")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(program)
-        posix = os.name == "posix"
-        env = {"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8", "HOME": tmp}
-        proc = subprocess.Popen([sys.executable, "-I", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                cwd=tmp, env=env, start_new_session=posix, preexec_fn=_limits if posix else None)
+        if uid_gid:
+            os.chmod(tmp, 0o755)
+            os.chmod(path, 0o644)
+        env = child_env(tmp, os.name == "nt")
+        if sandbox:
+            argv, stdin_data = [*sandbox, "python3", "-I", "-"], program
+        else:
+            argv, stdin_data = [sys.executable, "-I", path], None
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_data is not None else None, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, cwd=tmp, env=env, start_new_session=posix,
+                                preexec_fn=_limits(uid_gid) if (posix and not sandbox) else None)
         try:
-            out, err = proc.communicate(timeout=CODE_TIMEOUT_S)
+            out, err = proc.communicate(stdin_data, timeout=CODE_TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            if posix:
-                import signal
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:
-                proc.kill()
+            _kill_group(proc, posix)
             proc.communicate()
             return False, "timeout"
-        if posix:  # leftovers from a finished child (forked helpers)
-            import signal
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+        _kill_group(proc, posix, quiet=True)  # leftovers from a finished child (forked helpers)
         p = subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
     if p.returncode == 0:
         return True, "tests passed"
     return False, (p.stderr.strip().splitlines() or ["failed"])[-1][:160]
+
+
+def _kill_group(proc, posix: bool, quiet: bool = False) -> None:
+    if posix:
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    elif not quiet:
+        proc.kill()
 
 
 # -- IFEval-style programmatic constraints --

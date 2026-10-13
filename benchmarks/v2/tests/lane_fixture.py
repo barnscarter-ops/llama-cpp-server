@@ -69,3 +69,13 @@ def make_env(lane_name: str = "workbench", approvals: dict | None = None, window
 
 def event_kinds(lane: Lane) -> list[str]:
     return [r.get("kind") or r.get("phase") for r in lane.ledger.records()]
+
+
+def enable_code_runner() -> str:
+    """Let tests run model-generated code the way production would: as `nobody` when root, else a stand-in sandbox prefix."""
+    from bench_v2.suites import scoring
+    scoring.configure_runner(drop_user="nobody")
+    if scoring.can_execute()[0]:
+        return "nobody"
+    scoring.configure_runner(sandbox_cmd=["env"])
+    return "sandbox"
