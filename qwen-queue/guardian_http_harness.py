@@ -136,6 +136,7 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         app.router.add_get("/__guardian/health", m.guardian_health)
         app.router.add_get("/__guardian/seats", m.guardian_seats)
         app.router.add_get("/__guardian/models", m.guardian_models)
+        app.router.add_get("/__guardian/queues", m.guardian_queues)
         app.router.add_post("/__guardian/jobs", m.queue_submit)
         app.router.add_get("/__guardian/jobs/{job_id}", m.queue_status)
         app.router.add_route("*", "/{tail:.*}", m.proxy_handler)
