@@ -1,0 +1,75 @@
+{
+ "external": {},
+ "guard_slice_sha256": "71788f6e47e98fbd06da87c6b73249d8b6d05844d94ac87f6e05b72c6ca8e5b6",
+ "roles": {
+  "fast_executor": {
+   "categories": {
+    "clerk": 50,
+    "code_easy": 40,
+    "code_fix": 45,
+    "hermes": 0,
+    "ifeval": 40,
+    "longctx": 20,
+    "maverick": 0,
+    "tool": 60
+   },
+   "hash": "b8820e18cf640ddcafac77df59f68c00682f2c73d71c0b9d212ce0809a9ef0fa",
+   "n": 255,
+   "shortfall": {
+    "hermes": {
+     "have": 0,
+     "reason": "external pool not provided",
+     "wanted": 30
+    },
+    "maverick": {
+     "have": 0,
+     "reason": "external pool not provided",
+     "wanted": 15
+    }
+   }
+  },
+  "slow_reasoner": {
+   "categories": {
+    "analysis": 35,
+    "code_fix": 35,
+    "code_hard": 40,
+    "ifeval": 30,
+    "longctx": 40,
+    "maverick": 0,
+    "reasoning": 60,
+    "tool": 40
+   },
+   "hash": "a2be3f1e75ee34fb02322dcb74b3a1cdc7c4828d3154b1f3efa561ff2574388b",
+   "n": 280,
+   "shortfall": {
+    "maverick": {
+     "have": 0,
+     "reason": "external pool not provided",
+     "wanted": 20
+    }
+   }
+  },
+  "worker_bee": {
+   "categories": {
+    "clerk": 45,
+    "code_easy": 60,
+    "hermes": 0,
+    "ifeval": 45,
+    "longctx": 40,
+    "reasoning": 20,
+    "tool": 60
+   },
+   "hash": "2761390be3413e4eff5345192a84d791e3ea3cbe18bf4fe603851acf4f7aac37",
+   "n": 270,
+   "shortfall": {
+    "hermes": {
+     "have": 0,
+     "reason": "external pool not provided",
+     "wanted": 30
+    }
+   }
+  }
+ },
+ "speed_set_hash": "7abae83bc8f5667eb9389c6b75d4ffbaa8e33fba1d4ad58b1ef6042ac2b79a72",
+ "tool_schemas_sha256": "6dc437a138333287dee574f9fc1f8ef12e957d4a243a8ca315f6810e0478c17b"
+}

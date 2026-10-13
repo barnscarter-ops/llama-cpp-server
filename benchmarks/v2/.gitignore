@@ -1,0 +1,5 @@
+__pycache__/
+runs/
+# the repo root ignores *.jsonl; these two directories are data we ship
+!frozen/*.jsonl
+!ledger/*.jsonl

@@ -1,0 +1,944 @@
+# file: aiwa_swap.py
+"""PR6: manager-owned AIWA swap via CT 210 scripts after WORKBOARD announce.
+
+Single rule (PLAN.md "Board-unfreeze / swap ownership"): while
+FLEET_SWAP_OWNER is false the Board console owns the SSH swap and
+POST /__guardian/swap answers 409 swap_board_owns_ssh. When true, the
+guardian announces on WORKBOARD.md (fail closed), SSHes the Proxmox host
+(.12, NOT Board's freeze-bug .230), classifies the script output, then
+polls AIWA /v1/models until the requested occupant is serving.
+
+A live Board console port (17890/17891) is a warn-only hint; it must
+never refuse a swap. In-process swap queue capacity is 1 (reject-second)
+— the job SQLite queue is not involved.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
+import model_slots
+from qwen_approvals import qwen_approval_enabled
+from fleet_router import SERVING_IDS, guardian_error, occupant_cache
+
+log = logging.getLogger("guardian")
+
+WORKBOARD_DEFAULT_PATH = r"C:\Workspace\Active\brain\WORKBOARD.md"
+WORKSTREAM = "690 GPU swap"          # Board WorkboardAnnounce.Workstream — do not rename
+SSH_KEY = r"C:\ProgramData\llama-guardian\ssh\id_ed25519_proxmox"
+SSH_KNOWN_HOSTS = r"C:\ProgramData\llama-guardian\ssh\known_hosts"
+SSH_HOST = "root@192.168.1.12"       # .12; Board's freeze bug was on .230
+CT = "210"
+SWAP_SCRIPTS = {"clerk": "swap-nemo-clerk.sh", "consult": "swap-qwen-consult.sh"}
+CONSOLE_PORTS = (17890, 17891)
+SWAP_POLL_S = 2.0
+SWAP_POLL_TIMEOUT_S = 360.0
+SWAP_ETA_TEXT = "~1 min"
+# How long a swap waits for in-flight R9700 work to finish before giving up (never kills it).
+SWAP_DRAIN_TIMEOUT_S = float(os.environ.get("GUARDIAN_SWAP_DRAIN_TIMEOUT_S", "900"))
+# Completions that ask for Qwen while clerk occupies are served on clerk.
+# Loading consult requires Carter (operator) or a frontier model (frontier).
+CONSULT_SWAP_GATES = frozenset({"operator", "frontier"})
+
+
+def swap_owner_enabled() -> bool:
+    return os.environ.get("FLEET_SWAP_OWNER", "false").strip().lower() in {
+        "true",
+        "1",
+        "yes",
+    }
+
+
+def workboard_path() -> str:
+    return os.environ.get("WORKBOARD_PATH", WORKBOARD_DEFAULT_PATH)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  In-process swap queue — capacity 1, reject-second.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SwapSlot:
+    """Boolean try-lock: the second concurrent swap is rejected, never queued."""
+
+    def __init__(self) -> None:
+        self.busy = False
+
+    def __enter__(self) -> bool:
+        if self.busy:
+            return False
+        self.busy = True
+        return True
+
+    def __exit__(self, *exc) -> None:
+        self.busy = False
+
+
+swap_slot = SwapSlot()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Console-port warn (hint only — must never refuse)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def console_port_open(port: int) -> bool:
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except OSError:
+        return False
+
+
+async def warn_if_console_up() -> None:
+    for port in CONSOLE_PORTS:
+        if await console_port_open(port):
+            log.warning(
+                f"Board console port 127.0.0.1:{port} is up during a manager-owned "
+                f"swap — hint only; confirm Board SSH (SwapInvoker) is gone."
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  WORKBOARD announce — port of Board WorkboardAnnounce (same row shape).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _format_pair(frm: str, to: str) -> str:
+    return f"{frm}→{to}"
+
+
+def build_row(frm: str, to: str, now: datetime) -> str:
+    stamp = now.strftime("%Y-%m-%d %H:%M")
+    return (
+        f"| {WORKSTREAM} | Local LLM Board | CT 210 `/opt/llama` | "
+        f"**ANNOUNCE** {_format_pair(frm, to)} (ETA {SWAP_ETA_TEXT}) {stamp} |"
+    )
+
+
+def _is_separator(line: str) -> bool:
+    return line.startswith("|") and "---" in line
+
+
+def _first_cell(line: str) -> str:
+    parts = line.split("|")
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def upsert_row(text: str, frm: str, to: str, now: datetime) -> str:
+    """Upsert the WORKSTREAM row into the workboard table (Board-compatible)."""
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.replace("\r\n", "\n").split("\n")
+    row = build_row(frm, to, now)
+    header = next(
+        (i for i, l in enumerate(lines) if l.startswith("|") and "workstream" in l.lower()),
+        -1,
+    )
+    if header < 0 or header + 1 >= len(lines) or not _is_separator(lines[header + 1]):
+        if lines and lines[-1]:
+            lines.append("")
+        lines.append("| Workstream | Owner agent | Where | Status (updated) |")
+        lines.append("|---|---|---|---|")
+        lines.append(row)
+        return newline.join(lines)
+    first_data = header + 2
+    for i in range(first_data, len(lines)):
+        if not lines[i].startswith("|"):
+            break
+        if _first_cell(lines[i]).lower() == WORKSTREAM.lower():
+            lines[i] = row
+            return newline.join(lines)
+    lines.insert(first_data, row)
+    return newline.join(lines)
+
+
+def announce_workboard(path: str, to: str) -> bool:
+    """Fail closed: missing file or failed write → False, caller must not swap."""
+    p = Path(path)
+    if not p.is_file():
+        return False
+    try:
+        text = p.read_text(encoding="utf-8")
+        frm = "consult" if to == "clerk" else "clerk"
+        p.write_text(upsert_row(text, frm, to, datetime.now()), encoding="utf-8")
+        return True
+    except OSError as exc:
+        log.warning(f"WORKBOARD announce failed: {exc}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SSH + classification (mocked in tests; never live-swapped from a session)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def run_swap_ssh(to: str) -> tuple[int, str]:
+    """SSH to the Proxmox host and run the CT 210 swap script. Returns (rc, combined)."""
+    remote = f"lxc-attach -n {CT} -- /opt/llama/{SWAP_SCRIPTS[to]}"
+    # Session-0 / PM2 stdin is not a TTY. Without BatchMode, OpenSSH waits forever
+    # on host-key or askpass prompts and the swap never enters CT 210.
+    proc = await asyncio.create_subprocess_exec(
+        "ssh",
+        "-i", SSH_KEY,
+        "-T",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=15",
+        "-o", f"UserKnownHostsFile={SSH_KNOWN_HOSTS}",
+        SSH_HOST,
+        remote,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    return proc.returncode or 0, (out or b"").decode(errors="replace")
+
+
+def classify_ssh(exit_code: int, combined: str) -> str | None:
+    """Map (rc, combined stdout/stderr) → error code, or None on success.
+
+    Order matters: the CT 210 script's flock guard prints
+    "swap in progress" + the lock path when it loses the mutex.
+    """
+    text = combined.lower()
+    if exit_code != 0 and "swap in progress" in text and "lock" in text:
+        return "aiwa_busy"
+    if "no such file" in text or "not executable" in text:
+        return "swap_scripts_missing"
+    if exit_code != 0 and any(
+        marker in text
+        for marker in (
+            "connection refused",
+            "connection timed out",
+            "permission denied",
+            "auth",
+            "host unreachable",
+            "lxc-attach:",
+            "could not resolve hostname",
+        )
+    ):
+        return "swap_ssh_failed"
+    if exit_code != 0:
+        return "swap_ssh_failed"
+    return None
+
+
+async def wait_for_occupant(client, to: str, timeout: float = SWAP_POLL_TIMEOUT_S) -> bool:
+    """Poll AIWA /v1/models (fleet_router occupant probe) until `to` is serving."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        occupant, _model_id, _reachable = await occupant_cache.get(client)
+        if occupant == to:
+            return True
+        await asyncio.sleep(SWAP_POLL_S)
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Swap handler body (auth is enforced by the guardian route wrapper)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def perform_swap(to: str, client, gate: str | None = None) -> object:
+    """Run one swap. Returns an aiohttp web.Response (guardian error shape)."""
+    if to not in SWAP_SCRIPTS:
+        return guardian_error(
+            f"'to' must be one of {sorted(SWAP_SCRIPTS)}, got '{to}'.",
+            "invalid_swap_target",
+            400,
+        )
+
+    if to == "consult" and qwen_approval_enabled():
+        # Qwen loads only inside an approved session; a string gate no longer authorizes it.
+        return guardian_error(
+            "GUARDIAN_QWEN_APPROVAL is on: Qwen loads only through an approved task, not a swap request.",
+            "consult_approval_required",
+            403,
+        )
+
+    if to == "consult":
+        approved = (gate or "").strip().lower()
+        if approved not in CONSULT_SWAP_GATES:
+            return guardian_error(
+                "Consult swap is gated: Carter (gate=operator) or a frontier "
+                "model (gate=frontier) must approve. Completions that ask for "
+                "Qwen while clerk occupies are served on clerk.",
+                "consult_gate_required",
+                403,
+            )
+
+    if not swap_owner_enabled():
+        return guardian_error(
+            "FLEET_SWAP_OWNER is false: the Board console owns the AIWA SSH swap.",
+            "swap_board_owns_ssh",
+            409,
+        )
+
+    await warn_if_console_up()
+
+    if not swap_slot.__enter__():
+        return guardian_error(
+            "Another swap is already in flight.", "aiwa_busy", 409
+        )
+    try:
+        async with _host_exclusive():
+            return await _swap_locked(to, client)
+    except model_slots.DrainTimeout:
+        # Only the drain wait: an SSH or poll timeout inside the swap must not be reported as this.
+        return guardian_error(
+            "In-flight AIWA work did not finish in time; swap not started.", "aiwa_busy", 409
+        )
+    finally:
+        swap_slot.__exit__()
+
+
+async def swap_while_exclusive(to: str, client) -> object:
+    """Swap for a caller that already holds the R9700 exclusively (the approved-Qwen session)."""
+    if to not in SWAP_SCRIPTS:
+        return guardian_error(f"'to' must be one of {sorted(SWAP_SCRIPTS)}, got '{to}'.", "invalid_swap_target", 400)
+    if not swap_owner_enabled():
+        return guardian_error(
+            "FLEET_SWAP_OWNER is false: the Board console owns the AIWA SSH swap.", "swap_board_owns_ssh", 409
+        )
+    await warn_if_console_up()
+    if not swap_slot.__enter__():
+        return guardian_error("Another swap is already in flight.", "aiwa_busy", 409)
+    try:
+        return await _swap_locked(to, client)
+    finally:
+        swap_slot.__exit__()
+
+
+def _host_exclusive():
+    """Hold the whole R9700 for the swap so no completion lands on a half-loaded model."""
+    if not model_slots.slots_active():
+        return model_slots.no_slot()
+    return model_slots.get_slots().exclusive("r9700", timeout=SWAP_DRAIN_TIMEOUT_S)
+
+
+async def _swap_locked(to: str, client) -> object:
+    path = workboard_path()
+    if not announce_workboard(path, to):
+        return guardian_error(
+            f"WORKBOARD missing or unwritable at {path}; refusing to swap.",
+            "workboard_missing",
+            503,
+        )
+
+    exit_code, combined = await run_swap_ssh(to)
+    code = classify_ssh(exit_code, combined)
+    if code == "aiwa_busy":
+        return guardian_error(
+            f"CT 210 swap mutex is held: {combined.strip()[:200]}",
+            "aiwa_busy",
+            409,
+        )
+    if code == "swap_scripts_missing":
+        return guardian_error(
+            f"Swap script missing on CT 210: {combined.strip()[:200]}",
+            "swap_scripts_missing",
+            502,
+        )
+    if code == "swap_ssh_failed":
+        return guardian_error(
+            f"SSH swap to {SSH_HOST} failed: {combined.strip()[:200]}",
+            "swap_ssh_failed",
+            502,
+        )
+
+    if not await wait_for_occupant(client, to):
+        return guardian_error(
+            f"AIWA did not serve {SERVING_IDS[to]} within {SWAP_POLL_TIMEOUT_S:.0f}s.",
+            "aiwa_unreachable",
+            502,
+        )
+    from aiohttp import web
+    return web.json_response(
+        {"status": "ok", "occupant": to, "model_id": SERVING_IDS[to]}
+    )
+
+# file: candidates.py
+"""Candidate filter: which models a job may be offered. Security-critical.
+
+Pure function over registry facts and readiness. Data must never be offered to
+a model whose egress is wider than the job's clearance, whatever its readiness,
+cost or quality. Anything unclear fails closed to the narrowest class.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Sequence
+
+from model_registry import EGRESS_ORDER, UNAVAILABLE, ModelSpec, Readiness, egress_rank
+
+NARROWEST = EGRESS_ORDER[0]
+# Chief's route policy calls "stays on this PC" `none`; Guardian calls it `pc`.
+CLEARANCE_ALIASES = {"none": "pc"}
+NO_CANDIDATES = "no_candidates"
+OK = "ok"
+
+
+@dataclass(frozen=True)
+class TaskLimits:
+    input_tokens: int = 0
+    max_output_tokens: int = 1024
+
+    @property
+    def context_needed(self) -> int:
+        return self.input_tokens + self.max_output_tokens
+
+
+@dataclass(frozen=True)
+class Candidate:
+    model_id: str
+    egress: str
+    readiness: Readiness
+    wake_seconds: float
+    cost_estimate_usd: float
+    quality_tier: int
+    needs_approval: bool
+    context_tokens: int
+
+    def as_api(self) -> dict[str, Any]:
+        return {
+            "id": self.model_id, "egress": self.egress, "readiness": self.readiness.as_api(),
+            "wake_seconds": self.wake_seconds, "cost_estimate_usd": self.cost_estimate_usd,
+            "quality_tier": self.quality_tier, "needs_approval": self.needs_approval,
+            "context_tokens": self.context_tokens,
+        }
+
+
+@dataclass(frozen=True)
+class CandidateResult:
+    status: str
+    clearance: str
+    cost_ceiling_usd: float
+    candidates: tuple[Candidate, ...] = ()
+    excluded: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    clearance_note: str | None = None
+
+    def ids(self) -> list[str]:
+        return [c.model_id for c in self.candidates]
+
+    def as_api(self) -> dict[str, Any]:
+        return {
+            "status": self.status, "clearance": self.clearance,
+            "cost_ceiling_usd": self.cost_ceiling_usd,
+            "candidates": [c.as_api() for c in self.candidates],
+            "excluded": [{"id": m, "reason": r} for m, r in self.excluded],
+            "clearance_note": self.clearance_note,
+        }
+
+
+def normalize_clearance(clearance: Any) -> tuple[str, str | None]:
+    """Returns (effective clearance, note). Missing or unrecognized falls to the narrowest class."""
+    if clearance is None:
+        return NARROWEST, "clearance absent; defaulted to narrowest"
+    if isinstance(clearance, str):
+        word = clearance.strip().lower()
+        word = CLEARANCE_ALIASES.get(word, word)
+        if word in EGRESS_ORDER:
+            return word, None
+    return NARROWEST, f"clearance {clearance!r} not recognized; defaulted to narrowest"
+
+
+def normalize_ceiling(ceiling: Any) -> float:
+    """No ceiling means zero: a paid model is only offered when someone states what it may cost."""
+    if isinstance(ceiling, bool) or not isinstance(ceiling, (int, float)):
+        return 0.0
+    value = float(ceiling)
+    return value if value > 0 else 0.0  # also maps NaN to 0
+
+
+def estimate_cost_usd(spec: ModelSpec, limits: TaskLimits) -> float:
+    """Worst case: every allowed output token is generated."""
+    return round(
+        limits.input_tokens / 1000 * spec.cost_per_1k_in
+        + limits.max_output_tokens / 1000 * spec.cost_per_1k_out,
+        8,
+    )
+
+
+def build_candidates(
+    registry_state: Sequence[tuple[ModelSpec, Readiness]],
+    clearance: Any,
+    cost_ceiling: Any,
+    task_limits: TaskLimits | None = None,
+) -> CandidateResult:
+    limits = task_limits or TaskLimits()
+    effective, note = normalize_clearance(clearance)
+    ceiling = normalize_ceiling(cost_ceiling)
+    allowed_rank = egress_rank(effective)
+    kept: list[Candidate] = []
+    excluded: list[tuple[str, str]] = []
+    for spec, readiness in registry_state:
+        # Egress first and unconditionally: nothing below can re-admit a too-wide model.
+        if egress_rank(spec.egress) > allowed_rank:
+            excluded.append((spec.id, "egress_exceeds_clearance"))
+            continue
+        if readiness.state == UNAVAILABLE:
+            excluded.append((spec.id, f"unavailable:{readiness.reason or 'unknown'}"))
+            continue
+        if limits.context_needed > spec.context_tokens:
+            excluded.append((spec.id, "context_too_small"))
+            continue
+        cost = estimate_cost_usd(spec, limits)
+        if cost > ceiling:
+            excluded.append((spec.id, "cost_exceeds_ceiling"))
+            continue
+        kept.append(
+            Candidate(
+                model_id=spec.id, egress=spec.egress, readiness=readiness,
+                wake_seconds=readiness.seconds or 0.0, cost_estimate_usd=cost,
+                quality_tier=spec.quality_tier, needs_approval=spec.needs_approval,
+                context_tokens=spec.context_tokens,
+            )
+        )
+    return CandidateResult(
+        status=OK if kept else NO_CANDIDATES,
+        clearance=effective,
+        cost_ceiling_usd=ceiling,
+        candidates=tuple(kept),
+        excluded=tuple(excluded),
+        clearance_note=note,
+    )
+
+# file: cloud_backend.py
+"""Cloud model backend: Guardian holds the provider key (modeled on Chief's chief-deepseek-relay.ts).
+
+Direct provider only. The key is attached server-side and never returned or logged.
+Output tokens are clamped, calls are rate-limited per window, every call reserves its
+worst-case cost against a per-model UTC-day cap (then settles to actual usage), and
+concurrency honors the registry's max_concurrent. Behind GUARDIAN_CLOUD (default off).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import os
+import re
+import sqlite3
+import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
+
+from jev_client import KeyLoader
+from jev_secret import GsmAccessor, JevCredentialUnavailable, gsm_key_loader
+from jev_spend import utc_day
+from model_registry import CloudState, ModelRegistry, ModelSpec, cloud_flag_enabled
+
+DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
+DEFAULT_DAILY_CAP_USD = 5.0
+DEFAULT_MAX_OUTPUT_TOKENS = 8192
+DEFAULT_MAX_REQUEST_BYTES = 256 * 1024
+DEFAULT_CALLS_PER_WINDOW = 200
+DEFAULT_WINDOW_S = 3600.0
+DEFAULT_TIMEOUT_S = 120.0
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+# (url, headers, body, timeout_s) -> (status, response bytes). Raises on connection trouble.
+CloudTransport = Callable[[str, dict, bytes, float], Awaitable[tuple[int, bytes]]]
+
+
+class CloudRefused(Exception):
+    """A call Guardian refused or the provider failed. `code` is stable; the message never carries provider text."""
+
+    def __init__(self, code: str, message: str, status: int = 502) -> None:
+        super().__init__(message)
+        self.code, self.message, self.status = code, message, status
+
+
+class CloudNotSent(Exception):
+    """A transport raises this only when it is certain no request bytes reached the provider (e.g. connect failed)."""
+
+
+# Rejections the provider issues before doing any work. 408/409/425/429 and every 5xx are deliberately absent: they can follow billed work.
+NOT_BILLED_STATUSES = frozenset({400, 401, 403, 404, 405, 413, 415, 422})
+
+
+@dataclass(frozen=True)
+class CloudResult:
+    body: dict
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    cost_microusd: int
+    reserved_microusd: int
+
+
+async def aiohttp_cloud_transport(url: str, headers: dict, body: bytes, timeout_s: float) -> tuple[int, bytes]:
+    import aiohttp
+
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, headers=headers, data=body, allow_redirects=False) as response:
+                data = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                return response.status, data
+    except aiohttp.ClientConnectorError:
+        raise CloudNotSent from None
+
+
+def _float_env(name: str, default: float, *, positive: bool = True) -> float:
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    if math.isnan(value) or math.isinf(value) or (positive and value <= 0):
+        return default
+    return value
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+class CloudSpendLedger:
+    """Per-model UTC-day spend in micro-USD. Reserve worst case before a call, settle to actual after."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cloud_daily_spend ("
+            "model_id TEXT NOT NULL, utc_day TEXT NOT NULL, spent_microusd INTEGER NOT NULL, "
+            "calls INTEGER NOT NULL, PRIMARY KEY (model_id, utc_day))"
+        )
+
+    @classmethod
+    def open(cls, db_path: str) -> "CloudSpendLedger":
+        # Own autocommit connection so BEGIN IMMEDIATE cannot collide with another store's transaction.
+        conn = sqlite3.connect(db_path, isolation_level=None, timeout=2.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return cls(conn)
+
+    def spent(self, model_id: str, now_s: float) -> int:
+        row = self._conn.execute(
+            "SELECT spent_microusd FROM cloud_daily_spend WHERE model_id = ? AND utc_day = ?", (model_id, utc_day(now_s))
+        ).fetchone()
+        return row[0] if row else 0
+
+    def reserve(self, model_id: str, amount: int, cap: int, now_s: float) -> bool:
+        day = utc_day(now_s)
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT spent_microusd FROM cloud_daily_spend WHERE model_id = ? AND utc_day = ?", (model_id, day)
+            ).fetchone()
+            if (row[0] if row else 0) + amount > cap:
+                self._conn.execute("ROLLBACK")
+                return False
+            self._conn.execute(
+                "INSERT INTO cloud_daily_spend (model_id, utc_day, spent_microusd, calls) VALUES (?, ?, ?, 1) "
+                "ON CONFLICT(model_id, utc_day) DO UPDATE SET spent_microusd = spent_microusd + excluded.spent_microusd, "
+                "calls = calls + 1",
+                (model_id, day, amount),
+            )
+            self._conn.execute("COMMIT")
+            return True
+        except sqlite3.Error:
+            try:
+                self._conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            return False
+
+    def adjust(self, model_id: str, delta: int, now_s: float) -> None:
+        """Settle a reservation (negative delta gives back unused headroom). Best effort: over-counting is the safe side."""
+        try:
+            self._conn.execute(
+                "UPDATE cloud_daily_spend SET
+
+﻿# llama-cpp-server
+
+Local model serving stack for CMB-WorkBench (X870E / 9900X / 4060 Ti 16 GB).
+
+Canonical path: D:\Workspace\Infrastructure\llama-cpp-server
+(C:\Workspace is a junction to D:\Workspace.)
+
+## Start here
+
+1. AGENTS.md -- repo rules and session-close contract
+2. docs/NEXT-SESSION.md -- live handoff (short)
+3. memory/journal.md -- chronological log
+4. qwen-queue/README.md -- guardian / queue / PM2 names and ports
+
+Durable facts live in D:\Workspace\Active\brain, not extra files in this repo.
+
+## Layout notes
+
+- Runtime binaries PM2 actually runs: sibling llama-cpp-server-cuda-b10488 (do not treat repo-root llama-server.exe as live).
+- Vulkan bins: sibling llama-cpp-server-vulkan (kept; used by bench scripts and current PM2 log paths).
+- Nested product r9700-monitor/ is a separate git repo nested on disk. Do not git add it into this tree.
+
+Do not create files or folders at the Workspace root. Do not git add -A.
+
+# Local-model queue
+
+Everything for the Hermes-decided local-model coding queue, consolidated 2026-07-22.
+
+## Contents
+
+| File | Role |
+|------|------|
+| `llama-guardian.py` | Gateway on port 8080. Proxies to llama-server (8081), owns llama lifecycle, hosts the job queue API (`/__guardian/jobs`). Runs under PM2 as `llama-guardian` (path registered in `ecosystem.config.cjs` and the PM2 dump at `C:\ProgramData\pm2`). |
+| `guardian_queue.py` | Queue logic imported by the guardian. State persists in `..\logs\guardian-queue.sqlite3` (path derived from `__file__/../../logs` — keep this folder one level below the repo root). |
+| `test_guardian_queue.py` | Queue tests (`python -m pytest test_guardian_queue.py`). |
+| `qwen-submit.ps1` | Client: submits a task (+ context files) to the queue. |
+| `guardian_workers.py` | Guardian-owned work-class policy and Pi runner. Disabled unless `LOCAL_WORKER_ENABLED=true`. |
+| `local-worker-mcp.py` | Stdio MCP adapter for Grok, Hermes, Codex, Claude, Pi, and DeepSeek Harness. |
+| `qwen-context.ps1` | Selects `-ContextFiles` for a task by querying code-review-graph. |
+| `code-review-graph/` | Clone of [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) with its own `.venv` (editable install). Git-ignored by the parent repo. |
+
+## Workflow
+
+```powershell
+# once per repo (and `update` after big changes)
+& .\code-review-graph\.venv\Scripts\code-review-graph.exe build --repo <repo>
+
+# per task
+$ctx = & .\qwen-context.ps1 -Query "keyword1","keyword2" -Repo <repo>
+& .\qwen-submit.ps1 -Task "<task>" -Source claude -ContextFiles $ctx -Wait
+```
+
+Graph data lives in `<repo>\.code-review-graph\` (self-git-ignored by the tool).
+Search is FTS keyword-based — use code-ish terms ("stale", "guardian_queue"),
+not sentences. Hermes-Supervisor graph is built; build others as needed.
+
+## Guardian-managed local workers
+
+### Versioned policy descriptor (local source; not deployed by this change)
+
+`GET /__guardian/workers/descriptor/v1/{work_class}` adds a separate read-only
+`GuardianWorkerDescriptor.v1` response for `mechanical_execution` and
+`tool_execution`, under the existing queue authorization check. Existing
+`GET/POST /__guardian/workers` bodies and behavior remain unchanged. This
+handler never probes, wakes, refreshes a cache, submits a job or reserves a seat.
+
+`policyRevision` is SHA256 of sorted-key compact ASCII JSON for the included
+`GuardianWorkerPolicy.v1` **non-secret projection**. It binds work class,
+configured provider/model alias, fixed Pi runner, documented paused status,
+egress and unknown capability evidence. It is not a digest of private skill
+contents, executable configuration or an authorization receipt. No endpoint,
+credential, executable path or skill path is returned. Changing supported
+runner/route semantics requires deliberate source contract revision; a new
+operator flag cannot clear the descriptor's Pi pause.
+
+`observedAt` records descriptor generation. AIWA readiness retains the existing
+occupant cache's original observation time without fetching; Workbench's cached
+health boolean has no measured timestamp or exact served-model identity, so
+those fields are null. Cached reachability is diagnostic and is never capacity
+or a reservation. Capability evidence, entitlement, transport and capacity
+remain unknown/unavailable; execution and reservation flags are false even if
+the existing worker enablement flag is true. The `origin` label and policy hash
+authenticate nobody. The Core normalizer preserves these limits and V1 cannot
+produce execution permission or even a complete policy-ready observation.
+
+Offline verification: `python -B -m unittest test_guardian_worker_descriptor
+test_guardian_workers` from this directory. Handler tests compile only the
+actual handler definitions with inert dependencies, avoiding daemon startup
+and durable queue access. Core's composition test runs this actual pure Python
+producer before strict TypeScript normalization. No live service observation
+or inference is implied by these tests.
+
+The Core composition test requires Python and this source checkout at the
+workspace's sibling `Infrastructure/llama-cpp-server` path. It intentionally
+fails if the actual producer is absent; a copied JSON fixture is not a
+substitute for cross-language composition.
+
+`/__guardian/workers` is the local-subagent admission API. A caller requests a
+validated `work_class` (`mechanical_execution` or `tool_execution` for local
+workers), bounded `preference` and `quality_floor`, a task, and an existing
+workspace under `LOCAL_WORKER_ROOT` (default `D:\Workspace`). Guardian owns the
+route and fixed Pi runner. Planning/deep-analysis requests are gate-aware and
+return typed gate/unavailable responses; frontier quality returns
+`requires_cloud`. The caller never supplies a profile, endpoint, model alias,
+or runner command.
+
+The feature defaults **off** (`LOCAL_WORKER_ENABLED=false`). Watched smoke
+passed 2026-08-28 and the flag was rolled back. Starting a worker may wake the
+Workbench model; do not enable it unattended.
+
+Worker lifecycle safety: queued cancellation remains a cheap terminal
+`cancelled` transition. A running worker is cancelled by terminating its full
+process tree with the host platform's process primitive, then recording a
+terminal `cancelled` row and bounded lifecycle evidence (work class, route,
+parent run, workspace, PID, timestamps, and cancel reason). A guardian restart
+never replays a running write-capable worker; it marks that row failed with an
+explicit-resubmission error. Ordinary completion jobs retain restart requeue
+recovery. Worker audit records contain metadata only—never prompts, secrets, or
+unbounded model output.
+
+For an MCP-capable parent runtime, configure a stdio server like:
+
+```text
+python D:\Workspace\Infrastructure\llama-cpp-server\qwen-queue\local-worker-mcp.py --source grok
+```
+
+Use one instance per harness, changing only `--source` (`grok`, `hermes`, `pi`,
+`deepseek-harness`, `codex`, or `claude`). The exposed tools submit, poll, and
+cancel durable worker jobs.
+
+### Grok and Hermes configuration (live 2026-08-28)
+
+Main models unchanged. See `LOCAL-WORKER-MANAGER.md` for the live fragments
+and the Session 4 preference table. DeepSeek native adapter:
+`qwen-queue/harness/deepseek-guardian-provider.mjs`. Pi native path skipped.
+
+### Codex and Claude (MCP fallback; not live-installed)
+
+`--source codex` and `--source claude` are valid adapter launches. Native
+Codex/Claude subagents remain cloud unless a supported provider override is
+verified (none is). Fragments, bypass inventory (`:8081` / `.240`), and the
+propose-only enforcement decision: `qwen-queue/harness/ROLLOUT.md`.
+
+Parent contract: use `planning`/`deep_analysis` for architecture only with an
+explicit gate; use executor classes for bounded implementation. Poll or
+cancel by `job_id`. Accepted means queued, not complete; completion requires
+a terminal status and durable result.
+
+## Moved from `scripts\` (2026-07-22)
+
+The four queue files above previously lived in `scripts\`. Updated references:
+`ecosystem.config.cjs` (guardian script path), PM2 dump (re-registered + saved),
+and the qwen-submit path in `~\.claude\CLAUDE.md`.
+
+## Guardian dispatcher (in progress, all flags default off)
+
+Build plan: `guardian-dispatcher-PLAN.md` (project files). Each step is additive and behind a flag.
+
+- **Step 1 — model registry.** `model_registry.py` + `models.json` list every model Guardian could use (egress class, cost, context, quality tier, concurrency). `GET /__guardian/models` (loopback or bearer, like `/__guardian/seats`) returns the registry plus live readiness: `ready`, `wakeable(seconds)`, `needs_approval`, `unavailable(reason)`. Workbench readiness reads in-process state only and never calls llama-server on 8081, so reading it cannot wake the model. Override the file with `GUARDIAN_MODELS_FILE`. No flag: nothing else imports the registry yet.
+- **Step 2 — per-model slots (`GUARDIAN_MODEL_SLOTS=true`, default off).** `model_slots.py` gives each registry model a concurrency slot and a swap gate per host. Direct proxy calls and queued jobs both take the slot, including the R9700 path that had no lock. A swap (`aiwa_swap.perform_swap`) takes the whole R9700 exclusively: it waits for in-flight work to finish (`GUARDIAN_SWAP_DRAIN_TIMEOUT_S`, default 900, then 409 `aiwa_busy` without touching the running request) and blocks new R9700 work until the swap ends. Workbench keeps `generation_lock`; the slot is taken outside it.
+- **Step 3 — per-model queues (`GUARDIAN_PER_MODEL_QUEUES=true`, default off).** Jobs carry an additive `model_id` column (existing rows are backfilled at startup; the migration is idempotent). With the flag on there is one worker per local registry model, each claiming only its own model's jobs, so a long R9700 job no longer blocks a Workbench job. Durability, requeue-on-restart, idempotency keys, priority, cancel and the status endpoints are unchanged. `GET /__guardian/queues` (loopback or bearer) shows depth, running job and oldest wait per model. Cloud-model workers arrive with the cloud backend (step 8).
+- **Step 4 — candidate filter.** `candidates.py` `build_candidates(registry_state, clearance, cost_ceiling, task_limits)` is a pure function: it drops models whose egress is wider than the job's clearance (`pc` < `lan` < `internet`), unavailable models, models with too small a context, and models whose worst-case cost exceeds the ceiling. A missing or unrecognized clearance means `pc` (Chief's `none` is accepted as `pc`); a missing ceiling means 0 (so paid models are never offered unasked). `needs_approval` models stay in, flagged. Nothing calls it until step 6.
+- **Step 5 — Qwen only on approval (`GUARDIAN_QWEN_APPROVAL=true`, default off; implies the slot guard).** Nemotron is the resting model. Qwen loads only inside an approved session (`qwen_session.py`): hold the R9700 exclusively, drain the running Nemotron task (never killed; `GUARDIAN_SWAP_DRAIN_TIMEOUT_S`), consume the approval, load Qwen, run the task, then reload Nemotron on success, failure or cancel, and only then let queued Nemotron work resume. Approvals are rows in `qwen_approvals` (`pending|approved|denied|used|expired`, TTL `GUARDIAN_QWEN_APPROVAL_TTL_S`, default 1800 s): `GET /__guardian/approvals?status=pending`, `POST /__guardian/approvals/{id}/decide` with `{"decision":"approve|deny","decided_by":"..."}`. Deciding needs `Authorization: Bearer $GUARDIAN_QWEN_APPROVAL_TOKEN` even from loopback (a token separate from the queue token; unset = deciding disabled, 503), and an approval is bound to the task it was issued for (job idempotency key, `X-Guardian-Task-Id`, or a hash of the body) so another task cannot spend it (`403 approval_wrong_task`). An unapproved Qwen request or job gets `409 needs_approval` with the approval id (no more silent downgrade to Nemotron); pass the id back as `X-Guardian-Approval-Id` (direct) or `approval_id` (job). `gate=operator|frontier` and `POST /__guardian/swap {to: consult}` no longer authorize a swap. At startup a Guardian that finds Qwen loaded reloads Nemotron. If the Nemotron reload fails, `/__guardian/health` reports `nemotron_reload_failed` (+ `_since`, `_retries`) and a background loop retries every 60 s until it works; a second cancel during a reload cannot release the R9700 lock early. `CONSULT_IDLE_RESTORE_S` is untouched (its loop is skipped while the flag is on).
+- **Step 6 — task API (`GUARDIAN_TASK_API=true`, default off).** `POST /__guardian/tasks` takes `task_id`, `idempotency_key`, `summary`, `messages` or `prompt`, `clearance` (`pc|lan|internet`, default `pc`), `cost_ceiling_usd` (default 0), `quality_floor` (1-3), `priority`, and no model. Guardian reads every model's readiness, filters by clearance/cost/context (`candidates.py`), lets the selector (`RulesSelector`: ready local cheapest first, then ready cloud, then wakeable, approval-gated Qwen last) choose, re-checks the pick, and enqueues on that model's queue. One re-selection if the pick went down; then `422 selection_failed` with a reason. `GET /__guardian/tasks/{id}` returns status, the job result and an evidence object (`chosen_model`, `selector`, `candidates_offered`, `selector_answer`, `readiness_at_pick`, `readiness_at_dispatch`, `queue_wait_ms`, `fallback_used`, `served_model`). A Qwen pick becomes `awaiting_approval` and is enqueued when the approval is decided. Models Guardian cannot actually run are marked unavailable: R9700 models when `FLEET_ROUTER` is off, Qwen when `GUARDIAN_QWEN_APPROVAL` is off, and every cloud model until the cloud backend exists (step 8). `/v1/chat/completions` is unchanged. An approval records its scope (clearance and cost ceiling, returned as `approval_scope`); a task only spends an approval whose scope equals its own, else it fails `approval_scope_mismatch`. Input tokens are estimated pessimistically (2 bytes per token) from the real message text.
+- **Step 7 — Jev selects the model (`GUARDIAN_SELECTOR=jev`, default `rules`).** `jev_selector.py` plugs into the task API: candidates (already filtered for clearance and availability) go to Jev as `JevPickRequest`-style profiles plus a task summary (cut to 2000 chars; messages never leave). The answer must be one offered id; abstain, timeout (`GUARDIAN_JEV_TIMEOUT_S`, default 10), HTTP error, bad shape, cap reached or low confidence (`GUARDIAN_JEV_MIN_CONFIDENCE`, default 0) all end in `selection_failed` with a `jev_*` reason and no rules fallback. Spend: UTC-day reservation ledger `jev_daily_spend`, cap `GUARDIAN_JEV_DAILY_CAP_USD` (default 2.00). Key: `GUARDIAN_JEV_API_KEY` env override, else one Secret Manager version via gcloud (`GUARDIAN_JEV_SECRET_REF`, `GUARDIAN_JEV_SECRET_PRINCIPAL`); never logged. If the flag is on but no key source exists, tasks fail with `jev_reference_missing`. Jev is asked only when the task carries `summary_cleared_for_jev: true` (Chief sets it; default false); otherwise the task is routed by the rules selector (evidence `fallback_reason: jev_summary_not_cleared`, no alert) without a key load, spend or network call. Every summary also goes through `summary_redaction.py` (keys, bearer/basic strings, private key blocks, labelled secrets, URL credentials, phones, emails, IPs, long hex/base64) before it leaves, and a summary that is nothing but redactions is not sent. A spend ledger that cannot be opened or written is a `jev_ledger_unavailable` selection failure, not a 500.
+- **Step 8 — cloud dispatch and key custody (`GUARDIAN_CLOUD=true`, default off).** `cloud_backend.py` serves `deepseek-flash` (direct DeepSeek, no aggregator) with the key held only by Guardian: `GUARDIAN_DEEPSEEK_API_KEY`, else a Secret Manager version via `GUARDIAN_DEEPSEEK_API_KEY_SECRET_REF` + `..._SECRET_PRINCIPAL`. It clamps output tokens (`GUARDIAN_CLOUD_MAX_OUTPUT_TOKENS`, 8192), caps request size (256 KB), limits calls per window (`GUARDIAN_CLOUD_MAX_CALLS_PER_WINDOW` 200 per `GUARDIAN_CLOUD_WINDOW_S` 3600), honors `max_concurrent` (`GUARDIAN_CLOUD_MAX_CONCURRENT`, 2), and keeps a per-model UTC-day spend ledger (`GUARDIAN_CLOUD_DAILY_CAP_USD`, 5.00): the worst case is reserved before a call and settled to real usage after. With the flag on, the old `seat == cloud` 409 becomes routing: direct `/v1/chat/completions` (non-streaming; busy answers 429 `cloud_busy`), `/__guardian/jobs` (fleet router on) and the task API all reach it, and a model with less headroom than one full-length reply reads `unavailable(spend_cap)`. A queued cloud job with the flag off fails instead of reaching the local model. The reservation is refunded only for outcomes that were definitely not billed (key problems before the send, a connect failure, or a 400/401/403/404/405/413/415/422 rejection); a timeout, 5xx, 429, post-send transport error, 200 with a bad body, or a client disconnect mid-call keeps it.
+- **Step 10 — Jev-failure fallback (`GUARDIAN_JEV_FALLBACK=rules`, default off; needs `GUARDIAN_SELECTOR=jev`).** On any `jev_*` failure (abstain, timeout, error, bad answer, spend cap, missing key, low confidence) the rules selector picks from the same filtered candidates, so clearance and the cost ceiling still hold and a cloud model is reachable only for an `internet` job. The task's evidence shows `selector: rules`, `fallback_used: true` and `fallback_reason`. Each fallback also writes one durable `jev_fallback` event, read with `GET /__guardian/alerts?after=<id>`, for Chief to relay. Only the exact value `rules` turns it on. A task whose summary is not cleared for Jev (`summary_cleared_for_jev` false) goes to the rules pick quietly: evidence shows `fallback_reason: jev_summary_not_cleared`, Jev is not called, and no alert is raised (that is policy, not a Jev failure).
+- **Step 11 — Hermes is admission control only; bypass paths are counted.** `HermesDecider` may only answer admit (`queue_local`) or reject (`bypass`). `fallback_cloud` is no longer a valid answer (it named a destination) and returns 503 `hermes_decision_unavailable` on both the fleet-on and fleet-off paths; extra keys such as `model` or `seat` are dropped before anything reads them, and the task API never asks it. Every arrival writes one `dispatch_path` log line with running totals since start: `direct_named` (a `/v1/chat/completions` call that names a model), `direct_default` (no model), `queue_job` (`/__guardian/jobs`) and `task_api`, plus the caller's address and `User-Agent`. Observation only; no routing changed.
+
+# Guardian Local Worker Manager
+
+## Intent
+
+Local models are primarily **managed executor workers**, not default main-agent
+models. Parent harnesses request a named local-worker capability; guardian
+admits and records the job, chooses the configured runner/model policy, and
+returns the durable result. A parent never supplies a raw local endpoint,
+model alias, or Pi command.
+
+The existing OpenAI-compatible guardian proxy remains for compatibility. It is
+not, by itself, subagent admission control.
+
+## Staged implementation
+
+The first implementation lives in `qwen-queue/` and is disabled by default:
+
+| Component | Role |
+|---|---|
+| `POST /__guardian/workers` | Validate and queue a named worker request. |
+| Existing SQLite `guardian_jobs` | Priority/FIFO scheduling, idempotency, restart recovery, result persistence. |
+| `guardian_workers.py` | Work-class policy, workspace-root validation, and Pi subprocess runner. |
+| `local-worker-mcp.py` | Stdio MCP surface for parent harnesses. |
+
+The two initial local classes are `tool_execution` (the existing Qwen Pi
+executor) and `mechanical_execution` (bounded work on Nemotron). `planning` and
+`deep_analysis` remain operator/frontier-gated consult capabilities and never
+auto-swap. Frontier quality returns `requires_cloud`.
+
+## Control boundary
+
+Each request contains a harness source, parent run ID, validated work class,
+bounded preference and quality floor, task, workspace, priority, and timeout.
+The workspace must already exist below
+`LOCAL_WORKER_ROOT` (default `D:\Workspace`). The runner is always a fixed Pi
+command run from that workspace. It is write-capable by design, per Carter's
+direction.
+
+This is a scheduling and audit boundary, not a hostile-code sandbox: a
+write-capable Pi subprocess has the Windows permissions of its user. A later
+sandbox/worktree policy can strengthen isolation without changing the parent
+protocol.
+
+## Enablement and rollout
+
+Nothing is live until a watched, approved configuration change sets
+`LOCAL_WORKER_ENABLED=true` in the elevated guardian PM2 environment and
+performs the required delete-and-start cycle. Do not do that as part of source
+authoring or offline verification.
+
+Watched smoke passed 2026-08-28 (`qj_d52cb887f9ae49db9ef440d322595a9f`); the
+PM2 flag was rolled back to off. Grok and Hermes MCP instances are live in
+their harness configs (Session 3). DeepSeek Harness has a native
+`SubagentProvider` adapter in-repo (Session 5). **Pi native path is skipped**
+while Pi orchestrators are paused. Codex and Claude stay on the same MCP
+adapter (`--source codex` / `--source claude`). Their **native** subagents
+remain cloud unless a DeepSeek-style provider override is verified — none
+is, as of Session 6. Fragments and the `:8081` / `.240` inventory:
+`qwen-queue/harness/ROLLOUT.md`. Do not live-edit Codex or Claude configs
+from this workstream.
+
+## Preference table (Session 4, 2026-08-28)
+
+| Parent declaration | Guardian / parent action | Evidence |
+|---|---|---|
+| Bounded `tool_execution`, `quality_floor=standard`, `prefer_local` or `require_local` | Admit Workbench Pi runner | Attempt 2: job succeeded ~25s, `SMOKE.txt` correct, source=grok |
+| Bounded `mechanical_execution`, standard | Admit AIWA clerk (no swap) | Policy map + Session 4 fixture |
+| `planning` / `deep_analysis` without `gate` | `consult_gate_required` (409); no swap | Policy + Session 4 probe |
+| `planning` / `deep_analysis` with `gate=operator` or `frontier` | `consult_unavailable` until a watched consult; **never auto-swap** | `guardian_workers.py` |
+| `quality_floor=frontier` | `requires_cloud` (409) | Policy + Session 4 probe |
+| Unknown API, Swift/iOS, architecture, safety-critical, ambiguous | Keep cloud; do not submit local | MacBridge S2–S10 (GLM-5.3); local 27–30B failed as executors |
+
+Re-evaluate this table when: local jobs fail twice in a row on the same class, the Workbench or AIWA model changes, context limits change, or the guardian runner is switched off Pi.
+
+## Grok/Hermes MCP wiring (live 2026-08-28)
+
+Live files: `%USERPROFILE%\\.grok\\config.toml` and
+`%LOCALAPPDATA%\\hermes\\config.yaml`. Main models unchanged (Grok `grok-4.6`,
+Hermes `glm-5.3`). Python is the 3.12 install, matching other local MCP
+servers — not the `python` Store stub.
+
+Grok TOML:
+
+```toml
+[mcp_servers.guardian_local_worker]
+command = 'C:\Users\carte\AppData\Local\Programs\Python\Python312\python.exe'
+args = ['D:\Workspace\Infrastructure\llama-cpp-server\qwen-queue\local-worker-mcp.py', '--source', 'grok']
+```
+
+Hermes YAML:
+
+```yaml
+mcp_servers:
+  guardian_local_worker:
+    command: C:\Users\carte\AppData\Local\Programs\Python\Python312\python.exe
+    args:
+      - D:\Workspace\Infrastructure\llama-cpp-server\qwen-queue\local-worker-mcp.py
+      - --source
+      - hermes
+    enabled: true
+    timeout: 60
+```
+
+Parent contract: planning/deep-analysis classes are for architecture and
+require their operator/frontier gate; executor classes are for bounded
+implementation. Poll or cancel with the returned `job_id`. Accepted means
+queued, not complete; only a terminal status with a durable result is
+completion evidence. Escalate visibly on `requires_cloud`,
+`consult_gate_required`, `consult_unavailable`, or `local_workers_disabled`.
+Never pass model, profile, endpoint, runner, or executable.
+
+## Codex / Claude MCP fallback (Session 6, not live)
+
+Native Codex child agents and Claude Agent/Task runs stay on their cloud
+defaults (`gpt-5.6-terra`, `claude-fable-5`). Live MCP catalogs are `gws`
+(+ Codex `node_repl`) only. A 
