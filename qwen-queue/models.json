@@ -1,4 +1,5 @@
 {
+  "_comment": "Tier meaning: 1 clerk-grade (short, mechanical, well-specified), 2 strong local generalist (multi-step code and analysis), 3 frontier-grade (hard reasoning). Confirmed by Carter 2026-10-13. 'sources' says where each value came from; 'unmeasured' lists values nobody has measured yet. The loader ignores both keys.",
   "models": [
     {
       "id": "workbench-local",
@@ -9,11 +10,17 @@
       "cost_per_1k_in": 0,
       "cost_per_1k_out": 0,
       "context_tokens": 131072,
-      "quality_tier": 2,
+      "quality_tier": 1,
       "max_concurrent": 1,
       "readiness_source": "workbench_state",
       "needs_approval": false,
-      "wake_seconds": 45
+      "wake_seconds": 45,
+      "sources": {
+        "context_tokens": "ecosystem.config.cjs local-llm args: --ctx-size 131072 --parallel 1 (Qwen3.6-35B-A3B-UD-IQ3_XXS); repo copy edited 2026-08-26, live PM2 args not yet compared",
+        "quality_tier": "Carter confirmed 2026-10-13 (heavily quantized, known loop quirk)",
+        "max_concurrent": "Guardian rule: one task per local model"
+      },
+      "unmeasured": ["wake_seconds"]
     },
     {
       "id": "nemotron-r9700",
@@ -28,7 +35,13 @@
       "max_concurrent": 1,
       "readiness_source": "aiwa_occupant",
       "needs_approval": false,
-      "wake_seconds": 60
+      "wake_seconds": 60,
+      "sources": {
+        "context_tokens": "690-routing/llama-server.service: -c 131072 (server reports 4 slots sharing it); captured live 2026-08-22",
+        "quality_tier": "Carter confirmed 2026-10-13",
+        "max_concurrent": "Guardian rule: one task per local model, although the server exposes 4 slots"
+      },
+      "unmeasured": ["wake_seconds"]
     },
     {
       "id": "qwen27b-r9700",
@@ -43,7 +56,14 @@
       "max_concurrent": 1,
       "readiness_source": "aiwa_occupant",
       "needs_approval": true,
-      "wake_seconds": 60
+      "wake_seconds": 60,
+      "sources": {
+        "context_tokens": "690-routing/swap-qwen-consult.sh: -c 262144 (4 slots, unified KV)",
+        "quality_tier": "Carter confirmed 2026-10-13",
+        "wake_seconds": "Carter: swap is about a minute (not timed)",
+        "max_concurrent": "Guardian rule: one task per local model"
+      },
+      "unmeasured": ["wake_seconds"]
     },
     {
       "id": "deepseek-flash",
@@ -59,7 +79,12 @@
       "readiness_source": "cloud_state",
       "needs_approval": false,
       "wake_seconds": 0,
-      "key_env": "GUARDIAN_DEEPSEEK_API_KEY"
+      "key_env": "GUARDIAN_DEEPSEEK_API_KEY",
+      "sources": {
+        "quality_tier": "Carter confirmed 2026-10-13",
+        "max_concurrent": "Carter confirmed 2026-10-13 (two concurrent cloud calls)"
+      },
+      "unmeasured": ["context_tokens", "cost_per_1k_in", "cost_per_1k_out"]
     }
   ]
 }
