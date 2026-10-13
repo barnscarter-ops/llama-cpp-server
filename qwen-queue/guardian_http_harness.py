@@ -163,6 +163,7 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
             "GUARDIAN_QWEN_APPROVAL": "false",
             "GUARDIAN_TASK_API": "false",
             "GUARDIAN_SELECTOR": "rules",
+            "GUARDIAN_CLOUD": "false",
             **self.ENV,
         }
         self._env_backup = {k: os.environ.get(k) for k in env}
