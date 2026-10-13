@@ -67,6 +67,24 @@ class SwapPutBack(unittest.TestCase):
         self.assertTrue(all("--since" in c and "-n" not in c for c in j), j)
 
 
+class IdentityMatch(unittest.TestCase):
+    def test_exact_name_match_ignores_the_harness_command_line(self):
+        env = make_env("r9700")
+        env.lane.load_window()
+        sc = env.lane.make_safety(use_mutex=False)
+        self.assertTrue(any(a.startswith("-") and "x" in a for a in env.lane.lane.raw["swap"]["identity_cmd"]))
+        self.assertTrue(sc.identity_is("nemotron")[0])
+        self.assertFalse(sc.identity_is("qwen")[0])
+
+    def test_a_loose_pgrep_would_see_both_models(self):
+        env = make_env("r9700")
+        env.lane.load_window()
+        env.lane.lane.raw["swap"]["identity_cmd"] = ["pgrep", "-af", "llama-server"]
+        ok, why = env.lane.make_safety(use_mutex=False).identity_is("nemotron")
+        self.assertFalse(ok)
+        self.assertIn("both models", why)
+
+
 class FailClosed(unittest.TestCase):
     def test_unparseable_status_aborts_before_anything_is_stopped(self):
         env = make_env("workbench")

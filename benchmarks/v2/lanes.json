@@ -138,7 +138,7 @@
         "round_trips": 3,
         "identity_cmd": [
           "pgrep",
-          "-af",
+          "-ax",
           "llama-server"
         ],
         "nemotron_regex": "(?i)nemotron",

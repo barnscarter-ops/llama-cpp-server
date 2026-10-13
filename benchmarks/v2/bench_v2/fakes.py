@@ -196,7 +196,10 @@ class FakeBackend:
             w.resident = "Qwen3.8-27B-Q6_K.gguf" if "qwen" in base else "Nemotron-3.5-Lightning-Q5_K_M.gguf"
             return CmdResult(0)
         if cmd and cmd[0] == "pgrep":
-            return CmdResult(0, f"4242 /opt/llama/llama-server -m /opt/llama/models/{w.resident} --port 8080\n")
+            out = f"4242 /opt/llama/llama-server -m /opt/llama/models/{w.resident} --port 8080\n"
+            if not any(a.startswith("-") and "x" in a for a in cmd[1:]):  # without -x, pgrep also matches the harness itself
+                out += "5555 python3 run_lane.py run --lane r9700 --only qwen3.8-27b-q6k\n"
+            return CmdResult(0, out)
         if cmd and cmd[0] == "systemctl":
             action, name = cmd[1], cmd[2]
             if action == "is-active":
