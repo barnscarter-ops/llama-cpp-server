@@ -268,3 +268,72 @@ class WindowTemplate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodexFindings(unittest.TestCase):
+    def test_newer_sweep_invalidates_the_old_tuned_config_and_is_reconfirmed(self):
+        env = make_env("workbench")
+        env.lane.run_stages(["smoke", "tune", "confirm"])
+        cid = "qwen36-35b-a3b-iq3"
+        self.assertIsNotNone(env.lane.tuned_cfg(cid))
+        resweep(env, cid)
+        self.assertIsNone(env.lane.tuned_cfg(cid), "a newer sweep must not be shadowed by the old tuned record")
+        env2 = make_env("workbench")
+        env2.lane.run_stages(["smoke", "tune", "confirm"])
+        n_before = sum(1 for r in env2.lane.ledger.records() if r.get("kind") == "tuned")
+        resweep(env2, cid)
+        env2.lane.run_stages(["confirm"])
+        self.assertGreater(sum(1 for r in env2.lane.ledger.records() if r.get("kind") == "tuned"), n_before)
+        self.assertIsNotNone(env2.lane.tuned_cfg(cid))
+
+    def test_cloud_arm_reaches_https_but_never_the_local_ports(self):
+        import run_lane, argparse, os
+        env = make_env("workbench", oracle=False, approvals={"cloud_spend_cap_usd": 5})
+        ns = argparse.Namespace(lane="workbench", window=str(env.window_path), ledger_dir=str(env.root / "l"), runs_dir=str(env.root / "r"),
+                                lanes=None, candidates=None, frozen_dir=str(lane_fixture_dir()), maverick=None, humaneval=None, only="",
+                                endpoint="http://127.0.0.1:8080/v1/chat/completions", model="m", key_env="K", price_in=1.0, price_out=1.0)
+        run_lane._real_backend = lambda a: env.backend
+        os.environ["K"] = "x"
+        with self.assertRaises(Exception) as cm:
+            run_lane.cmd_cloud(ns)
+        self.assertIn("public https", str(cm.exception))
+        ns.endpoint = "https://api.example.invalid/v1/chat/completions"
+        res = run_lane.cmd_cloud(ns)
+        self.assertEqual(res, 0)
+        urls = [u for u, _ in env.world.requests]
+        self.assertTrue(urls and all(u.startswith("https://api.example.invalid") for u in urls))
+        del os.environ["K"]
+
+    def test_failed_swap_exits_nonzero(self):
+        import run_lane, argparse
+        env = make_env("r9700", approvals=SWAP)
+        env.world.swap_fail = {"swap-qwen-consult.sh"}
+        ns = argparse.Namespace(lane="r9700", window=str(env.window_path), ledger_dir=str(env.root / "l"), runs_dir=str(env.root / "r"),
+                                lanes=None, candidates=None, frozen_dir=None, maverick=None, humaneval=None, only="")
+        run_lane._real_backend = lambda a: env.backend
+        self.assertEqual(run_lane.cmd_swap(ns), 3)
+
+    def test_frozen_and_ledger_jsonl_are_not_swallowed_by_the_repo_gitignore(self):
+        text = (Path(__file__).resolve().parent.parent / ".gitignore").read_text()
+        self.assertIn("!frozen/*.jsonl", text)
+        self.assertIn("!ledger/*.jsonl", text)
+
+    def test_model_code_cannot_outlive_its_timeout_or_eat_memory(self):
+        from bench_v2.suites import scoring
+        self.assertEqual(scoring.score_python("```python\nwhile True: pass\n```", {"tests": "assert True"}), (False, "timeout"))
+        ok, why = scoring.score_python("```python\nx = bytearray(6 * 1024**3)\n```", {"tests": "assert True"})
+        self.assertFalse(ok)
+        ok, why = scoring.score_python("```python\nimport os\nos.environ['X']\n```", {"tests": "assert True"})
+        self.assertFalse(ok)  # the child environment is scrubbed
+
+
+def lane_fixture_dir():
+    import lane_fixture
+    return lane_fixture.frozen_dir()
+
+
+def resweep(env, cid):
+    """Append a levers_done identical to the last one, as a rerun after drift would."""
+    last = env.lane._last_event("levers_done", cid)
+    skip = {"schema", "seq", "ts", "phase", "prev", "hash", "kind"}
+    env.lane.ledger.event("levers_done", **{k: v for k, v in last.items() if k not in skip})

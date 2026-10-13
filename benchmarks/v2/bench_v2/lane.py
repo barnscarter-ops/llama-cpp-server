@@ -334,10 +334,12 @@ class Lane:
     def stage_confirm(self, safety: SafetyController) -> dict:
         out = {}
         for c in self._alive(self.present(self.candidates(include_exception=self._exception_triggered()))):
-            if not any(r.get("kind") == "levers_done" and r.get("model") == c.id for r in self.ledger.records() if r.get("phase") == "event"):
+            levers = self._last_event("levers_done", c.id)
+            if levers is None:
                 continue
-            if any(r.get("kind") == "tuned" and r.get("model") == c.id for r in self.ledger.records() if r.get("phase") == "event"):
-                continue
+            tuned = self._last_event("tuned", c.id)
+            if tuned is not None and tuned["seq"] > levers["seq"]:
+                continue  # confirmed after the latest sweep; a newer sweep (rerun after drift) is confirmed again
             state = LaneState.load(self.ledger, self.lane.name)
             runner = self.runner_for(c, safety)
             tuner = Tuner(runner, c, self.lane, state, self.ledger, guard=runner.guard, settings=self.s.tune)
@@ -346,12 +348,20 @@ class Lane:
                          "decisions": [dataclasses.asdict(d) for d in res.decisions]}
         return out
 
-    def tuned_cfg(self, cid: str) -> ServerConfig | None:
+    def _last_event(self, kind: str, cid: str) -> dict | None:
         last = None
         for r in self.ledger.records():
-            if r.get("phase") == "event" and r.get("kind") == "tuned" and r.get("model") == cid and r.get("final_ok"):
+            if r.get("phase") == "event" and r.get("kind") == kind and r.get("model") == cid:
                 last = r
-        return ServerConfig(**last["cfg"]) if last else None
+        return last
+
+    def tuned_cfg(self, cid: str) -> ServerConfig | None:
+        """Latest confirmed config, and only if no newer sweep has been run since (stale results never feed ladder/quality)."""
+        last = self._last_event("tuned", cid)
+        levers = self._last_event("levers_done", cid)
+        if not last or not last.get("final_ok") or (levers and levers["seq"] > last["seq"]):
+            return None
+        return ServerConfig(**last["cfg"])
 
     def _exception_triggered(self) -> bool:
         """Workbench exception path: window allows it AND the IQ3 incumbent missed the worker-bee criteria."""

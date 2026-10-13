@@ -83,19 +83,52 @@ def score_needle(text: str, spec: dict) -> tuple[bool, str]:
     return not missing, f"missing {missing}" if missing else "all found"
 
 
+MEM_LIMIT_BYTES = 2 * 1024 ** 3
+
+
+def _limits() -> None:  # POSIX only; runs in the child before exec
+    import resource
+    resource.setrlimit(resource.RLIMIT_CPU, (CODE_TIMEOUT_S, CODE_TIMEOUT_S))
+    resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT_BYTES, MEM_LIMIT_BYTES))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (16 * 1024 ** 2, 16 * 1024 ** 2))
+
+
 def score_python(text: str, spec: dict) -> tuple[bool, str]:
-    """Run the model's code plus tests in an isolated interpreter with a hard timeout."""
+    """Run the model's code plus tests in a child interpreter: own process group, CPU/memory/file-size limits,
+    scrubbed environment, temp cwd, hard timeout that kills the whole group.
+
+    This is damage limiting, not an OS sandbox: the code can still reach the filesystem and network as this
+    user. Run the quality stage as an unprivileged user (or a container) on machines that matter."""
     code = extract_code(text)
     program = code + "\n\n" + spec["tests"] + "\n"
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "case.py")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(program)
+        posix = os.name == "posix"
+        env = {"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8", "HOME": tmp}
+        proc = subprocess.Popen([sys.executable, "-I", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                cwd=tmp, env=env, start_new_session=posix, preexec_fn=_limits if posix else None)
         try:
-            p = subprocess.run([sys.executable, "-I", path], capture_output=True, text=True,
-                               timeout=CODE_TIMEOUT_S, cwd=tmp)
+            out, err = proc.communicate(timeout=CODE_TIMEOUT_S)
         except subprocess.TimeoutExpired:
+            if posix:
+                import signal
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                proc.kill()
+            proc.communicate()
             return False, "timeout"
+        if posix:  # leftovers from a finished child (forked helpers)
+            import signal
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        p = subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
     if p.returncode == 0:
         return True, "tests passed"
     return False, (p.stderr.strip().splitlines() or ["failed"])[-1][:160]

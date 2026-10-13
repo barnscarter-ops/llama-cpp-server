@@ -125,8 +125,9 @@ def cmd_dry_run(args) -> int:
 
 def cmd_swap(args) -> int:
     lane = Lane(_settings(args), _real_backend(args))
-    _print(lane.swap_test())
-    return 0
+    res = lane.swap_test()
+    _print(res)
+    return 3 if res.get("failed") else 0
 
 
 def cmd_restore(args) -> int:
@@ -203,11 +204,17 @@ def cmd_registry(args) -> int:
 def cmd_cloud(args) -> int:
     from bench_v2 import cloud
     from bench_v2.window import load_window
+    from urllib.parse import urlsplit
+    from bench_v2.backend import GuardedBackend
     lane = Lane(_settings(args), _real_backend(args))
     w = lane.load_window()
+    u = urlsplit(args.endpoint)
+    if u.scheme != "https" or not u.hostname or u.hostname in ("localhost",) or u.hostname.startswith(("127.", "192.168.", "10.")):
+        raise BenchError("the cloud arm only talks to a public https endpoint")
+    cloud_backend = GuardedBackend(lane.raw_backend, {u.port or 443})  # own guard: the lane's local bench-port guard would block it
     cap = float(w.approvals.get("cloud_spend_cap_usd", 0) or 0)
     items = builder.load_frozen("slow_reasoner", Path(args.frozen_dir) if args.frozen_dir else None, lane.snap, _external(args))
-    res = cloud.run_anchor(lane.backend, lane.ledger, items, args.endpoint, args.model, args.key_env,
+    res = cloud.run_anchor(cloud_backend, lane.ledger, items, args.endpoint, args.model, args.key_env,
                            args.price_in, args.price_out, cap, lane.run_id)
     _print(res)
     return 0
