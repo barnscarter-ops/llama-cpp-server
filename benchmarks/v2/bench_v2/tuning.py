@@ -270,7 +270,10 @@ class Tuner:
 
         drift_pt = self._run(base_cfg, "baseline-end", phase="confirm", passes=self.s.passes)
         drift, needs_rerun = None, False
-        if drift_pt.ok and base_score:
+        if not drift_pt.ok:  # a confirmation that never re-established the baseline proves nothing about drift
+            needs_rerun = True
+            self._note("drift", drift_pt.status, "rejected", "end baseline did not complete: rerun this sweep")
+        elif base_score:
             drift = abs(drift_pt.score - base_score) / base_score
             if drift > DRIFT_LIMIT:
                 needs_rerun = True
@@ -408,7 +411,7 @@ class Tuner:
             if p.ok and not worse_than(p, full, floor):
                 keep.remove(lever)
                 cfg = back
-                full = p if p.score <= full.score else full
+                full = p  # later levers are judged against the config now in force
                 self._note("LOO", lever, "rejected", "reverting it was not worse than the noise floor: dropped")
             else:
                 self._note("LOO", lever, "adopted", "reverting it was worse: kept")

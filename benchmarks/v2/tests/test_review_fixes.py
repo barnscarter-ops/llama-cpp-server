@@ -657,3 +657,68 @@ class RoundThreeFixes(unittest.TestCase):
         env.lane.run_stages(["quality"])
         kinds = [(r.get("kind"), r.get("model")) for r in env.lane.ledger.records()]
         self.assertNotIn(("role_verdict", cid), kinds)
+
+
+class RoundFourFixes(unittest.TestCase):
+    def test_failed_end_baseline_invalidates_the_confirmation(self):
+        from bench_v2.tuning import Tuner
+        orig = Tuner._run
+
+        def run(self, cfg, label, **kw):
+            p = orig(self, cfg, label, **kw)
+            if label == "baseline-end":
+                p.status = "crash"
+            return p
+        Tuner._run = run
+        try:
+            env = make_env("r9700", only=["nemotron-3.5-lightning-q5km"])
+            env.lane.run_stages(["smoke", "tune", "confirm"])
+        finally:
+            Tuner._run = orig
+        self.assertIsNone(env.lane.tuned_cfg("nemotron-3.5-lightning-q5km"))
+
+    def test_leave_one_out_tracks_the_config_now_in_force(self):
+        import dataclasses
+        from bench_v2.tuning import Tuner
+        t = object.__new__(Tuner)
+        seen = []
+
+        class Pt:
+            def __init__(self, score):
+                self.score, self.ok, self.pp, self.tg = score, True, score, score
+                self.components = {"pp": score, "tg": score}
+        scores = iter([10.0, 10.2, 10.4])  # lower is better: B's revert is within the floor; C's is 4% off the old config but 2% off the new one
+
+        def fake_run(cfg, label, **kw):
+            seen.append(label)
+            return Pt(next(scores))
+        t._run = fake_run
+        t.s = type("S", (), {"passes": 1})()
+        t._note = lambda *a, **k: None
+        t._revert = lambda cfg, b, lever: cfg
+        cfg, keep = t._leave_one_out("cfg", ["B", "C"], "base", 0.03)
+        self.assertEqual(keep, [])  # judged against the reverted-B config, so C's removal is within the floor
+        self.assertEqual(seen, ["combined", "loo-without-B", "loo-without-C"])
+
+    def test_newest_ladder_verdict_wins(self):
+        env = make_env("r9700", only=["nemotron-3.5-lightning-q5km"])
+        cid = "nemotron-3.5-lightning-q5km"
+        env.lane.load_window()
+        env.lane.run_stages(["smoke", "tune", "confirm", "ladder"])
+        env.lane.ledger.event("ladder_done", model=cid, fails_128k=True)
+        env.lane.ledger.event("ladder_done", model=cid, fails_128k=False)
+        env.lane.run_stages(["quality"])
+        verdicts = [r for r in env.lane.ledger.records() if r.get("kind") == "role_verdict" and r.get("model") == cid]
+        self.assertTrue(verdicts)
+        self.assertNotIn("128k ladder", str(verdicts[-1].get("verdict", {}).get("detail", "")))
+
+    def test_jev_pass_rates_use_only_the_newest_run(self):
+        from bench_v2 import jevtrack
+
+        def rec(run, passed):
+            return {"phase": "quality", "mode": "production-off", "run_id": run, "model": {"id": "m"},
+                    "quality": {"suite": "reasoning", "pass": passed}}
+        recs = [rec("old", False), rec("old", False), rec("new", True)]
+        rates = jevtrack.pass_rates_from_records(recs, {"m": "reg"})
+        self.assertEqual(list(rates.get("reg", {}).values()), [1.0] * len(rates.get("reg", {})))
+        self.assertTrue(rates)

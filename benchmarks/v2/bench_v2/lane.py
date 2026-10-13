@@ -405,8 +405,9 @@ class Lane:
             cfg = self.tuned_cfg(c.id)
             if cfg is None:
                 continue
-            if any(r.get("kind") == "ladder_done" and r.get("model") == c.id and r.get("fails_128k")
-                   for r in self.ledger.records() if r.get("phase") == "event"):
+            ladders = [r for r in self.ledger.records()
+                       if r.get("phase") == "event" and r.get("kind") == "ladder_done" and r.get("model") == c.id]
+            if ladders and ladders[-1].get("fails_128k"):  # only the newest ladder run counts; a fixed config can recover
                 self.ledger.event("role_verdict", model=c.id, role=c.role, verdict={"pass": False, "tier": None, "detail": "failed the 128k ladder check"})
                 continue
             items = builder.load_frozen(c.role, Path(self.s.frozen_dir) if self.s.frozen_dir else None, self.snap, self.s.external)

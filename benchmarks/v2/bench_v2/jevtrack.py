@@ -169,8 +169,15 @@ def label_cases(cases: list[dict], models: list[RouteModel], pass_rates=None) ->
 def pass_rates_from_records(records, cand_to_registry: dict[str, str]) -> dict[str, dict[str, float]]:
     """Latest production-mode quality result per model, grouped into the track's task types."""
     latest: dict[str, dict] = {}
+    records = list(records)
+    newest_run: dict[str, object] = {}
+    for r in records:  # only the newest production run of each model counts; reruns and pre-fix runs must not mix in
+        if r.get("phase") == "quality" and str(r.get("mode", "")).startswith("production"):
+            newest_run[r["model"]["id"]] = r.get("run_id")
     for r in records:
         if r.get("phase") == "quality" and str(r.get("mode", "")).startswith("production"):
+            if r.get("run_id") != newest_run.get(r["model"]["id"]):
+                continue
             q = r["quality"]
             if q["pass"] is None:
                 continue
