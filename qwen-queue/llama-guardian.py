@@ -52,9 +52,10 @@ from pathlib import Path
 import aiohttp
 from aiohttp import ClientError, ClientTimeout, web
 
-from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob
+from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob, admission_only
 import aiwa_swap
 import cloud_backend
+import dispatch_paths
 import fleet_router
 import guardian_alerts
 import jev_selector
@@ -189,9 +190,8 @@ QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
 QWEN_APPROVAL_TOKEN = os.environ.get("GUARDIAN_QWEN_APPROVAL_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
 CONSULT_IDLE_RESTORE_S = int(os.environ.get("CONSULT_IDLE_RESTORE_S", "0"))  # 0 = never restore
-# PR5: Hermes no longer picks seats. When disabled (default) clerk/GLM jobs
-# with a local seat always enqueue; when enabled it may only wait vs reject
-# for capacity and can never fallback_cloud a local seat.
+# Hermes is admission control only (admit or reject). It never picks a model, a seat or a
+# destination. When disabled (default) jobs for a local seat always enqueue.
 def hermes_decider_enabled() -> bool:
     return os.environ.get("HERMES_DECIDER_ENABLED", "false").strip().lower() in {
         "true",
@@ -303,6 +303,7 @@ class Guardian:
         self.approvals = ApprovalStore(self.job_store.connection)
         self.task_store = task_dispatch.TaskStore(self.job_store.connection)
         self.alerts = guardian_alerts.AlertStore(self.job_store.connection)
+        self.dispatch_paths = dispatch_paths.DispatchPathCounter()
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
         # One wake-up event per model queue (GUARDIAN_PER_MODEL_QUEUES); sharing one event would lose wake-ups.
@@ -995,10 +996,11 @@ async def queue_submit(request: web.Request) -> web.Response:
                     {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}},
                     status=503,
                 )
+            decision = admission_only(decision)
             guardian.job_store.log_decision(source, decision, context)
-            if decision["route"] == "fallback_cloud":
-                # Policy: a local seat's mechanical work never goes to cloud.
-                msg = "Hermes may not fallback_cloud a clerk or GLM seat."
+            if decision.get("route") not in {CANONICAL_LOCAL_ROUTE, "bypass"}:
+                # Fail closed: admit or reject are the only verdicts Hermes may give.
+                msg = "Hermes returned a verdict other than admit or reject."
                 log.warning(msg)
                 return web.json_response(
                     {"error": {"message": msg, "code": "hermes_decision_unavailable"}},
@@ -1016,7 +1018,14 @@ async def queue_submit(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": {"message": str(exc), "code": "hermes_decision_unavailable"}}, status=503
             )
+        decision = admission_only(decision)
         guardian.job_store.log_decision(source, decision, context)
+        if decision.get("route") not in {CANONICAL_LOCAL_ROUTE, "bypass"}:
+            msg = "Hermes returned a verdict other than admit or reject."
+            log.warning(msg)
+            return web.json_response(
+                {"error": {"message": msg, "code": "hermes_decision_unavailable"}}, status=503
+            )
         if decision["route"] != CANONICAL_LOCAL_ROUTE:
             return web.json_response({"status": "not_queued", "decision": decision})
 
@@ -1032,6 +1041,7 @@ async def queue_submit(request: web.Request) -> web.Response:
         model_id=job_model_id,
     )
     notify_queue(job_model_id)
+    note_dispatch_path(request, "queue_job", source=source, model=completion.get("model"))
     log.info(f"queue accepted {job.job_id} from {source} at priority {job.priority}")
     return web.json_response(job.as_api(), status=202 if created else 200)
 
@@ -1155,6 +1165,12 @@ async def worker_submit(request: web.Request) -> web.Response:
     notify_queue(worker_model_id)
     log.info("worker accepted %s from %s for %s", job.job_id, job.source, spec["work_class"])
     return web.json_response(job.as_api(), status=202 if created else 200)
+
+
+def note_dispatch_path(request: web.Request, path: str, **fields) -> None:
+    """Log one arrival with the caller's address and agent, so remaining bypassers can be named."""
+    fields.update(remote=request.remote, agent=request.headers.get("User-Agent"))
+    log.info(guardian.dispatch_paths.note(path, **fields))
 
 
 def task_api_enabled() -> bool:
@@ -1316,6 +1332,7 @@ async def task_submit(request: web.Request) -> web.Response:
         spec = task_dispatch.parse_task(await request.json())
     except (json.JSONDecodeError, ValueError) as exc:  # TaskValidationError is a ValueError
         return guardian_error(str(exc), "invalid_task", 400)
+    note_dispatch_path(request, "task_api", clearance=spec.clearance)
     try:
         outcome = await build_task_dispatcher().submit(spec)
     except model_registry.RegistryError as exc:
@@ -1458,6 +1475,7 @@ async def proxy_handler(request: web.Request) -> web.StreamResponse:
         if is_real_work:
             prefetched_body = await request.read()
             model = extract_model_from_body(prefetched_body)
+            note_dispatch_path(request, "direct_named" if model and str(model).strip() else "direct_default", model=model)
             default_seat = fleet_default_seat()
             if not model or not str(model).strip():
                 log.info("defaulted_model=%s", default_seat)

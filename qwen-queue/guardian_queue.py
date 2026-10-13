@@ -24,7 +24,18 @@ from typing import Any
 # use the canonical name.
 CANONICAL_LOCAL_ROUTE = "queue_local"
 LEGACY_ROUTE_ALIASES = frozenset({"queue_qwen"})
-ROUTES = frozenset({CANONICAL_LOCAL_ROUTE, "bypass", "fallback_cloud", *LEGACY_ROUTE_ALIASES})
+# Admission control only: admit (queue_local) or reject (bypass). Hermes never picks a model or a
+# destination, so `fallback_cloud` is not an accepted answer any more (it names where work goes).
+ROUTES = frozenset({CANONICAL_LOCAL_ROUTE, "bypass", *LEGACY_ROUTE_ALIASES})
+ADMISSION_KEYS = ("route", "reason", "priority")
+
+
+def admission_only(decision: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the admission verdict; extra keys a decider returns (model, seat, ...) are dropped, never read."""
+    kept = {key: decision[key] for key in ADMISSION_KEYS if key in decision}
+    if kept.get("route") in LEGACY_ROUTE_ALIASES:
+        kept["route"] = CANONICAL_LOCAL_ROUTE
+    return kept
 
 
 class HermesDecisionError(RuntimeError):
@@ -429,7 +440,10 @@ def parse_hermes_decision(output: str) -> dict[str, Any]:
 
 
 class HermesDecider:
-    """Runs Hermes in one-shot mode and accepts only strict routing JSON."""
+    """Runs Hermes in one-shot mode and accepts only a strict admission verdict (admit or reject).
+
+    It never chooses which model runs a job: code does that from the request or the task API.
+    """
 
     def __init__(self) -> None:
         installed_hermes = (
@@ -451,11 +465,11 @@ class HermesDecider:
 
     async def decide(self, context: dict[str, Any], queue: dict[str, int]) -> dict[str, Any]:
         prompt = (
-            "You are the capacity gate for a single-slot local coding queue. "
+            "You are the admission gate for a single-slot local coding queue. "
             "Do not use tools and do not propose code. Return exactly one JSON object with "
-            "route, reason, and priority. The GPU seat is already chosen by code from "
-            "request.model; you never pick the model. route must be queue_local or "
-            "bypass only — fallback_cloud is not permitted for local seats. "
+            "route, reason, and priority. The model is already chosen by code and you never "
+            "pick, change or suggest one. route must be queue_local (admit) or "
+            "bypass (reject) and nothing else. "
             "priority must be an integer 0-100. "
             "Return queue_local (wait your turn) for any concrete coding task \u2014 "
             "bugfixes, features, refactors, tests, docs, config. Return bypass only "
