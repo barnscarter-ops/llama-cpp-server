@@ -60,6 +60,9 @@ The R9700 lane queries `upsc cp1500@localhost ups.status` (CyberPower CP1500 und
 ## Workbench GPU spill (Windows)
 `nvidia-smi` memory does not show WDDM spilling into system RAM, so the Workbench reads `\GPU Adapter Memory(*)\Shared Usage` with `typeperf` (every 5 s), takes a baseline with the production services stopped, and treats growth above 256 MiB as a spill. If that reading is unavailable the run aborts (`require_shared_reading`) and `preflight` says so. Also set the NVIDIA driver to "Prefer No Sysmem Fallback" before a run; that makes an overfull load fail instead of silently spilling.
 
+## Model-generated code
+Scored Python runs in a child process with CPU, memory and file-size limits, a scrubbed environment and a killed process group on timeout. That limits damage; it is not an OS sandbox. Run the quality stage as an unprivileged user or in a container on any machine that matters.
+
 ## Layout
 `bench_v2/` modules (see each docstring), `candidates.json` (models, criteria, registry mapping), `lanes.json` (machines, ports, safety commands), `data/` (tool schema snapshot, guard text slice), `frozen/` (suites + hashes), `ledger/` (results, hash-chained JSONL, one file per lane), `tests/`.
 
