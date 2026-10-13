@@ -57,6 +57,8 @@ import aiwa_swap
 import fleet_router
 import model_registry
 import model_slots
+import qwen_session
+from qwen_approvals import ApprovalError, ApprovalStore, qwen_approval_enabled
 from guardian_worker_descriptor import build_worker_descriptor
 from guardian_workers import (
     is_worker_job,
@@ -179,6 +181,8 @@ QUEUE_MAX_RESULT_BYTES = int(os.environ.get("GUARDIAN_QUEUE_MAX_RESULT_BYTES", s
 QUEUE_MODEL_ALIAS = os.environ.get("GUARDIAN_QUEUE_MODEL", "local-llm")
 QUEUE_ALLOW_REMOTE = os.environ.get("GUARDIAN_QUEUE_ALLOW_REMOTE", "false").lower() == "true"
 QUEUE_AUTH_TOKEN = os.environ.get("GUARDIAN_QUEUE_TOKEN", "")
+# Separate from the queue token: queue clients (agents, Hermes) must not be able to approve their own Qwen loads.
+QWEN_APPROVAL_TOKEN = os.environ.get("GUARDIAN_QWEN_APPROVAL_TOKEN", "")
 QUEUE_JOB_TIMEOUT_S = max(30, int(os.environ.get("GUARDIAN_QUEUE_JOB_TIMEOUT_S", "900")))
 CONSULT_IDLE_RESTORE_S = int(os.environ.get("CONSULT_IDLE_RESTORE_S", "0"))  # 0 = never restore
 # PR5: Hermes no longer picks seats. When disabled (default) clerk/GLM jobs
@@ -292,6 +296,7 @@ class Guardian:
         self.last_stop_time = 0.0
 
         self.job_store = JobStore(QUEUE_DB_PATH)
+        self.approvals = ApprovalStore(self.job_store.connection)
         self.hermes_decider = HermesDecider()
         self.queue_event = asyncio.Event()
         # One wake-up event per model queue (GUARDIAN_PER_MODEL_QUEUES); sharing one event would lose wake-ups.
@@ -896,6 +901,19 @@ async def _validate_queue_submission(request: web.Request) -> tuple[str, str, di
     return idempotency_key.strip(), source.strip(), decision_context, completion
 
 
+async def _consult_approval_for_submit(request: web.Request, idempotency_key: str) -> str:
+    """Return a usable approval id for a consult job, or raise ApprovalError (needs_approval carries the record)."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    approval_id = payload.get("approval_id") if isinstance(payload, dict) else None
+    if not isinstance(approval_id, str) or not approval_id.strip():
+        approval = guardian.approvals.create_pending(idempotency_key)
+        raise ApprovalError("needs_approval", "Waiting for Carter's decision.", 409, approval)
+    return guardian.approvals.check_usable(approval_id.strip(), idempotency_key)["id"]
+
+
 async def queue_submit(request: web.Request) -> web.Response:
     """Enqueue a job on the seat its request.model names (fleet on).
 
@@ -912,6 +930,7 @@ async def queue_submit(request: web.Request) -> web.Response:
     if existing:
         return web.json_response({"idempotent": True, **existing.as_api()})
 
+    approval_id = None
     if fleet_router_enabled():
         # The code table owns the seat. Hermes (if enabled at all) only gets
         # wait-vs-reject for capacity.
@@ -922,7 +941,13 @@ async def queue_submit(request: web.Request) -> web.Response:
                 "route_cloud",
                 409,
             )
-        if seat == "consult":
+        if seat == "consult" and qwen_approval_enabled():
+            try:
+                approval_id = await _consult_approval_for_submit(request, idempotency_key)
+            except ApprovalError as exc:
+                return qwen_session.approval_error_response(exc) if exc.code != "needs_approval" \
+                    else qwen_session.needs_approval_response(exc.approval)
+        elif seat == "consult":
             client = getattr(guardian, "_client", None)
             if client is None:
                 return guardian_error("AIWA occupant unknown.", "aiwa_unreachable", 503)
@@ -989,6 +1014,8 @@ async def queue_submit(request: web.Request) -> web.Response:
         if decision["route"] != CANONICAL_LOCAL_ROUTE:
             return web.json_response({"status": "not_queued", "decision": decision})
 
+    if approval_id:
+        decision = {**decision, "approval_id": approval_id}
     job_model_id = queue_model_id(completion)
     job, created = guardian.job_store.submit(
         idempotency_key=idempotency_key,
@@ -1122,6 +1149,55 @@ async def worker_submit(request: web.Request) -> web.Response:
     notify_queue(worker_model_id)
     log.info("worker accepted %s from %s for %s", job.job_id, job.source, spec["work_class"])
     return web.json_response(job.as_api(), status=202 if created else 200)
+
+
+async def approvals_list(request: web.Request) -> web.Response:
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    status = request.query.get("status")
+    if status and status not in ("pending", "approved", "denied", "used", "expired"):
+        return guardian_error("status must be pending, approved, denied, used or expired.", "invalid_status", 400)
+    return web.json_response({"approvals": guardian.approvals.list(status)})
+
+
+def _approval_decider_authorized(request: web.Request) -> web.Response | None:
+    """Deciding spends Carter's authority, so loopback alone is not enough: any local process could self-approve.
+
+    Fails closed when no decider token is configured.
+    """
+    if not QWEN_APPROVAL_TOKEN:
+        return guardian_error(
+            "Approval decisions are disabled until GUARDIAN_QWEN_APPROVAL_TOKEN is set.",
+            "approval_token_not_configured", 503,
+        )
+    supplied = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not supplied or not hmac.compare_digest(supplied, QWEN_APPROVAL_TOKEN):
+        return guardian_error("Approval decisions need the approval bearer token.", "approval_forbidden", 403)
+    return None
+
+
+async def approvals_decide(request: web.Request) -> web.Response:
+    """Record Carter's decision. Chief relays it from Room, holding the approval token."""
+    if not _queue_authorized(request):
+        return _queue_forbidden()
+    denied = _approval_decider_authorized(request)
+    if denied is not None:
+        return denied
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        payload = None
+    decision = payload.get("decision") if isinstance(payload, dict) else None
+    decided_by = payload.get("decided_by") if isinstance(payload, dict) else None
+    if decision not in ("approve", "deny") or not isinstance(decided_by, str) or not decided_by.strip() or len(decided_by) > 80:
+        return guardian_error(
+            "Body needs decision (approve|deny) and decided_by (1-80 characters).", "invalid_decision", 400
+        )
+    try:
+        record = guardian.approvals.decide(request.match_info["approval_id"], decision == "approve", decided_by.strip())
+    except ApprovalError as exc:
+        return qwen_session.approval_error_response(exc)
+    return web.json_response(record)
 
 
 async def guardian_swap(request: web.Request) -> web.Response:
@@ -1443,6 +1519,9 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
         if client is None:
             guardian.job_store.fail(job.job_id, "AIWA client unavailable; retry after guardian restart.")
             return
+        if qwen_approval_enabled():
+            await _run_aiwa_job_with_approval(job, seat, client)
+            return
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
         if not reachable or occupant in {None, "", "unknown"}:
             guardian.job_store.fail(job.job_id, "AIWA unreachable or occupant unknown; retry later.")
@@ -1464,7 +1543,7 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
             total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S
         )
         async with fleet_router.seat_slot(seat):
-            if model_slots.slots_enabled():
+            if model_slots.slots_active():
                 # A swap may have finished between the first check and getting the slot.
                 occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
                 if not reachable or occupant != seat:
@@ -1476,6 +1555,34 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
     except Exception as exc:
         guardian.job_store.fail(job.job_id, f"AIWA queue job failed: {exc}")
         log.exception(f"queue worker crashed while running {job.job_id} on AIWA")
+
+
+async def _run_aiwa_job_with_approval(job: QueueJob, seat: str, client) -> None:
+    """GUARDIAN_QWEN_APPROVAL on: Nemotron jobs wait for the slot then check; Qwen jobs run as an approved session."""
+    payload = dict(job.request)
+    payload["model"] = fleet_router.SERVING_IDS[seat]
+    payload["stream"] = False
+    timeout = ClientTimeout(total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S)
+    if seat == "consult":
+        approval_id = (job.decision or {}).get("approval_id")
+        try:
+            await qwen_session.run_approved_qwen(
+                approvals=guardian.approvals, approval_id=approval_id, task_id=job.idempotency_key, client=client,
+                run=lambda: _post_aiwa_job(job, client, payload, seat, timeout),
+            )
+        except ApprovalError as exc:
+            guardian.job_store.fail(job.job_id, f"{exc.code}: {exc.message}")
+        except qwen_session.SessionError as exc:
+            guardian.job_store.fail(job.job_id, f"{exc.code}: {exc.message}")
+        return
+    async with fleet_router.seat_slot(seat):
+        occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
+        if not reachable or occupant != seat:
+            guardian.job_store.fail(
+                job.job_id, f"AIWA occupant is {occupant} ({model_id}); {seat} job cannot run there now."
+            )
+            return
+        await _post_aiwa_job(job, client, payload, seat, timeout)
 
 
 async def _post_aiwa_job(job: QueueJob, client, payload: dict, seat: str, timeout: ClientTimeout) -> None:
@@ -1592,6 +1699,9 @@ async def _queue_loop(model_id: str | None) -> None:
     """Claim and run jobs one at a time. model_id None is the legacy single global queue."""
     event = guardian.queue_event if model_id is None else guardian.queue_events.setdefault(model_id, asyncio.Event())
     while True:
+        if model_id and model_slots.slots_active():
+            # A swap holds this model's host: leave jobs queued instead of claiming them into a stall.
+            await model_slots.get_slots().wait_available(model_id)
         job = guardian.job_store.claim_next(model_id)
         if job:
             await run_queued_job(job)
@@ -2013,8 +2123,8 @@ async def consult_idle_restorer(app: web.Application) -> None:
     try:
         while True:
             await asyncio.sleep(IDLE_POLL_S)
-            if ttl <= 0:
-                continue
+            if ttl <= 0 or qwen_approval_enabled():
+                continue  # with approvals on, the session reloads Nemotron itself
             client = getattr(guardian, "_client", None)
             if client is None:
                 continue
@@ -2101,6 +2211,7 @@ async def guardian_health(request: web.Request) -> web.Response:
             ),
             "served": served["served"],
             "served_total": served["served_total"],
+            **qwen_session.health(),
         }
     )
 
@@ -2292,6 +2403,10 @@ async def on_startup(app: web.Application) -> None:
     app["reaper_task"] = asyncio.create_task(idle_reaper(app))
     app["consult_restore_task"] = asyncio.create_task(consult_idle_restorer(app))
     app["queue_worker_task"] = asyncio.create_task(queue_worker(app))
+    app["qwen_recovery_task"] = asyncio.create_task(qwen_session.recover_resting_model(guardian._client))
+    app["qwen_reload_retry_task"] = asyncio.create_task(
+        qwen_session.reload_retrier(lambda: getattr(guardian, "_client", None))
+    )
     log.info(
         f"guardian up on {PROXY_HOST}:{PROXY_PORT} → {LLAMA_HOST}:{LLAMA_PORT} "
         f"(idle timeout {IDLE_TIMEOUT_MIN} min, prewarm ports {PREWARM_PORTS})"
@@ -2300,11 +2415,11 @@ async def on_startup(app: web.Application) -> None:
 
 async def on_cleanup(app: web.Application) -> None:
     """Clean shutdown — cancel background tasks, close client."""
-    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "consult_restore_task", "queue_worker_task"):
+    for t in ("prewarm_task", "slot_poller_task", "enforcer_task", "reaper_task", "consult_restore_task", "queue_worker_task", "qwen_recovery_task", "qwen_reload_retry_task"):
         app[t].cancel()
     await asyncio.gather(
         app["prewarm_task"], app["slot_poller_task"], app["enforcer_task"], app["reaper_task"], app["consult_restore_task"], app["queue_worker_task"],
-        return_exceptions=True,
+        app["qwen_recovery_task"], return_exceptions=True,
     )
     await guardian._client.close()
     guardian.job_store.close()
@@ -2326,6 +2441,8 @@ def make_app() -> web.Application:
     app.router.add_post("/__guardian/workers", worker_submit)
     app.router.add_post("/__guardian/sleep", guardian_sleep)
     app.router.add_post("/__guardian/swap", guardian_swap)
+    app.router.add_get("/__guardian/approvals", approvals_list)
+    app.router.add_post("/__guardian/approvals/{approval_id}/decide", approvals_decide)
     # Catch-all proxy: any method, any path → llama.
     app.router.add_route("*", "/{tail:.*}", proxy_handler)
     app.on_startup.append(on_startup)

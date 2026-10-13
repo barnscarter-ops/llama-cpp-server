@@ -39,6 +39,8 @@ class FakeAiwa:
     def __init__(self) -> None:
         self.occupant_id = SERVING_IDS["clerk"]
         self.delay_s = 0.0
+        self.delay_by_model: dict[str, float] = {}
+        self.fail_models: set[str] = set()
         self.models_hits = 0
         self.chat_hits: list[dict] = []
         self.in_flight = 0
@@ -60,11 +62,14 @@ class FakeAiwa:
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
         self.events.append(f"start:{payload.get('model')}")
         try:
-            if self.delay_s:
-                await asyncio.sleep(self.delay_s)
+            delay = self.delay_by_model.get(payload.get("model"), self.delay_s)
+            if delay:
+                await asyncio.sleep(delay)
         finally:
             self.in_flight -= 1
         self.events.append(f"end:{payload.get('model')}")
+        if payload.get("model") in self.fail_models:
+            return web.json_response({"error": "boom"}, status=500)
         return web.json_response(
             {"id": "chatcmpl-aiwa", "choices": [{"message": {"role": "assistant", "content": "aiwa-ok"}, "finish_reason": "stop"}]}
         )
@@ -137,6 +142,9 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         app.router.add_get("/__guardian/seats", m.guardian_seats)
         app.router.add_get("/__guardian/models", m.guardian_models)
         app.router.add_get("/__guardian/queues", m.guardian_queues)
+        app.router.add_get("/__guardian/approvals", m.approvals_list)
+        app.router.add_post("/__guardian/approvals/{approval_id}/decide", m.approvals_decide)
+        app.router.add_post("/__guardian/swap", m.guardian_swap)
         app.router.add_post("/__guardian/jobs", m.queue_submit)
         app.router.add_get("/__guardian/jobs/{job_id}", m.queue_status)
         app.router.add_route("*", "/{tail:.*}", m.proxy_handler)
@@ -147,6 +155,10 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
             "GUARDIAN_QUEUE_DB": str(Path(self.temp_dir.name) / "guardian.sqlite3"),
             "FLEET_ROUTER": "true",
             "AIWA_PROXY_LOOPBACK_ONLY": "true",
+            # Pin every dispatcher flag off so a flag exported in the shell cannot change a default-behavior test.
+            "GUARDIAN_MODEL_SLOTS": "false",
+            "GUARDIAN_PER_MODEL_QUEUES": "false",
+            "GUARDIAN_QWEN_APPROVAL": "false",
             **self.ENV,
         }
         self._env_backup = {k: os.environ.get(k) for k in env}

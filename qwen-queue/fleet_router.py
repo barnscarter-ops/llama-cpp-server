@@ -250,9 +250,18 @@ def is_glm_metadata_get(request: web.Request) -> bool:
     return request.method == "GET" and request.path in GLM_METADATA_GET_PATHS
 
 
+def prepare_forward(request: web.Request, body: bytes, seat: str) -> tuple[bytes, dict]:
+    """Body rewritten to the seat's serving id, plus the headers safe to pass upstream."""
+    fwd_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in HOP_BY_HOP and k.lower() != "content-length"
+    }
+    return rewrite_model_in_body(body, SERVING_IDS[seat]), fwd_headers
+
+
 def seat_slot(seat: str):
     """Async context manager serializing work on one seat's model; a no-op with the flag off."""
-    if not model_slots.slots_enabled():
+    if not model_slots.slots_active():
         return model_slots.no_slot()
     slots = model_slots.get_slots()
     return slots.acquire(slots.model_id_for_seat(seat))
@@ -388,6 +397,15 @@ async def handle_aiwa_completion(
         resp.headers.update(seat_hdrs)
         return resp
 
+    from qwen_approvals import qwen_approval_enabled  # local: keeps this module importable on its own
+
+    if qwen_approval_enabled():
+        import qwen_session  # local: qwen_session imports this module at load time
+
+        return await qwen_session.handle_completion(
+            request, body=body, seat=seat, client=client, guardian=guardian
+        )
+
     occupant, model_id, reachable = await occupant_cache.get(client)
     if not reachable or occupant in {None, "", "unknown"}:
         resp = guardian_error(
@@ -435,7 +453,7 @@ async def handle_aiwa_completion(
     }
     fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
     async with seat_slot(effective_seat):
-        if model_slots.slots_enabled():
+        if model_slots.slots_active():
             # A swap may have finished between the first check and getting the slot.
             occupant, model_id, reachable = await occupant_cache.get(client)
             if not reachable or occupant != effective_seat:
