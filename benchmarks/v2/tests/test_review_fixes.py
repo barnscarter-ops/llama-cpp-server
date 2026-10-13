@@ -640,3 +640,20 @@ class RoundThreeFixes(unittest.TestCase):
                              "finish": "stop", "valid": True}} for rid in ("old", "new")]
         got = score._results_from_ledger(recs, "m", "production-off", "new", {})
         self.assertEqual(len(got), 1)
+
+    def test_point_disqualified_by_spill_gets_no_verdict(self):
+        armed = {"on": False}
+
+        class SpillLate(FakeBackend):
+            def chat(self, *a, **k):
+                r = super().chat(*a, **k)
+                if armed["on"]:
+                    self.w.shared_mib = (self.w.shared_mib or 0.0) + 1000.0
+                return r
+        cid = "qwen36-35b-a3b-iq3"
+        env = make_env("workbench", only=[cid], backend_cls=SpillLate)
+        env.lane.run_stages(["smoke", "tune", "confirm", "ladder"])
+        armed["on"] = True
+        env.lane.run_stages(["quality"])
+        kinds = [(r.get("kind"), r.get("model")) for r in env.lane.ledger.records()]
+        self.assertNotIn(("role_verdict", cid), kinds)
