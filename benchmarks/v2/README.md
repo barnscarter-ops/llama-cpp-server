@@ -1,0 +1,70 @@
+# Benchmark harness v2 (protocol section 17, lean plan)
+
+Builds the evidence that picks the three local seats: a Workbench worker bee, an R9700 fast executor and an R9700 slow reasoner. It tunes four levers per model, guards numerics, checks 128k context, times cold loads, scores a frozen ~300-item role suite, tests tool calling against the real Hermes and Guardian schemas, runs a separate Jev routing track, and writes an append-only ledger that can generate Guardian's `models.json`.
+
+Python 3 stdlib only. Everything is testable on a fake machine; the tests never load a model, start a process or contact a live server.
+
+    python3 -m unittest discover -s benchmarks/v2/tests          # 105 tests, ~30 s
+    python3 benchmarks/v2/run_lane.py dry-run --lane r9700 --stages smoke,tune,confirm,ladder,quality
+
+## Safety rules the code enforces
+- Nothing real starts without a window file that Carter wrote (`window-template` only prints an example). It names the lane, start, end, approver and per-action approvals. Outside the window, or missing `stop_services` (and `guardian_quiet` on the R9700), the run refuses.
+- Before a lane: snapshot which production services are active, write `runs/<lane>.RESTORE_REQUIRED`, stop them, verify stopped and GPU idle, check 20 GB disk. After: start only what was active, verify, then clear the marker. Restore runs in a `finally` and on SIGINT/SIGTERM. If it cannot be verified the marker stays and `run_lane.py restore` finishes the job.
+- Abort and restore on: OOM or crash twice in a row, power alarm, GPU temperature over 90 C, STOP file (`runs/STOP` or `runs/<lane>.STOP`), window end, disk under 20 GB, any request leaving the lane's own bench port (8099 Workbench, 8090 R9700). Requests to 8080, 8081 or 192.168.1.240 raise before they are sent.
+- One model per machine at a time (flock on the lane lock; the R9700 uses the same lock file as the swap scripts). Workbench and R9700 lanes can run in parallel in separate terminals.
+- The production Nemotron on the R9700 is touched only by `swap` (the real swap scripts, logged, restored at the end) and by the lane stop/restore above.
+- Cloud spend needs `cloud_spend_cap_usd > 0` in the window and a key in a named environment variable; the key is never printed or written.
+
+## Stages (all take `--lane workbench|r9700`)
+| Command | What it does | Touches the machine? |
+|---|---|---|
+| `plan` | Fit table for every candidate: f16/q8_0 KV, draft, MoE offload. Disqualifies anything not 100% on GPU at 131072 context. | No |
+| `freeze` | Builds the role suites and `frozen/FROZEN.json` hashes. Already committed; rerun only to change a suite. | No |
+| `preflight` | Ledger chain, frozen hashes, binary paths, llama-perplexity has `--kl-divergence-base`, files on disk, disk space. | Reads only |
+| `run --stages smoke` | S1: loads, tool round trips, 4k/32k prompts, decode at 8k, VRAM estimate error. Drops models that fail or are >10% slower than the incumbent with no new capability. | Yes |
+| `run --stages tune` | S2: derive base, then levers A placement, B speculative decoding, C KV type, D batch/ubatch with the numeric guard and the 3% noise floor. Flat levers are skipped on later models. | Yes |
+| `run --stages confirm` | S3: leave-one-out, final re-measure, drift check (>3% flags a rerun). Writes the `tuned` config. | Yes |
+| `run --stages ladder` | S4: 8k/32k/(128k-3000) checks, max safe context, three cold loads, wake seconds. | Yes |
+| `run --stages quality` | S5: frozen role mix in production reasoning mode, other mode and sampling spot-check on 60 items, role verdict. | Yes |
+| `swap` | R9700: time Nemotron to Qwen and back through the real swap scripts, three round trips. Needs `qwen_load` and `swap_test` approvals. | Yes |
+| `cloud` | DeepSeek reference arm on the reasoner mix, capped spend. | Network |
+| `jev` | Writes the 200 Jev cases (120 dev / 80 held-out by family), grades arm answers, built-in rules/majority/oracle arms. Never calls Jev. | No |
+| `registry` | Ledger to a Guardian `models.json` plus `RESULTS.md`, validated by Guardian's own `model_registry.parse_registry`. | No |
+| `status`, `restore`, `dry-run` | Ledger chain and markers; finish a restore; whole lane on the fake machine. | status/dry-run no |
+
+Stages resume from the ledger. Global options (`--ledger-dir`, `--runs-dir`, `--frozen-dir`, `--lanes`, `--candidates`) go before the subcommand.
+
+## What Carter does to start a lane
+1. Review `data/tool_schemas.frozen.json` (14 tools extracted by AST from hermes-agent and `local-worker-mcp.py`) and the shortfall list in `frozen/FROZEN.json`; say go.
+2. Make sure the binaries and models exist: `llama-server` and `llama-perplexity` of the same build per machine (the R9700 build update is the PC session's job), model files under the models dir. Missing files are skipped and logged, never downloaded.
+3. Write a window file:
+
+        python3 benchmarks/v2/run_lane.py window-template --lane workbench > window-workbench.json   # then edit times and approvals
+
+   `qwen_load` allows the Qwen3.8 reasoner, `moe_exception` the Workbench expert-offload path, `alternates` the optional models, `swap_test` the swap timing.
+4. Run `preflight`, then `run`:
+
+        python3 benchmarks/v2/run_lane.py preflight --lane workbench --server-bin <llama-server> --perplexity-bin <llama-perplexity> --models-dir <dir>
+        python3 benchmarks/v2/run_lane.py run --lane workbench --window window-workbench.json --stages smoke,tune,confirm,ladder,quality \
+            --server-bin <llama-server> --perplexity-bin <llama-perplexity> --models-dir <dir>
+
+   Paths can also come from `BENCH_SERVER_BIN`, `BENCH_PERPLEXITY_BIN`, `BENCH_MODELS_DIR` or `lanes.json`.
+5. Optional: `--maverick tasks.jsonl` and `--humaneval he.jsonl` (rerun `freeze` first), a Hermes bench command in `lanes.json` `hermes_bench`, a UPS query in `power_alarm` (see below).
+6. Stop at any time with `touch runs/STOP`. If anything dies, run `python3 benchmarks/v2/run_lane.py restore --lane <lane>`.
+
+## UPS alarm
+`lanes.json` `power_alarm` takes a command and a regex, for example with NUT: `{"command": ["upsc", "ups@localhost", "ups.status"], "alarm_regex": "\\b(OB|LB)\\b"}`. Checked every second during a run; a match aborts and restores. Unset means the run records `power_monitor: false`. The harness cannot silence the audible alarm; with NUT use `upscmd -u <user> ups beeper.mute` (or `beeper.disable`), otherwise the front-panel button or a lower GPU power cap.
+
+## Layout
+`bench_v2/` modules (see each docstring), `candidates.json` (models, criteria, registry mapping), `lanes.json` (machines, ports, safety commands), `data/` (tool schema snapshot, guard text slice), `frozen/` (suites + hashes), `ledger/` (results, hash-chained JSONL, one file per lane), `tests/`.
+
+## Reused, not duplicated
+HumanEval-10 comes from `benchmarks/bench-coding.py` (loaded in place). The llama-bench/perplexity command shapes follow `bench_finalists.py`/`phase_c_quality.py`. The Hermes worker bench is only wrapped (`hermes_adapter.py`), and stays off until its `run.py` can be pointed at the bench port, because it defaults to the Guardian front door.
+
+## Deviations and gaps
+- Hard-code reference solutions live in `tests/hard_code_references.py` so the suites carry no answers; the frozen items hold tests only.
+- Maverick (about 35 items) and Hermes (30) pools are empty until Carter supplies them; the manifest reports the shortfall instead of padding.
+- Rubric items are never auto-scored; they need a judge supplied by the caller.
+
+## Not verified (no real machine was touched)
+llama-perplexity flag spellings and KL output format; speculative-decoding flags (`--spec-type` spelling) and per-request vs server-flag reasoning control for each model; amdgpu sysfs and nvidia-smi sampling on the real cards; UPS query output; the pm2/gsudo and systemd command strings; the swap scripts' behavior and the 8080 health URL; the Hermes bench base-URL override; real llama-server log buffer names; the MTP flag (the repo's Nemotron unit still has `--spec-type draft-mtp` although notes say MTP was slower or absent). Run `preflight` and the `smoke` stage first and read the ledger before trusting later stages.

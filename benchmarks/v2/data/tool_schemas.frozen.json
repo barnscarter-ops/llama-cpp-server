@@ -1,0 +1,564 @@
+{
+ "sha256": "6dc437a138333287dee574f9fc1f8ef12e957d4a243a8ca315f6810e0478c17b",
+ "tools": {
+  "local_worker_cancel": {
+   "function": {
+    "description": "Cancel a queued guardian worker job before it starts.",
+    "name": "local_worker_cancel",
+    "parameters": {
+     "additionalProperties": false,
+     "properties": {
+      "job_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "job_id"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "guardian:qwen-queue/local-worker-mcp.py",
+   "type": "function"
+  },
+  "local_worker_capabilities": {
+   "function": {
+    "description": "List guardian-approved local worker capabilities and whether dispatch is enabled.",
+    "name": "local_worker_capabilities",
+    "parameters": {
+     "additionalProperties": false,
+     "properties": {},
+     "type": "object"
+    }
+   },
+   "source": "guardian:qwen-queue/local-worker-mcp.py",
+   "type": "function"
+  },
+  "local_worker_status": {
+   "function": {
+    "description": "Get the durable status and final result for a guardian worker job.",
+    "name": "local_worker_status",
+    "parameters": {
+     "additionalProperties": false,
+     "properties": {
+      "job_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "job_id"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "guardian:qwen-queue/local-worker-mcp.py",
+   "type": "function"
+  },
+  "local_worker_submit": {
+   "function": {
+    "description": "Request a guardian-managed local worker. The worker may edit files only inside workspace.",
+    "name": "local_worker_submit",
+    "parameters": {
+     "additionalProperties": false,
+     "properties": {
+      "gate": {
+       "enum": [
+        "operator",
+        "frontier"
+       ],
+       "type": "string"
+      },
+      "parent_run_id": {
+       "description": "Optional parent harness run/session ID.",
+       "type": "string"
+      },
+      "preference": {
+       "enum": [
+        "prefer_local",
+        "require_local"
+       ],
+       "type": "string"
+      },
+      "priority": {
+       "maximum": 100,
+       "minimum": 0,
+       "type": "integer"
+      },
+      "quality_floor": {
+       "enum": [
+        "standard",
+        "frontier"
+       ],
+       "type": "string"
+      },
+      "task": {
+       "description": "Bounded worker task.",
+       "type": "string"
+      },
+      "timeout_seconds": {
+       "maximum": 3600,
+       "minimum": 30,
+       "type": "integer"
+      },
+      "work_class": {
+       "enum": [
+        "mechanical_execution",
+        "tool_execution",
+        "planning",
+        "deep_analysis"
+       ],
+       "type": "string"
+      },
+      "workspace": {
+       "description": "Existing workspace directory under D:\\Workspace.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "work_class",
+      "task",
+      "workspace"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "guardian:qwen-queue/local-worker-mcp.py",
+   "type": "function"
+  },
+  "memory": {
+   "function": {
+    "description": "Save durable facts to persistent memory that survive across sessions. Memory is injected into every future turn, so keep entries compact and high-signal.\n\nHOW: make ALL your changes in ONE call via an 'operations' array (each item: {action, content?, old_text?}). The batch applies atomically and the char limit is checked only on the FINAL result \u2014 so a single call can remove/replace stale entries to free room AND add new ones, even when an add alone would overflow. The response reports current/limit chars and confirms completion; one batch call finishes the update, so don't repeat it. Use the bare action/content/old_text fields only for a single lone change.\n\nWHEN: save proactively when the user states a preference, correction, or personal detail, or you learn a stable fact about their environment, conventions, or workflow. Priority: user preferences & corrections > environment facts > procedures. The best memory stops the user repeating themselves.\n\nIF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that removes or shortens enough stale entries and adds the new one together.\n\nTARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your notes (environment, conventions, tool quirks, lessons).\n\nSKIP: trivial/obvious info, easily re-discovered facts, raw data dumps, task progress, completed-work logs, temporary TODO state (use session_search for those). Reusable procedures belong in a skill, not memory.",
+    "name": "memory",
+    "parameters": {
+     "properties": {
+      "action": {
+       "description": "The action to perform (single-op shape). Omit when using 'operations'.",
+       "enum": [
+        "add",
+        "replace",
+        "remove"
+       ],
+       "type": "string"
+      },
+      "content": {
+       "description": "The entry content. Required for 'add' and 'replace' (single-op shape). Alias: 'new_text' is also accepted (mirrors old_text).",
+       "type": "string"
+      },
+      "new_text": {
+       "description": "Alias for 'content' (single-op shape). Provided so the replace/remove old_text/new_text pairing works; if both are set, 'content' wins.",
+       "type": "string"
+      },
+      "old_text": {
+       "description": "REQUIRED for 'replace' and 'remove' (single-op shape): a short unique substring identifying the existing entry to modify. Omit only for 'add'.",
+       "type": "string"
+      },
+      "operations": {
+       "description": "Batch shape: a list of operations applied atomically in one call against the final char budget. Preferred when making multiple changes or consolidating to make room. Each item is {action, content?, old_text?}.",
+       "items": {
+        "properties": {
+         "action": {
+          "enum": [
+           "add",
+           "replace",
+           "remove"
+          ],
+          "type": "string"
+         },
+         "content": {
+          "description": "Entry content for add/replace. Alias: 'new_text'.",
+          "type": "string"
+         },
+         "new_text": {
+          "description": "Alias for 'content' in a batch op.",
+          "type": "string"
+         },
+         "old_text": {
+          "description": "Substring identifying the entry for replace/remove.",
+          "type": "string"
+         }
+        },
+        "required": [
+         "action"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "target": {
+       "description": "Which memory store: 'memory' for personal notes, 'user' for user profile.",
+       "enum": [
+        "memory",
+        "user"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "target"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/memory_tool.py",
+   "type": "function"
+  },
+  "patch": {
+   "function": {
+    "description": "Targeted find-and-replace edits in files. Use this instead of sed/awk in terminal. Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. Returns a unified diff. Auto-runs syntax checks after editing. Finds a unique string and replaces it.",
+    "name": "patch",
+    "parameters": {
+     "properties": {
+      "new_string": {
+       "description": "Changed replacement text; it must differ from old_string. Pass empty string '' to delete the matched text.",
+       "type": "string"
+      },
+      "old_string": {
+       "description": "Exact text to find and replace. Must be unique in the file unless replace_all=true. Include surrounding context lines to ensure uniqueness.",
+       "type": "string"
+      },
+      "path": {
+       "description": "File path to edit.",
+       "type": "string"
+      },
+      "replace_all": {
+       "default": false,
+       "description": "Replace all occurrences instead of requiring a unique match (default: false)",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "path",
+      "old_string",
+      "new_string"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/file_tools.py",
+   "type": "function"
+  },
+  "process": {
+   "function": {
+    "description": "Manage background processes started with terminal(background=true). poll: status + new output. log: full output, paged. wait: block until exit or timeout (partial output on timeout). write vs submit: submit appends Enter \u2014 use it to answer prompts; write sends raw bytes, no newline. close: EOF stdin. kill: terminate.",
+    "name": "process",
+    "parameters": {
+     "properties": {
+      "action": {
+       "enum": [
+        "list",
+        "poll",
+        "log",
+        "wait",
+        "kill",
+        "write",
+        "submit",
+        "close"
+       ],
+       "type": "string"
+      },
+      "data": {
+       "description": "Stdin text for write/submit.",
+       "type": "string"
+      },
+      "limit": {
+       "description": "Max log lines.",
+       "minimum": 1,
+       "type": "integer"
+      },
+      "offset": {
+       "description": "Log line offset (default: last 200).",
+       "type": "integer"
+      },
+      "session_id": {
+       "description": "From terminal background output; any unique prefix works ('4dae' for proc_4dae56ca81f6). Required except for 'list'.",
+       "type": "string"
+      },
+      "timeout": {
+       "description": "Max seconds for 'wait'.",
+       "minimum": 1,
+       "type": "integer"
+      }
+     },
+     "required": [
+      "action"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/process_registry.py",
+   "type": "function"
+  },
+  "read_file": {
+   "function": {
+    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are truncated on a line boundary and return a next_offset; continue with offset to read the rest. Documents auto-extract to readable text: .ipynb, Office (.docx/.xlsx/.pptx and legacy .doc/.ppt/.xls), PDF (text layer), OpenDocument, RTF, EPUB. Cannot read images/binary \u2014 use vision_analyze for images.",
+    "name": "read_file",
+    "parameters": {
+     "properties": {
+      "limit": {
+       "default": 2000,
+       "description": "Maximum number of lines to read (default: 2000, max: 2000). Reads are additionally capped at a ~100K-character budget with a next_offset continuation.",
+       "maximum": 2000,
+       "type": "integer"
+      },
+      "offset": {
+       "default": 1,
+       "description": "Line number to start reading from (1-indexed, default: 1)",
+       "minimum": 1,
+       "type": "integer"
+      },
+      "path": {
+       "description": "Path to the file to read (absolute, relative, or ~/path)",
+       "type": "string"
+      }
+     },
+     "required": [
+      "path"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/file_tools.py",
+   "type": "function"
+  },
+  "search_files": {
+   "function": {
+    "description": "Search file contents or find files by name. Use this instead of grep/rg/find/ls in terminal. Ripgrep-backed, faster than shell equivalents. On macOS, broad searches above the user home automatically skip TCC-protected folders (Desktop, Documents, Downloads, Library, Movies, Music, Pictures); target one directly when access is intentional.\n\nContent search (target='content'): Regex search inside files. Output modes: full matches with line numbers, file paths only, or match counts.\n\nFile search (target='files'): Find files by glob pattern (e.g., '*.py', '*config*'). Also use this instead of ls \u2014 results sorted by modification time.",
+    "name": "search_files",
+    "parameters": {
+     "properties": {
+      "context": {
+       "default": 0,
+       "description": "Number of context lines before and after each match (grep mode only)",
+       "type": "integer"
+      },
+      "file_glob": {
+       "description": "Filter files by pattern in grep mode (e.g., '*.py' to only search Python files)",
+       "type": "string"
+      },
+      "limit": {
+       "default": 50,
+       "description": "Maximum number of results to return (default: 50)",
+       "type": "integer"
+      },
+      "offset": {
+       "default": 0,
+       "description": "Skip first N results for pagination (default: 0)",
+       "type": "integer"
+      },
+      "output_mode": {
+       "default": "content",
+       "description": "Output format for grep mode: 'content' shows matching lines with line numbers, 'files_only' lists file paths, 'count' shows match counts per file",
+       "enum": [
+        "content",
+        "files_only",
+        "count"
+       ],
+       "type": "string"
+      },
+      "path": {
+       "default": ".",
+       "description": "Directory or file to search in (default: current working directory)",
+       "type": "string"
+      },
+      "pattern": {
+       "description": "Regex pattern for content search, or glob pattern (e.g., '*.py') for file search",
+       "type": "string"
+      },
+      "target": {
+       "default": "content",
+       "description": "'content' searches inside file contents, 'files' searches for files by name",
+       "enum": [
+        "content",
+        "files"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "pattern"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/file_tools.py",
+   "type": "function"
+  },
+  "send_message": {
+   "function": {
+    "description": "Send a message to a connected messaging platform, or list available targets.\n\nIMPORTANT: When the user asks to send to a specific channel or person (not just a bare platform name), call send_message(action='list') FIRST to see available targets, then send to the correct one.\nIf the user just says a platform name like 'send to telegram', send directly to the home channel without listing first.",
+    "name": "send_message",
+    "parameters": {
+     "properties": {
+      "action": {
+       "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms. 'react' attaches an emoji reaction to a message (platforms that support it, e.g. photon/iMessage tapbacks). 'unreact' retracts a previously-added reaction.",
+       "enum": [
+        "send",
+        "list",
+        "react",
+        "unreact"
+       ],
+       "type": "string"
+      },
+      "emoji": {
+       "description": "For action='react': the emoji to react with (e.g. '\u2764\ufe0f'). On iMessage, \u2764\ufe0f\ud83d\udc4d\ud83d\udc4e\ud83d\ude02\u203c\ufe0f\u2753 render as native tapbacks; other emoji use custom-emoji reactions.",
+       "type": "string"
+      },
+      "message": {
+       "description": "The message text to send. To send an image or file, include MEDIA:<local_path> (e.g. 'MEDIA:/tmp/report.pdf') in the message \u2014 the platform will deliver it as a native media attachment.",
+       "type": "string"
+      },
+      "message_id": {
+       "description": "For action='react'/'unreact': id of the message to react to. Omit to target the most recent message received in that chat (usually the one being replied to).",
+       "type": "string"
+      },
+      "target": {
+       "description": "Delivery target. Format: 'platform' (uses home channel), 'platform:#channel-name', 'platform:chat_id', or 'platform:chat_id:thread_id' for Telegram topics and Discord threads. Examples: 'telegram', 'telegram:-1001234567890:17585', 'discord:999888777:555444333', 'discord:#bot-home', 'slack:#engineering', 'signal:+155****4567', 'matrix:!roomid:server.org', 'matrix:@user:server.org', 'ntfy:alerts-channel' (explicit ntfy topic), 'yuanbao:direct:<account_id>' (DM), 'yuanbao:group:<group_code>' (group chat)",
+       "type": "string"
+      }
+     },
+     "required": [],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/send_message_tool.py",
+   "type": "function"
+  },
+  "session_search": {
+   "function": {
+    "description": "Search past Hermes sessions (FTS5 over the local session DB), or read/scroll inside one. Four shapes, picked by args: `query` = discovery (top-N matching sessions, top result fully hydrated); `session_id` + `around_message_id` = scroll (window of messages around an anchor); `session_id` alone = read a whole session \u2014 how you resolve an `@session:<profile>/<id>` link (split on '/' into profile + id); no args = browse recent sessions. Results are actual DB messages, no LLM. Searches conversation history ONLY \u2014 when the user gave a direct source (URL, file, contact, live system), inspect that first; never conclude 'not found' from history alone. Use for questions about past conversations: 'what did we do about X', 'where did we leave Y'. When referring the user to a session, write its `link` value verbatim inline (it renders as a titled link).",
+    "name": "session_search",
+    "parameters": {
+     "properties": {
+      "around_message_id": {
+       "description": "Scroll shape. Message id to center the window on \u2014 use match_message_id from a discovery result, or any id from a prior window.",
+       "type": "integer"
+      },
+      "detail": {
+       "default": "adaptive",
+       "description": "Discovery shape only. 'adaptive' (default) fully hydrates the top-ranked result and returns only the exact anchor message for lower-ranked results. 'full' returns bookends and the complete anchored window for every result.",
+       "enum": [
+        "adaptive",
+        "full"
+       ],
+       "type": "string"
+      },
+      "limit": {
+       "default": 3,
+       "description": "Discovery shape only. Max sessions to return (default 3, max 10). Bump to 5\u201310 when the topic likely spans several sessions and you want to pick the right one to scroll into.",
+       "type": "integer"
+      },
+      "profile": {
+       "description": "Optional. Read sessions from another Hermes profile's database (read-only). Use when resolving an `@session:<profile>/<id>` link: pass the profile segment here with session_id as the id segment. Omit to use the current profile.",
+       "type": "string"
+      },
+      "query": {
+       "description": "Search query (discovery shape). Keywords, phrases, or boolean expressions to find in past sessions. Omit to browse recent sessions. Ignored when session_id + around_message_id are set (scroll shape).",
+       "type": "string"
+      },
+      "role_filter": {
+       "description": "Optional. Comma-separated roles to include. Discovery defaults to 'user,assistant' (tool output is usually noise). Pass 'user,assistant,tool' to include tool output (debugging tool behaviour) or 'tool' to search tool output only.",
+       "type": "string"
+      },
+      "session_id": {
+       "description": "Scroll shape. Session to read inside. Use the session_id returned from a prior discovery call. Must be paired with around_message_id.",
+       "type": "string"
+      },
+      "sort": {
+       "description": "Discovery shape only. Temporal bias on top of FTS5 ranking: omit for relevance-only (exploratory recall), 'newest' for \"where did we leave X\", 'oldest' for \"how did X start\".",
+       "enum": [
+        "newest",
+        "oldest"
+       ],
+       "type": "string"
+      },
+      "window": {
+       "default": 5,
+       "description": "Scroll shape only. Messages to return on each side of the anchor (anchor itself always included). Clamped to [1, 20]. Default 5.",
+       "type": "integer"
+      }
+     },
+     "required": [],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/session_search_tool.py",
+   "type": "function"
+  },
+  "skill_view": {
+   "function": {
+    "description": "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. To access those, call again with file_path parameter.",
+    "name": "skill_view",
+    "parameters": {
+     "properties": {
+      "file_path": {
+       "description": "OPTIONAL: Path to a linked file within the skill (e.g., 'references/api.md', 'templates/config.yaml', 'scripts/validate.py'). Omit to get the main SKILL.md content.",
+       "type": "string"
+      },
+      "name": {
+       "description": "The skill name (use skills_list to see available skills). For plugin-provided skills, use the qualified form 'plugin:skill' (e.g. 'superpowers:writing-plans').",
+       "type": "string"
+      }
+     },
+     "required": [
+      "name"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/skills_tool.py",
+   "type": "function"
+  },
+  "web_search": {
+   "function": {
+    "description": "Search the web for information. Returns up to 5 results by default with titles, URLs, and descriptions. The query is passed through to the configured backend, so operators such as site:domain, filetype:pdf, intitle:word, -term, and \"exact phrase\" may work when the backend supports them.",
+    "name": "web_search",
+    "parameters": {
+     "properties": {
+      "limit": {
+       "default": 5,
+       "description": "Maximum number of results to return. Defaults to 5.",
+       "maximum": 100,
+       "minimum": 1,
+       "type": "integer"
+      },
+      "query": {
+       "description": "The search query to look up on the web. You may include backend-supported operators such as site:example.com, filetype:pdf, intitle:word, -term, or \"exact phrase\".",
+       "type": "string"
+      }
+     },
+     "required": [
+      "query"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/web_tools.py",
+   "type": "function"
+  },
+  "write_file": {
+   "function": {
+    "description": "Write content to a file, completely replacing existing content. Use this instead of echo/cat heredoc in terminal. Creates parent directories automatically. OVERWRITES the entire file \u2014 use 'patch' for targeted edits. Auto-runs syntax checks on .py/.json/.yaml/.toml and other linted languages; only NEW errors introduced by this write are surfaced (pre-existing errors are filtered out). The result's verified:true means the on-disk content hash was confirmed \u2014 do NOT re-read the file to check the write landed.",
+    "name": "write_file",
+    "parameters": {
+     "properties": {
+      "content": {
+       "description": "Complete content to write to the file",
+       "type": "string"
+      },
+      "path": {
+       "description": "Path to the file to write (will be created if it doesn't exist, overwritten if it does)",
+       "type": "string"
+      }
+     },
+     "required": [
+      "path",
+      "content"
+     ],
+     "type": "object"
+    }
+   },
+   "source": "hermes:tools/file_tools.py",
+   "type": "function"
+  }
+ }
+}

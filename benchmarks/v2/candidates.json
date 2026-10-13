@@ -1,0 +1,149 @@
+{
+  "_comment": "Candidates from MODEL-RESEARCH.md (2026-10-13). Numbers are the research file's VRAM math; the S1 smoke run re-checks each against the real load. Nothing here downloads anything.",
+  "roles": {
+    "worker_bee":     {"lane": "workbench", "criteria": {"strict_tool_validity_min": 0.95, "instruction_min": 0.95}},
+    "fast_executor":  {"lane": "r9700",     "criteria": {"strict_tool_validity_min": 0.95, "instruction_min": 0.95}},
+    "slow_reasoner":  {"lane": "r9700",     "criteria": {"within_points_of_anchor": 10, "anchor": "deepseek-flash"}}
+  },
+  "models": [
+    {
+      "id": "qwen36-35b-a3b-iq3", "role": "worker_bee", "lane": "workbench", "status": "on_disk",
+      "file": "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf", "arch": "qwen35moe", "moe": true,
+      "weights_gib": 11.46, "kv_kib_per_token_f16": 20, "state_gib": 0.06, "compute_gib": 1.0,
+      "kv_policy": "forced_q8", "tuned": true, "incumbent": true,
+      "base_flags": ["--jinja", "--cont-batching", "--repeat-penalty", "1.0", "--min-p", "0.01"],
+      "reasoning_modes": {
+        "off": {"flags": ["--reasoning", "off"], "chat_template_kwargs": {"enable_thinking": false}},
+        "on":  {"flags": [], "chat_template_kwargs": {"enable_thinking": true}}
+      },
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5},
+      "sampler_source": "assumed (Qwen non-thinking card); confirm",
+      "spec_options": {"off": []},
+      "registry": {"id": "workbench-local", "seat": "glm", "host": "workbench", "egress": "pc", "needs_approval": false}
+    },
+    {
+      "id": "qwen36-35b-a3b-q4km-offload", "role": "worker_bee", "lane": "workbench", "status": "on_disk",
+      "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf", "arch": "qwen35moe", "moe": true,
+      "weights_gib": 19.66, "kv_kib_per_token_f16": 20, "state_gib": 0.06, "compute_gib": 1.0,
+      "moe_offload": {"layers": 40, "expert_gib_per_layer": 0.455, "nonexpert_gib": 1.8},
+      "exception_only": true, "kv_policy": "forced_q8", "tuned": true,
+      "base_flags": ["--jinja", "--cont-batching", "--repeat-penalty", "1.0", "--min-p", "0.01"],
+      "reasoning_modes": {
+        "off": {"flags": ["--reasoning", "off"], "chat_template_kwargs": {"enable_thinking": false}},
+        "on":  {"flags": [], "chat_template_kwargs": {"enable_thinking": true}}
+      },
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5},
+      "sampler_source": "assumed (Qwen non-thinking card); confirm",
+      "spec_options": {"off": []},
+      "registry": {"id": "workbench-local", "seat": "glm", "host": "workbench", "egress": "pc", "needs_approval": false}
+    },
+    {
+      "id": "ornith-1.5-35b-a3b-q4km-offload", "role": "worker_bee", "lane": "workbench", "status": "to_download",
+      "file": "Ornith-1.5-35B-A3B-Q4_K_M.gguf", "arch": "qwen35moe", "moe": true,
+      "weights_gib": 19.7, "kv_kib_per_token_f16": 20, "kv_estimate": "assumed same as Qwen3.6; verify at load",
+      "state_gib": 0.06, "compute_gib": 1.0,
+      "moe_offload": {"layers": 40, "expert_gib_per_layer": 0.455, "nonexpert_gib": 1.8},
+      "exception_only": true, "provisional": true, "kv_policy": "forced_q8", "tuned": true,
+      "base_flags": ["--jinja", "--cont-batching"],
+      "reasoning_modes": {"off": {"flags": [], "chat_template_kwargs": {}}},
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+      "sampler_source": "Ornith GGUF card (llama.cpp does not apply upstream defaults)",
+      "spec_options": {"off": []},
+      "registry": {"id": "workbench-local", "seat": "glm", "host": "workbench", "egress": "pc", "needs_approval": false}
+    },
+    {
+      "id": "ornith-1.5-35b-a3b-q5km", "role": "fast_executor", "lane": "r9700", "status": "to_download",
+      "file": "Ornith-1.5-35B-A3B-Q5_K_M.gguf", "arch": "qwen35moe", "moe": true,
+      "weights_gib": 23.0, "kv_kib_per_token_f16": 20, "kv_estimate": "assumed same as Qwen3.6; verify at load",
+      "state_gib": 0.06, "compute_gib": 1.0, "provisional": true, "tuned": true,
+      "kv_policy": "tested",
+      "base_flags": ["--jinja", "--cont-batching"],
+      "reasoning_modes": {"off": {"flags": [], "chat_template_kwargs": {}}},
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+      "sampler_source": "Ornith GGUF card",
+      "spec_options": {"off": [], "mtp": ["--spec-type", "draft-mtp"]},
+      "spec_conflicts": {"mtp": ["mmproj"]},
+      "needs_build_min": 10505,
+      "registry": {"id": "ornith-r9700", "seat": "clerk", "host": "r9700", "egress": "lan", "needs_approval": false}
+    },
+    {
+      "id": "qwen36-35b-a3b-q5km", "role": "fast_executor", "lane": "r9700", "status": "to_download",
+      "file": "Qwen3.6-35B-A3B-UD-Q5_K_M.gguf", "arch": "qwen35moe", "moe": true,
+      "weights_gib": 24.6, "kv_kib_per_token_f16": 20, "state_gib": 0.06, "compute_gib": 1.0,
+      "tuned": true, "kv_policy": "tested",
+      "base_flags": ["--jinja", "--cont-batching", "--repeat-penalty", "1.0", "--min-p", "0.01"],
+      "reasoning_modes": {
+        "off": {"flags": ["--reasoning", "off"], "chat_template_kwargs": {"enable_thinking": false}},
+        "on":  {"flags": [], "chat_template_kwargs": {"enable_thinking": true}}
+      },
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5},
+      "sampler_source": "assumed (Qwen non-thinking card); confirm",
+      "spec_options": {"off": []},
+      "registry": {"id": "qwen36-r9700", "seat": "clerk", "host": "r9700", "egress": "lan", "needs_approval": false}
+    },
+    {
+      "id": "nemotron-3.5-lightning-q5km", "role": "fast_executor", "lane": "r9700", "status": "on_disk",
+      "file": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_M.gguf", "arch": "nemotron_h_moe", "moe": true,
+      "weights_gib": 25.1, "kv_kib_per_token_f16": 12, "kv_estimate": "guess (few attention layers); verify at load",
+      "state_gib": 0.0, "compute_gib": 1.0,
+      "tuned": false, "partial_tune": ["B"], "control": true, "incumbent": true, "kv_policy": "tested",
+      "base_flags": ["--jinja"],
+      "reasoning_modes": {"off": {"flags": ["--reasoning", "off"], "chat_template_kwargs": {}}},
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 1.0, "top_p": 0.95},
+      "sampler_source": "Nemotron card; coding agents also need force_nonempty_content",
+      "extra_body": {"chat_template_kwargs": {"force_nonempty_content": true}},
+      "spec_options": {"off": [], "mtp": ["--spec-type", "draft-mtp"]},
+      "registry": {"id": "nemotron-r9700", "seat": "clerk", "host": "r9700", "egress": "lan", "needs_approval": false}
+    },
+    {
+      "id": "qwen3.8-27b-q6k", "role": "slow_reasoner", "lane": "r9700", "status": "on_disk",
+      "file": "Qwen3.8-27B-UD-Q6_K.gguf", "arch": "qwen35 (hybrid)", "moe": false,
+      "weights_gib": 20.47, "kv_kib_per_token_f16": 64, "state_gib": 0.15, "compute_gib": 1.2,
+      "draft": {"file": "mtp-Qwen3.8-27B-Q4_0.gguf", "gib": 1.28},
+      "mmproj": {"file": "mmproj-Qwen3.8-27B-F16.gguf", "gib": 0.80},
+      "tuned": true, "incumbent": true, "kv_policy": "fixed_q8",
+      "base_flags": ["--jinja"],
+      "reasoning_modes": {
+        "on":  {"flags": [], "chat_template_kwargs": {"enable_thinking": true}},
+        "off": {"flags": [], "chat_template_kwargs": {"enable_thinking": false}}
+      },
+      "production_reasoning": "on",
+      "sampler_card": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+      "sampler_source": "Qwen3.8 thinking card",
+      "spec_options": {"off": [], "mtp": ["--spec-type", "draft-mtp", "-md", "{draft_path}"]},
+      "registry": {"id": "qwen27b-r9700", "seat": "consult", "host": "r9700", "egress": "lan", "needs_approval": true}
+    },
+    {
+      "id": "muse-glimmer-30b-q6k", "role": "slow_reasoner", "lane": "r9700", "status": "to_download",
+      "file": null, "arch": "dense", "moe": false, "optional": true, "enabled": false,
+      "weights_gib": 21.5, "kv_kib_per_token_f16": 14, "kv_estimate": "meta: ~1.8 GB at 128k; unverified",
+      "state_gib": 0.0, "compute_gib": 1.2, "tuned": true, "kv_policy": "fixed_q8",
+      "base_flags": ["--jinja"],
+      "reasoning_modes": {"on": {"flags": [], "chat_template_kwargs": {}}},
+      "production_reasoning": "on",
+      "sampler_card": {"temperature": 1.0},
+      "sampler_source": "unknown; confirm from the model card",
+      "spec_options": {"off": []},
+      "registry": {"id": "muse-r9700", "seat": "consult", "host": "r9700", "egress": "lan", "needs_approval": true}
+    },
+    {
+      "id": "gemma4-26b-a4b-q4km", "role": "fast_executor", "lane": "r9700", "status": "to_download",
+      "file": null, "arch": "gemma4moe", "moe": true, "optional": true, "enabled": false,
+      "weights_gib": 16.8, "kv_kib_per_token_f16": 20, "kv_estimate": "unverified (sliding-window)",
+      "state_gib": 0.0, "compute_gib": 1.0, "tuned": true, "kv_policy": "tested",
+      "base_flags": ["--jinja"],
+      "reasoning_modes": {"off": {"flags": [], "chat_template_kwargs": {}}},
+      "production_reasoning": "off",
+      "sampler_card": {"temperature": 1.0},
+      "sampler_source": "unknown; confirm from the model card",
+      "spec_options": {"off": []},
+      "registry": {"id": "gemma4-r9700", "seat": "clerk", "host": "r9700", "egress": "lan", "needs_approval": false}
+    }
+  ]
+}

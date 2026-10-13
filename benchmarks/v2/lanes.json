@@ -1,0 +1,135 @@
+{
+  "_comment": "Machine facts and safety commands. Paths marked null are supplied on the command line or by BENCH_* env vars. Every safety command only runs inside a window Carter created.",
+  "lanes": {
+    "workbench": {
+      "gpu": "RTX 4060 Ti 16 GB",
+      "gpu_kind": "nvidia",
+      "vram_gib": 16.0,
+      "headroom_mib": 600,
+      "overhead_gib": 0.7,
+      "default_compute_gib": 1.0,
+      "bench_host": "127.0.0.1",
+      "bench_port": 8099,
+      "physical_cores": 12,
+      "server_bin": null,
+      "bench_bin": null,
+      "perplexity_bin": null,
+      "models_dir": null,
+      "runs_dir": "runs",
+      "temp_start_c": 65,
+      "temp_pause_c": 85,
+      "temp_resume_c": 70,
+      "temp_abort_c": 90,
+      "power_alarm": {
+        "command": null,
+        "alarm_regex": null
+      },
+      "safety": {
+        "kind": "pm2",
+        "lock_file": null,
+        "services": [
+          {
+            "name": "llama-guardian"
+          },
+          {
+            "name": "local-llm"
+          }
+        ],
+        "status_cmd": [
+          "C:\\Program Files\\gsudo\\Current\\gsudo.exe",
+          "cmd",
+          "/c",
+          "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 jlist"
+        ],
+        "stop_cmd": [
+          "C:\\Program Files\\gsudo\\Current\\gsudo.exe",
+          "cmd",
+          "/c",
+          "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 stop {name}"
+        ],
+        "start_cmd": [
+          "C:\\Program Files\\gsudo\\Current\\gsudo.exe",
+          "cmd",
+          "/c",
+          "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 restart {name}"
+        ],
+        "restore_verify_log_regex": "listening|online"
+      }
+    },
+    "r9700": {
+      "gpu": "AMD R9700 32 GB",
+      "gpu_kind": "amdgpu_sysfs",
+      "vram_gib": 30.5,
+      "headroom_mib": 1536,
+      "overhead_gib": 0.0,
+      "default_compute_gib": 1.2,
+      "bench_host": "127.0.0.1",
+      "bench_port": 8090,
+      "physical_cores": null,
+      "server_bin": "/opt/llama/src/build/bin/llama-server",
+      "bench_bin": null,
+      "perplexity_bin": null,
+      "models_dir": "/opt/llama/models",
+      "runs_dir": "runs",
+      "temp_start_c": 65,
+      "temp_pause_c": 85,
+      "temp_resume_c": 70,
+      "temp_abort_c": 90,
+      "power_alarm": {
+        "command": null,
+        "alarm_regex": null
+      },
+      "safety": {
+        "kind": "systemd",
+        "lock_file": "/opt/llama/swap.lock",
+        "services": [
+          {
+            "name": "llama-server"
+          }
+        ],
+        "status_cmd": [
+          "systemctl",
+          "is-active",
+          "{name}"
+        ],
+        "stop_cmd": [
+          "systemctl",
+          "stop",
+          "{name}"
+        ],
+        "start_cmd": [
+          "systemctl",
+          "start",
+          "{name}"
+        ],
+        "journal_cmd": [
+          "journalctl",
+          "-u",
+          "{name}",
+          "-n",
+          "80",
+          "--no-pager"
+        ],
+        "restore_verify_log_regex": "server is listening|all slots are idle"
+      },
+      "cold_cache_cmd": [
+        "sh",
+        "-c",
+        "sync; echo 3 > /proc/sys/vm/drop_caches"
+      ],
+      "swap": {
+        "to_qwen": [
+          "/opt/llama/swap-qwen-consult.sh"
+        ],
+        "to_nemotron": [
+          "/opt/llama/swap-nemo-clerk.sh"
+        ],
+        "health_url": "http://127.0.0.1:8080/health",
+        "qwen_models_url": "http://127.0.0.1:8080/v1/models",
+        "round_trips": 3
+      }
+    }
+  },
+  "hermes_bench": null,
+  "_hermes_bench_note": "Set to {\"cmd\": [...], \"timeout_s\": 3600} once the Hermes bench can be pointed at the bench port. Placeholders: {alias} {base_url} {run_id}. The command must print {\"tasks\": {name: bool}} as its last stdout line."
+}
