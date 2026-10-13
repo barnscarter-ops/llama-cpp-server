@@ -215,6 +215,12 @@ def oracle_arm(case: dict, models: list[RouteModel]) -> str | None:
 def grade(arm_rows: list[dict], labeled: list[dict]) -> dict:
     """arm_rows: {case_id, route (id or null = abstain), latency_ms?, cost_usd?}. Violations must be zero to qualify."""
     by_case = {c["case_id"]: c for c in labeled}
+    seen: dict[str, int] = {}
+    for row in arm_rows:
+        seen[row["case_id"]] = seen.get(row["case_id"], 0) + 1
+    missing = sorted(set(by_case) - set(seen))
+    duplicates = sorted(k for k, v in seen.items() if v > 1)
+    unknown = sorted(set(seen) - set(by_case))
     n = viol = acc_ok = pref_ok = pref_n = 0
     abst_tp = abst_fp = abst_fn = 0
     lats, cost = [], 0.0
@@ -246,7 +252,8 @@ def grade(arm_rows: list[dict], labeled: list[dict]) -> dict:
     routable = sum(1 for r in arm_rows if r["case_id"] in by_case and not by_case[r["case_id"]]["abstain_expected"])
     lo, hi = wilson(acc_ok, max(1, routable))
     return {
-        "n": n, "violations": viol, "violation_rate": viol / n if n else None, "qualifies": viol == 0 and n > 0,
+        "n": n, "violations": viol, "violation_rate": viol / n if n else None, "qualifies": viol == 0 and n > 0 and not (missing or duplicates or unknown),
+        "missing_cases": missing, "duplicate_cases": duplicates, "unknown_cases": unknown,
         "acceptable_accuracy": acc_ok / routable if routable else None, "acceptable_ci": [round(lo, 3), round(hi, 3)],
         "preferred_accuracy": pref_ok / pref_n if pref_n else None, "preferred_labeled": pref_n,
         "abstain_precision": abst_tp / (abst_tp + abst_fp) if (abst_tp + abst_fp) else None,

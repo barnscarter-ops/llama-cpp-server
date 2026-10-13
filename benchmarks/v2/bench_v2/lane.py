@@ -437,7 +437,7 @@ class Lane:
                     toggle = toggle_effect(p2.checks["subset"] if other == "on" else prod_sub,
                                            prod_sub if other == "on" else p2.checks["subset"])
                     self.ledger.event("reasoning_toggle", model=c.id, production=prod, other=other, effect=toggle)
-            if summary:
+            if summary and p.status == "ok":  # a point disqualified after the fact (spill, crash) never earns a verdict
                 anchor = self._anchor()
                 verdict = role_verdict(c.role, self.roles[c.role]["criteria"], summary, anchor)
                 self.ledger.event("role_verdict", model=c.id, role=c.role, verdict=verdict, overall=summary.get("overall"))

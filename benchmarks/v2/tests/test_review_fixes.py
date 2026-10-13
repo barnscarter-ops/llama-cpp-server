@@ -571,3 +571,72 @@ class RoundTwoFixes(unittest.TestCase):
     def test_scoring_module_imports_resource_at_top_level(self):
         from bench_v2.suites import scoring
         self.assertTrue(hasattr(scoring, "resource"))
+
+
+class RoundThreeFixes(unittest.TestCase):
+    def test_lost_gpu_telemetry_aborts_when_spill_reading_is_required(self):
+        from bench_v2.errors import AbortRun
+
+        class NoGpu(FakeBackend):
+            def gpu_sample(self):
+                return None
+        env = make_env("workbench", backend_cls=NoGpu)
+        self.assertTrue(env.lane.telemetry.require_shared)
+        for fn in (env.lane.telemetry.capture_baseline, env.lane.telemetry.observe):
+            with self.assertRaises(AbortRun) as cm:
+                fn()
+            self.assertEqual(cm.exception.code, "no_spill_reading")
+
+    def test_cold_load_not_counted_when_cache_drop_fails(self):
+        from bench_v2 import ladder
+
+        class Failing:
+            def run(self, cmd, timeout=60):
+                from bench_v2.backend import CmdResult
+                return CmdResult(1, "denied")
+
+        class Runner:
+            cand = type("C", (), {"id": "m"})()
+
+            def run(self, *a, **k):
+                raise AssertionError("no launch should happen when the cache could not be dropped")
+        res = ladder.cold_loads(Runner(), None, 2, ["sh", "-c", "false"], Failing())
+        self.assertEqual((res.failures, res.cache_drop_failures, res.cold_s), (2, 2, []))
+        self.assertIsNone(res.wake_seconds())
+
+    def test_router_must_cover_every_held_out_case_exactly_once(self):
+        from bench_v2 import jevtrack
+        labeled = [{"case_id": f"c{i}", "acceptable": ["a"], "abstain_expected": False} for i in range(3)]
+        one = [{"case_id": "c0", "route": "a"}]
+        g = jevtrack.grade(one, labeled)
+        self.assertFalse(g["qualifies"])
+        self.assertEqual(g["missing_cases"], ["c1", "c2"])
+        dup = [{"case_id": c["case_id"], "route": "a"} for c in labeled] + [{"case_id": "c0", "route": "a"}]
+        self.assertFalse(jevtrack.grade(dup, labeled)["qualifies"])
+        full = [{"case_id": c["case_id"], "route": "a"} for c in labeled]
+        self.assertTrue(jevtrack.grade(full, labeled)["qualifies"])
+
+    def test_cloud_stops_between_items_when_the_guard_fires(self):
+        from bench_v2 import cloud
+        from bench_v2.errors import AbortRun
+        env = make_env("workbench", oracle=False)
+        items = [{"id": f"reasoning-{i:04d}", "category": "reasoning", "messages": [{"role": "user", "content": "2+2"}],
+                  "scorer": {"type": "exact", "answers": ["4"]}, "max_tokens": 10} for i in range(5)]
+        calls = {"n": 0}
+
+        def guard():
+            calls["n"] += 1
+            if calls["n"] > 2:
+                raise AbortRun("approved window ended", "window_end")
+        with self.assertRaises(AbortRun):
+            cloud.run_anchor(env.backend, env.lane.ledger, items, "https://api.example.invalid/v1", "m", "K", 1, 1, 5.0, "r",
+                             environ={"K": "x"}, on_item=guard)
+        self.assertEqual(env.world.request_count, 2)
+
+    def test_score_step_uses_only_the_run_the_raw_output_belongs_to(self):
+        from bench_v2 import score
+        recs = [{"phase": "quality", "mode": "production-off", "model": {"id": "m"}, "run_id": rid,
+                 "quality": {"item_id": "i1", "suite": "reasoning", "pass": True, "detail": "", "tokens_out": 1, "wall_s": 0.1,
+                             "finish": "stop", "valid": True}} for rid in ("old", "new")]
+        got = score._results_from_ledger(recs, "m", "production-off", "new", {})
+        self.assertEqual(len(got), 1)

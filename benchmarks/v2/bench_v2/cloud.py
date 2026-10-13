@@ -66,7 +66,7 @@ def is_internal_item(item: dict) -> bool:
 
 def run_anchor(backend: Backend, ledger: Ledger, items: list[dict], endpoint: str, model: str, key_env: str,
                price_in_per_1k: float, price_out_per_1k: float, cap_usd: float, run_id: str, environ=None,
-               allow_internal: bool = False, defer_code: bool = True, raw_dir: str | None = None) -> dict:
+               allow_internal: bool = False, defer_code: bool = True, raw_dir: str | None = None, on_item=None) -> dict:
     environ = os.environ if environ is None else environ
     if not allow_internal:  # anything derived from Carter's systems or clients stays home without a window approval
         kept = [i for i in items if not is_internal_item(i)]
@@ -92,7 +92,7 @@ def run_anchor(backend: Backend, ledger: Ledger, items: list[dict], endpoint: st
 
     sink: list = []
     results = quality.run_items(Authed(), endpoint, model, items, None, None, think=False, cost_guard=cost_guard,
-                                defer_code=defer_code, raw_sink=sink)
+                                defer_code=defer_code, raw_sink=sink, on_item=on_item)
     if defer_code and raw_dir:
         os.makedirs(raw_dir, exist_ok=True)
         path = os.path.join(raw_dir, f"{model}.anchor.jsonl".replace("/", "_"))

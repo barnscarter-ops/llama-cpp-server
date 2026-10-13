@@ -19,7 +19,7 @@ sys.path.insert(0, str(HERE))
 from bench_v2 import jevtrack, registry  # noqa: E402
 from bench_v2.backend import SystemBackend  # noqa: E402
 from bench_v2.config import load_candidates, load_lanes  # noqa: E402
-from bench_v2.errors import BenchError  # noqa: E402
+from bench_v2.errors import AbortRun, BenchError  # noqa: E402
 from bench_v2.fakes import FakeBackend, oracle_hooks, world_for_lane  # noqa: E402
 from bench_v2.lane import Lane, LaneSettings  # noqa: E402
 from bench_v2.ledger import Ledger, read_all  # noqa: E402
@@ -211,9 +211,15 @@ def cmd_cloud(args) -> int:
     cap = float(w.approvals.get("cloud_spend_cap_usd", 0) or 0)
     items = builder.load_frozen("slow_reasoner", Path(args.frozen_dir) if args.frozen_dir else None, lane.snap, _external(args))
     defer, why = lane.code_deferred()
+
+    def window_guard() -> None:  # the cloud path spends money, so it honours STOP and the window end between items
+        if lane.markers.stop_requested():
+            raise AbortRun("STOP file present", "stop_file")
+        if lane.backend.now() >= w.end:
+            raise AbortRun("approved window ended", "window_end")
     res = cloud.run_anchor(cloud_backend, lane.ledger, items, args.endpoint, args.model, args.key_env,
                            args.price_in, args.price_out, cap, lane.run_id, allow_internal=w.allows("cloud_allow_internal_items"),
-                           defer_code=defer, raw_dir=str(Path(lane.run_dir) / "raw"))
+                           defer_code=defer, raw_dir=str(Path(lane.run_dir) / "raw"), on_item=window_guard)
     _print({**res, "code_deferred": defer, "why": why})
     return 0
 

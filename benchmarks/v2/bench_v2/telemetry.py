@@ -38,6 +38,8 @@ class Telemetry:
     def capture_baseline(self) -> None:
         """Shared GPU memory with everything stopped; later readings are measured above this. Fails closed when unreadable."""
         s = self.b.gpu_sample()
+        if s is None and self.require_shared:
+            raise AbortRun("GPU telemetry is not readable here, so the no-spill rule cannot be enforced", "no_spill_reading")
         if s is not None and s.shared_mib is None:
             if self.require_shared:
                 raise AbortRun("shared GPU memory is not readable here, so the no-spill rule cannot be enforced "
@@ -53,6 +55,8 @@ class Telemetry:
             self.power_alarm = alarm
             raise AbortRun(f"power alarm: {alarm}", "power_alarm")
         if s is None:
+            if self.require_shared:
+                raise AbortRun("GPU telemetry was lost mid-run; spill and temperature cannot be monitored", "no_spill_reading")
             return None
         if s.shared_mib is None:
             if self.require_shared:

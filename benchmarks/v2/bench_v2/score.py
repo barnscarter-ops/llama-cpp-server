@@ -17,10 +17,12 @@ from .quality import ItemResult, role_verdict, summarize
 from .suites import builder, scoring
 
 
-def _results_from_ledger(records: list[dict], model: str, label: str, late: dict[str, tuple[bool, str]]) -> list[ItemResult]:
+def _results_from_ledger(records: list[dict], model: str, label: str, run_id: str | None, late: dict[str, tuple[bool, str]]) -> list[ItemResult]:
     out = []
     for r in records:
         if r.get("phase") != "quality" or r.get("mode") != label or (r.get("model") or {}).get("id") != model:
+            continue
+        if r.get("run_id") != run_id:  # the source ledger is append-only and may hold several runs of the same model
             continue
         q = r["quality"]
         passed, detail = q["pass"], q["detail"]
@@ -56,7 +58,7 @@ def score_dir(args) -> dict:
             items_cache[role] = {i["id"]: i for i in builder.load_frozen(role, frozen_dir, snap)}
         return items_cache[role]
 
-    scored_labels: dict[tuple[str, str], dict[str, tuple[bool, str]]] = {}
+    scored_labels: dict[tuple[str, str, str | None], dict[str, tuple[bool, str]]] = {}
     n = 0
     for path in sorted(Path(args.raw_dir).glob("*.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -72,7 +74,7 @@ def score_dir(args) -> dict:
                 passed, detail = scoring.score_python(row["text"], item["scorer"])
             except RuntimeError as exc:
                 raise BenchError(str(exc)) from exc
-            scored_labels.setdefault((model, label), {})[item["id"]] = (passed, detail)
+            scored_labels.setdefault((model, label, row.get("run_id")), {})[item["id"]] = (passed, detail)
             out.append("quality", run_id=row.get("run_id"), model={"id": model}, mode=f"{label}:scored",
                        quality={"suite": item["category"], "item_id": item["id"], "pass": passed, "detail": detail[:160],
                                 "tokens_out": 0, "wall_s": 0.0, "finish": "scored-late", "valid": None}, thinking=None)
@@ -80,9 +82,9 @@ def score_dir(args) -> dict:
 
     verdicts = {}
     anchor_summary = None
-    for (model, label), late in scored_labels.items():
+    for (model, label, run_id), late in scored_labels.items():
         if label == "anchor":
-            summary = summarize(_results_from_ledger(records, model, "anchor", late))
+            summary = summarize(_results_from_ledger(records, model, "anchor", run_id, late))
             out.event("anchor_summary", model=model, summary=summary, deferred=False, scored_late=True)
             anchor_summary = summary
     if anchor_summary is None:  # an already-scored anchor from an earlier score run or from a lane that could execute
@@ -90,11 +92,11 @@ def score_dir(args) -> dict:
             if r.get("phase") == "event" and r.get("kind") == "anchor_summary" and not r.get("deferred"):
                 anchor_summary = r["summary"]
                 break
-    for (model, label), late in scored_labels.items():
+    for (model, label, run_id), late in scored_labels.items():
         if not label.startswith("production-") or model not in by_id:
             continue
         c = by_id[model]
-        summary = summarize(_results_from_ledger(records, model, label, late))
+        summary = summarize(_results_from_ledger(records, model, label, run_id, late))
         v = role_verdict(c.role, roles[c.role]["criteria"], summary, anchor_summary)
         out.event("role_verdict", model=model, role=c.role, verdict=v, overall=summary.get("overall"), scored_late=True)
         verdicts[model] = v

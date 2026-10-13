@@ -58,6 +58,7 @@ class ColdLoadResult:
     cold_s: list = field(default_factory=list)
     first_token_s: list = field(default_factory=list)
     failures: int = 0
+    cache_drop_failures: int = 0
 
     def wake_seconds(self) -> float | None:
         """p90 cold load plus the median first-token time, rounded up. Goes into models.json."""
@@ -71,7 +72,11 @@ def cold_loads(runner, cfg: ServerConfig, n: int, drop_cache_cmd: list[str] | No
     res = ColdLoadResult()
     for i in range(n):
         if drop_cache_cmd:
-            backend.run(drop_cache_cmd, timeout=60)
+            dropped = backend.run(drop_cache_cmd, timeout=60)
+            if dropped.rc != 0:  # a warm page cache would be published as a cold load
+                res.failures += 1
+                res.cache_drop_failures += 1
+                continue
 
         def first_token(url: str, mode: dict, _alias=runner.cand.id) -> dict:
             body = speed.request_body(_alias, [{"role": "user", "content": "Reply with the single word: ready"}], 8, extra=mode)
