@@ -145,6 +145,7 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         app.router.add_post("/__guardian/tasks", m.task_submit)
         app.router.add_get("/__guardian/tasks/{task_id}", m.task_status)
         app.router.add_get("/__guardian/approvals", m.approvals_list)
+        app.router.add_get("/__guardian/alerts", m.alerts_list)
         app.router.add_post("/__guardian/approvals/{approval_id}/decide", m.approvals_decide)
         app.router.add_post("/__guardian/swap", m.guardian_swap)
         app.router.add_post("/__guardian/jobs", m.queue_submit)
@@ -163,6 +164,7 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
             "GUARDIAN_QWEN_APPROVAL": "false",
             "GUARDIAN_TASK_API": "false",
             "GUARDIAN_SELECTOR": "rules",
+            "GUARDIAN_JEV_FALLBACK": "off",
             "GUARDIAN_CLOUD": "false",
             **self.ENV,
         }

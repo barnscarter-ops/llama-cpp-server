@@ -156,18 +156,56 @@ class UnavailableSelector:
         return SelectorAnswer(None, self._reason)
 
 
-def selector_for_env(db_path: str, *, transport: JevTransport = aiohttp_transport, accessor=None):
+def selector_for_env(db_path: str, *, transport: JevTransport = aiohttp_transport, accessor=None, on_fallback=None):
     """GUARDIAN_SELECTOR=jev picks Jev; anything else (including typos) stays on the rules selector."""
     from task_dispatch import RulesSelector
 
     if selector_name() != "jev":
         return RulesSelector()
     try:
-        return build_jev_selector(db_path, transport=transport, accessor=accessor)
+        primary = build_jev_selector(db_path, transport=transport, accessor=accessor)
     except JevCredentialUnavailable as exc:
         log.error("jev selector unavailable: %s", exc.code)
-        return UnavailableSelector(f"jev_{exc.code}")
+        primary = UnavailableSelector(f"jev_{exc.code}")
     except (sqlite3.Error, OSError):
         # The shared queue database can be locked or unwritable; that is a failed selection, not a 500.
         log.exception("jev spend ledger could not be opened")
-        return UnavailableSelector("jev_ledger_unavailable")
+        primary = UnavailableSelector("jev_ledger_unavailable")
+    if fallback_mode() == "rules":
+        return FallbackSelector(primary, RulesSelector(), on_fallback)
+    return primary
+
+
+def fallback_mode() -> str:
+    """GUARDIAN_JEV_FALLBACK=rules turns the fallback on; anything else (including unset) fails closed."""
+    return "rules" if os.environ.get("GUARDIAN_JEV_FALLBACK", "").strip().lower() == "rules" else "off"
+
+
+class FallbackSelector:
+    """Jev first; on any Jev failure, the rules selector over the same filtered candidates.
+
+    The candidate list is already limited by clearance and cost ceiling, so the fallback
+    cannot widen either; a cloud model is only reachable for an `internet` job.
+    """
+
+    name = "jev"
+
+    def __init__(self, primary, fallback, on_fallback: Callable[[TaskSpec, str], None] | None = None) -> None:
+        self._primary, self._fallback, self._on_fallback = primary, fallback, on_fallback
+        # An unavailable primary (locked database, late key) should be rebuilt on the next task, not cached.
+        self.cacheable = not isinstance(primary, UnavailableSelector)
+
+    async def choose(self, task: TaskSpec, candidates: Sequence[Candidate]) -> SelectorAnswer:
+        answer = await self._primary.choose(task, candidates)
+        if answer.model_id is not None or not answer.reason.startswith("jev_"):
+            return answer
+        # Not cleared for Jev is policy, not a Jev failure: route by rules quietly, no alert.
+        if self._on_fallback and answer.reason != NOT_CLEARED:
+            try:
+                self._on_fallback(task, answer.reason)
+            except Exception:  # noqa: BLE001 - alerting must not block dispatch
+                log.exception("jev fallback alert failed")
+        picked = await self._fallback.choose(task, candidates)
+        return SelectorAnswer(
+            picked.model_id, picked.reason, picked.raw, selector=self._fallback.name, fallback_used=True, note=answer.reason,
+        )
