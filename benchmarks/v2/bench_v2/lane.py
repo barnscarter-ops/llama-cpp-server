@@ -310,9 +310,12 @@ class Lane:
         return next(c for c in self.all_cands if c.id == cid)
 
     def _alive(self, cands: list[Candidate]) -> list[Candidate]:
-        dropped = {r["model"] for r in self.ledger.records() if r.get("phase") == "event" and r.get("kind") == "smoke_verdict" and r.get("dropped")}
-        kept_later = {r["model"] for r in self.ledger.records() if r.get("phase") == "event" and r.get("kind") == "smoke_verdict" and not r.get("dropped")}
-        return [c for c in cands if c.id not in (dropped - kept_later)]
+        """Candidates whose most recent smoke verdict (by ledger order) is not a drop."""
+        last: dict = {}
+        for r in self.ledger.records():
+            if r.get("phase") == "event" and r.get("kind") == "smoke_verdict":
+                last[r["model"]] = bool(r.get("dropped"))
+        return [c for c in cands if not last.get(c.id, False)]
 
     def _guard_state(self, runner: PointRunner, state: LaneState) -> None:
         if runner.guard is not None:
@@ -360,8 +363,8 @@ class Lane:
         """Latest confirmed config, and only if no newer sweep has been run since (stale results never feed ladder/quality)."""
         last = self._last_event("tuned", cid)
         levers = self._last_event("levers_done", cid)
-        if not last or not last.get("final_ok") or (levers and levers["seq"] > last["seq"]):
-            return None
+        if not last or not last.get("final_ok") or last.get("needs_rerun") or (levers and levers["seq"] > last["seq"]):
+            return None  # unconfirmed, drifted (needs a rerun) or superseded by a newer sweep
         return ServerConfig(**last["cfg"])
 
     def _exception_triggered(self) -> bool:

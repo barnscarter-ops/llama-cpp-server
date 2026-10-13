@@ -212,7 +212,7 @@ def cmd_cloud(args) -> int:
     items = builder.load_frozen("slow_reasoner", Path(args.frozen_dir) if args.frozen_dir else None, lane.snap, _external(args))
     defer, why = lane.code_deferred()
     res = cloud.run_anchor(cloud_backend, lane.ledger, items, args.endpoint, args.model, args.key_env,
-                           args.price_in, args.price_out, cap, lane.run_id, allow_maverick=w.allows("cloud_allow_maverick_items"),
+                           args.price_in, args.price_out, cap, lane.run_id, allow_internal=w.allows("cloud_allow_internal_items"),
                            defer_code=defer, raw_dir=str(Path(lane.run_dir) / "raw"))
     _print({**res, "code_deferred": defer, "why": why})
     return 0

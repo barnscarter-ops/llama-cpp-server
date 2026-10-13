@@ -40,7 +40,9 @@ class SafetyController:
         self.markers = markers
         self.telemetry = telemetry
         self.guarded = guarded  # GuardedBackend, for the leaving-the-port check
-        cfg = lane.raw["safety"]
+        cfg = json.loads(json.dumps(lane.raw["safety"]))
+        for key in ("status_cmd", "stop_cmd", "start_cmd"):  # one setting names the PM2 home for all three commands
+            cfg[key] = [part.replace("{pm2_home}", cfg.get("pm2_home", "")) for part in cfg[key]]
         self.cfg = cfg
         lock = cfg.get("lock_file") or str(markers.dir / f"{lane.name}.lock")  # every lane gets a lock, not just the R9700
         self.mutex = LaneMutex(lock) if use_mutex else None
@@ -136,11 +138,16 @@ class SafetyController:
                            "(run_lane.py restore) before a new run", "restore_pending")
         if self.mutex:
             self.mutex.acquire()
-        self.prior_active = self._snapshot_services()
-        self.entered_ts = self.b.now()
-        self.since_check = True
-        self.markers.mark_restore_required({"lane": self.lane.name, "was_active": self.prior_active,
-                                            "services": self._services(), "ts": self.entered_ts})
+        try:
+            self.prior_active = self._snapshot_services()
+            self.entered_ts = self.b.now()
+            self.since_check = True
+            self.markers.mark_restore_required({"lane": self.lane.name, "was_active": self.prior_active,
+                                                "services": self._services(), "ts": self.entered_ts})
+        except BaseException:
+            if self.mutex:  # nothing stopped yet and no marker: the lock must not outlive this failed start
+                self.mutex.release()
+            raise
         self.ledger.event("safety.enter", lane=self.lane.name, was_active=self.prior_active)
         self.entered = True
         for name in self._services():
@@ -211,11 +218,13 @@ class SafetyController:
         if not prior and self.markers.restore_pending():
             try:
                 info = json.loads(self.markers.restore_file.read_text())
-                prior = info.get("was_active", [])
+                prior = list(info["was_active"])
                 self.entered_ts = float(info.get("ts", 0.0))
                 self.since_check = info.get("mode") != "watch"
-            except (OSError, json.JSONDecodeError, ValueError):
-                prior = []
+            except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+                # A truncated marker must never read as "nothing was running": keep it and make a human look.
+                raise RestoreFailed(f"RESTORE_REQUIRED marker is unreadable ({exc}); start the production services by hand, "
+                                    "then delete the marker") from exc
             self.prior_active = prior
         for name in reversed(self._services()):
             if name in prior and self._state(name)[0] != "active":

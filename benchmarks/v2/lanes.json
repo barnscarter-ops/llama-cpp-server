@@ -39,21 +39,22 @@
           "C:\\Program Files\\gsudo\\Current\\gsudo.exe",
           "cmd",
           "/c",
-          "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 jlist"
+          "set PM2_HOME={pm2_home} && pm2 jlist"
         ],
         "stop_cmd": [
           "C:\\Program Files\\gsudo\\Current\\gsudo.exe",
           "cmd",
           "/c",
-          "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 stop {name}"
+          "set PM2_HOME={pm2_home} && pm2 stop {name}"
         ],
         "start_cmd": [
           "C:\\Program Files\\gsudo\\Current\\gsudo.exe",
           "cmd",
           "/c",
-          "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 restart {name}"
+          "set PM2_HOME={pm2_home} && pm2 restart {name}"
         ],
-        "restore_verify_log_regex": "listening|online"
+        "restore_verify_log_regex": "listening|online",
+        "pm2_home": "C:\\Users\\carte\\.pm2"
       },
       "require_shared_reading": true,
       "shared_mem_cmd": [
@@ -145,7 +146,7 @@
         "nemotron_regex": "(?i)nemotron",
         "qwen_regex": "(?i)qwen3\\.8"
       },
-      "execute_model_code": true,
+      "execute_model_code": false,
       "code_run_as": "nobody"
     }
   },

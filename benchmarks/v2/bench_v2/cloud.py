@@ -56,18 +56,22 @@ def validate_endpoint(endpoint: str, approved_host: str, resolver=None) -> tuple
     return host, port
 
 
-def is_maverick_item(item: dict) -> bool:
-    return item.get("category") == "maverick" or str(item.get("id", "")).startswith("maverick")
+INTERNAL_CATEGORIES = ("maverick", "hermes", "tool")  # tool items are built from the real Hermes/Guardian schemas
+
+
+def is_internal_item(item: dict) -> bool:
+    cat = str(item.get("category", ""))
+    return cat in INTERNAL_CATEGORIES or str(item.get("id", "")).startswith(INTERNAL_CATEGORIES)
 
 
 def run_anchor(backend: Backend, ledger: Ledger, items: list[dict], endpoint: str, model: str, key_env: str,
                price_in_per_1k: float, price_out_per_1k: float, cap_usd: float, run_id: str, environ=None,
-               allow_maverick: bool = False, defer_code: bool = True, raw_dir: str | None = None) -> dict:
+               allow_internal: bool = False, defer_code: bool = True, raw_dir: str | None = None) -> dict:
     environ = os.environ if environ is None else environ
-    if not allow_maverick:  # Maverick-derived tasks are client material: never leave the building without a window approval
-        kept = [i for i in items if not is_maverick_item(i)]
+    if not allow_internal:  # anything derived from Carter's systems or clients stays home without a window approval
+        kept = [i for i in items if not is_internal_item(i)]
         if len(kept) != len(items):
-            ledger.event("cloud_items_withheld", reason="maverick items need cloud_allow_maverick_items", n=len(items) - len(kept))
+            ledger.event("cloud_items_withheld", reason="Maverick, Hermes and tool-schema items need cloud_allow_internal_items", n=len(items) - len(kept))
         items = kept
     key = environ.get(key_env)
     if not key:

@@ -35,7 +35,7 @@ WINDOW_TEMPLATE = {
         "allow_no_production_service": False,
         "cloud_spend_cap_usd": 0,
         "cloud_endpoint_host": "",
-        "cloud_allow_maverick_items": False
+        "cloud_allow_internal_items": False
     },
     "note": "Created by Carter. The harness refuses to start without this file."
 }

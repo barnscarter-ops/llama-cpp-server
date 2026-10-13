@@ -82,13 +82,19 @@ class BenchServer:
         self.health_timeout_s = health_timeout_s
         self.proc: Proc | None = None
 
-    def launch(self, argv: list[str], log_path: str, env: dict | None = None) -> LaunchResult:
+    def launch(self, argv: list[str], log_path: str, env: dict | None = None, on_poll=None) -> LaunchResult:
         if self.proc is not None:
             raise RuntimeError("one model server per machine: stop the running one first")
         t0 = self.b.now()
         self.proc = proc = self.b.spawn(argv, env, log_path)
         url = f"{self.lane.base_url}/health"
         while True:
+            if on_poll is not None:  # STOP file, window end, UPS, temperature: a hung load must not delay an abort
+                try:
+                    on_poll()
+                except BaseException:
+                    self.stop()
+                    raise
             rc = proc.poll()
             if rc is not None:
                 tail = proc.log_tail(200)

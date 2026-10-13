@@ -9,6 +9,11 @@ import subprocess
 import sys
 import tempfile
 
+try:  # POSIX only; the Workbench (Windows) never executes model code
+    import resource
+except ImportError:
+    resource = None
+
 THINK = re.compile(r"<think>.*?</think>", re.S)
 FENCE = re.compile(r"```[a-zA-Z0-9_+-]*\n(.*?)```", re.S)
 ANSWER = re.compile(r"ANSWER:\s*(.+)", re.I)
@@ -124,7 +129,6 @@ def child_env(tmp: str, windows: bool, environ=None) -> dict:
 
 def _limits(uid_gid: tuple[int, int] | None) -> "callable":
     def run() -> None:  # POSIX only; runs in the child before exec
-        import resource
         resource.setrlimit(resource.RLIMIT_CPU, (CODE_TIMEOUT_S, CODE_TIMEOUT_S))
         resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT_BYTES, MEM_LIMIT_BYTES))
         resource.setrlimit(resource.RLIMIT_FSIZE, (16 * 1024 ** 2, 16 * 1024 ** 2))

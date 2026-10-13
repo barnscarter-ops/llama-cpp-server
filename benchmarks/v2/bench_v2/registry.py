@@ -32,6 +32,35 @@ def _latest(records, **match):
     return hit
 
 
+def _idx_latest(records, **match):
+    hit = None
+    for i, r in enumerate(records):
+        if all(r.get(k) == v for k, v in match.items()):
+            hit = i
+    return hit
+
+
+def chain_problem(records: list[dict], cid: str) -> str | None:
+    """Facts must come from one pass through the pipeline: sweep, then confirmation, then ladder, then verdict, with no
+    later smoke drop. Anything else mixes runs (a rerun that stopped early next to an old pass) and is not published."""
+    lev = _idx_latest(records, phase="event", kind="levers_done", model=cid)
+    tun = _idx_latest(records, phase="event", kind="tuned", model=cid)
+    lad = _idx_latest(records, phase="event", kind="ladder_done", model=cid)
+    ver = _idx_latest(records, phase="event", kind="role_verdict", model=cid)
+    if None in (tun, lad, ver):
+        return "tuned, ladder and verdict are not all present"
+    if lev is not None and lev > tun:
+        return "a newer tuning sweep has not been confirmed"
+    if not (tun < lad < ver):
+        return "tuned, ladder and verdict are out of order: they come from different runs"
+    for i, r in enumerate(records):
+        if i > tun and r.get("phase") == "event" and r.get("kind") == "smoke_verdict" and r.get("model") == cid and r.get("dropped"):
+            return "dropped by a later smoke run"
+    if records[tun].get("needs_rerun"):
+        return "the last confirmation flagged drift and needs a rerun"
+    return None
+
+
 def model_facts(records: list[dict], cand: Candidate) -> dict:
     """Everything the ledger knows about one candidate."""
     cid = cand.id
@@ -45,13 +74,14 @@ def model_facts(records: list[dict], cand: Candidate) -> dict:
         if r.get("phase") == "quality" and _model_id(r) == cid and r.get("checks"):
             quality = r
     return {"tuned": tuned, "ladder": ladder, "verdict": verdict, "smoke": smoke, "smoke_verdict": dropped,
+            "chain_problem": chain_problem(records, cid),
             "quality": (quality or {}).get("checks", {}).get("production") if quality else None}
 
 
 def build_entry(cand: Candidate, facts: dict) -> dict | None:
     """One models.json entry for a candidate that passed its role criteria, else None."""
     v = facts["verdict"]
-    if not v or not v.get("verdict", {}).get("pass"):
+    if not v or not v.get("verdict", {}).get("pass") or facts.get("chain_problem"):
         return None
     reg = cand["registry"]
     ladder = facts["ladder"] or {}

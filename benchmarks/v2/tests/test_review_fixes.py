@@ -408,8 +408,14 @@ class CloudItemsAndRedirects(unittest.TestCase):
         self.assertTrue(any(r.get("kind") == "cloud_items_withheld" for r in env.lane.ledger.records()))
         env2 = make_env("workbench", oracle=False)
         cloud.run_anchor(env2.backend, env2.lane.ledger, items, "https://api.example.invalid/v1", "m", "K", 1, 1, 5.0, "r",
-                         environ={"K": "x"}, allow_maverick=True)
+                         environ={"K": "x"}, allow_internal=True)
         self.assertEqual(env2.world.request_count, 2)
+
+    def test_tool_and_hermes_items_are_withheld_too(self):
+        from bench_v2 import cloud
+        for cat in ("tool", "hermes"):
+            self.assertTrue(cloud.is_internal_item({"id": f"{cat}-0001", "category": cat}))
+        self.assertFalse(cloud.is_internal_item({"id": "reasoning-0001", "category": "reasoning"}))
 
     def test_redirects_are_not_followed_so_the_key_stays_put(self):
         import threading
@@ -470,6 +476,9 @@ class DeferredCode(unittest.TestCase):
         scoring.configure_runner(None, None)
         env = make_env("r9700")
         env.lane.s.sandbox_cmd = []
+        defer, why = env.lane.code_deferred()
+        self.assertTrue(defer)  # shipped default: no inline execution on any lane
+        env.lane.lane.raw["execute_model_code"] = True
         env.lane.lane.raw["code_run_as"] = "no-such-user-xyz"
         defer, why = env.lane.code_deferred()
         self.assertTrue(defer)
@@ -529,3 +538,36 @@ class DeferredCode(unittest.TestCase):
         late = [r for r in recs if r.get("kind") == "role_verdict" and r.get("scored_late")]
         self.assertTrue(late)
         self.assertTrue(any(r.get("phase") == "quality" and str(r.get("mode", "")).endswith(":scored") for r in recs))
+
+
+class RoundTwoFixes(unittest.TestCase):
+    def test_needs_rerun_means_no_tuned_cfg(self):
+        env = make_env("r9700", only=["nemotron-3.5-lightning-q5km"])
+        env.lane.load_window()
+        env.lane.run_stages(["smoke", "tune", "confirm"])
+        cid = "nemotron-3.5-lightning-q5km"
+        self.assertIsNotNone(env.lane.tuned_cfg(cid))
+        last = env.lane._last_event("tuned", cid)
+        env.lane.ledger.append("event", kind="tuned", model=cid, final_ok=True, needs_rerun=True, cfg=last["cfg"])
+        self.assertIsNone(env.lane.tuned_cfg(cid))
+
+    def test_unreadable_marker_keeps_marker_and_refuses(self):
+        env = make_env("r9700")
+        env.lane.load_window()
+        safety = env.lane.make_safety()
+        env.lane.markers.restore_file.parent.mkdir(parents=True, exist_ok=True)
+        env.lane.markers.restore_file.write_text("{not json")
+        with self.assertRaises(RestoreFailed):
+            safety.restore()
+        self.assertTrue(env.lane.markers.restore_file.exists())
+
+    def test_pm2_home_substituted_into_commands(self):
+        env = make_env("workbench")
+        env.lane.load_window()
+        flat = " ".join(" ".join(v) for v in env.lane.make_safety().cfg.values() if isinstance(v, list) and v and isinstance(v[0], str))
+        self.assertNotIn("{pm2_home}", flat)
+        self.assertIn(".pm2", flat)
+
+    def test_scoring_module_imports_resource_at_top_level(self):
+        from bench_v2.suites import scoring
+        self.assertTrue(hasattr(scoring, "resource"))
