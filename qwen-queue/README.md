@@ -127,3 +127,9 @@ a terminal status and durable result.
 The four queue files above previously lived in `scripts\`. Updated references:
 `ecosystem.config.cjs` (guardian script path), PM2 dump (re-registered + saved),
 and the qwen-submit path in `~\.claude\CLAUDE.md`.
+
+## Guardian dispatcher (in progress, all flags default off)
+
+Build plan: `guardian-dispatcher-PLAN.md` (project files). Each step is additive and behind a flag.
+
+- **Step 1 — model registry.** `model_registry.py` + `models.json` list every model Guardian could use (egress class, cost, context, quality tier, concurrency). `GET /__guardian/models` (loopback or bearer, like `/__guardian/seats`) returns the registry plus live readiness: `ready`, `wakeable(seconds)`, `needs_approval`, `unavailable(reason)`. Workbench readiness reads in-process state only and never calls llama-server on 8081, so reading it cannot wake the model. Override the file with `GUARDIAN_MODELS_FILE`. No flag: nothing else imports the registry yet.
