@@ -58,7 +58,7 @@ class GpuSample:
     temp_c: float = 0.0
     power_w: float = 0.0
     clock_mhz: float = 0.0
-    shared_mib: float = 0.0  # shared/system memory in use by the GPU (Windows spill)
+    shared_mib: float | None = 0.0  # shared/system memory in use by the GPU (Windows spill); None = unreadable
 
 
 class Proc(Protocol):
@@ -84,6 +84,20 @@ class Backend(Protocol):
     def read_text(self, path: str) -> str: ...
     def sleep(self, seconds: float) -> None: ...
     def now(self) -> float: ...
+
+
+def parse_typeperf_shared(text: str) -> float | None:
+    """Highest 'GPU Adapter Memory ... Shared Usage' value in a `typeperf -sc 1` CSV, in MiB (bytes in, MiB out)."""
+    rows = [ln for ln in text.splitlines() if ln.startswith('"') and ln.count(",") >= 1]
+    if len(rows) < 2:
+        return None
+    vals = []
+    for cell in rows[1].split('","')[1:]:
+        try:
+            vals.append(float(cell.strip('"').strip()))
+        except ValueError:
+            continue
+    return max(vals) / 1048576.0 if vals else None
 
 
 def check_target(url: str, allowed_ports: set[int]) -> None:
@@ -165,7 +179,13 @@ class SystemBackend:
     """Real subprocess/HTTP/GPU access. Never constructed by tests."""
 
     def __init__(self, gpu_kind: str = "nvidia", power_cmd: list[str] | None = None,
-                 power_alarm_regex: str | None = None) -> None:
+                 power_alarm_regex: str | None = None, shared_cmd: list[str] | None = None,
+                 shared_interval_s: float = 5.0, power_failures_allowed: int = 3) -> None:
+        self.shared_cmd = shared_cmd
+        self.shared_interval_s = shared_interval_s
+        self._shared_cache: tuple[float, float | None] = (-1e9, None)
+        self.power_failures_allowed = power_failures_allowed
+        self._power_failures = 0
         self.gpu_kind = gpu_kind
         self.power_cmd = power_cmd
         self.power_alarm_regex = power_alarm_regex
@@ -268,7 +288,7 @@ class SystemBackend:
                 a = [float(x) for x in r.stdout.strip().splitlines()[0].split(",")]
             except ValueError:
                 return None
-            return GpuSample(a[0], a[1], a[2], a[3], a[4])
+            return GpuSample(a[0], a[1], a[2], a[3], a[4], self._shared_mib() if self.shared_cmd else 0.0)
         if self.gpu_kind == "amdgpu_sysfs":
             return self._amd_sample()
         return None
@@ -298,13 +318,29 @@ class SystemBackend:
                 best = GpuSample(used, total, temp, power)
         return best
 
+    def _shared_mib(self) -> float | None:
+        """GPU shared (system RAM) usage via the configured command, sampled at most every few seconds."""
+        t, last = self._shared_cache
+        if time.monotonic() - t < self.shared_interval_s:
+            return last
+        r = self.run(self.shared_cmd, timeout=15)
+        val = parse_typeperf_shared(r.stdout) if r.rc == 0 else None
+        self._shared_cache = (time.monotonic(), val)
+        return val
+
     def power_alarm(self) -> str | None:
-        """Returns a description when the UPS reports an alarm, else None (also None if unmonitored)."""
+        """A description when the UPS is on battery (or its monitor is dead), else None. Unmonitored when no command is set."""
         if not self.power_cmd or not self.power_alarm_regex:
             return None
         import re
         r = self.run(self.power_cmd, timeout=10)
-        if r.rc == 0 and re.search(self.power_alarm_regex, r.stdout):
+        if r.rc != 0 or not r.stdout.strip():
+            self._power_failures += 1
+            if self._power_failures >= self.power_failures_allowed:
+                return f"UPS monitor unreadable {self._power_failures} times in a row: {(r.stderr or 'no output').strip()[:120]}"
+            return None
+        self._power_failures = 0
+        if re.search(self.power_alarm_regex, r.stdout):
             return r.stdout.strip()[:200]
         return None
 

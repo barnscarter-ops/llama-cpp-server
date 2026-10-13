@@ -31,6 +31,8 @@ WINDOW_TEMPLATE = {
         "qwen_load": False,
         "moe_exception": False,
         "alternates": False,
+        "swap_test": False,
+        "allow_no_production_service": False,
         "cloud_spend_cap_usd": 0
     },
     "note": "Created by Carter. The harness refuses to start without this file."

@@ -4,15 +4,17 @@ Builds the evidence that picks the three local seats: a Workbench worker bee, an
 
 Python 3 stdlib only. Everything is testable on a fake machine; the tests never load a model, start a process or contact a live server.
 
-    python3 -m unittest discover -s benchmarks/v2/tests          # 105 tests, ~30 s
+    python3 -m unittest discover -s benchmarks/v2/tests          # 130 tests, ~35 s
     python3 benchmarks/v2/run_lane.py dry-run --lane r9700 --stages smoke,tune,confirm,ladder,quality
 
 ## Safety rules the code enforces
 - Nothing real starts without a window file that Carter wrote (`window-template` only prints an example). It names the lane, start, end, approver and per-action approvals. Outside the window, or missing `stop_services` (and `guardian_quiet` on the R9700), the run refuses.
-- Before a lane: snapshot which production services are active, write `runs/<lane>.RESTORE_REQUIRED`, stop them, verify stopped and GPU idle, check 20 GB disk. After: start only what was active, verify, then clear the marker. Restore runs in a `finally` and on SIGINT/SIGTERM. If it cannot be verified the marker stays and `run_lane.py restore` finishes the job.
-- Abort and restore on: OOM or crash twice in a row, power alarm, GPU temperature over 90 C, STOP file (`runs/STOP` or `runs/<lane>.STOP`), window end, disk under 20 GB, any request leaving the lane's own bench port (8099 Workbench, 8090 R9700). Requests to 8080, 8081 or 192.168.1.240 raise before they are sent.
+- Before a lane: snapshot which production services are active, write `runs/<lane>.RESTORE_REQUIRED`, stop them, verify stopped and GPU idle, check 20 GB disk. Service status fails closed: a status command that errors, prints something unparseable, or does not list the service is "unknown" and aborts the run; so does finding none of the configured services running (unless the window sets `allow_no_production_service`). After: start only what was active and verify before clearing the marker. Verification needs the service active and listening again since the stop (journal `--since`; pm2 uptime newer than the stop), and on the R9700 the process list must show Nemotron and not Qwen. If it cannot be verified the marker stays and `run_lane.py restore` finishes the job.
+- Ctrl-C or SIGTERM once stops at the next check and restores; a second one interrupts a blocked request or perplexity run immediately (restore still runs). SIGKILL or a reboot leaves production stopped until `restore`.
+- Abort and restore on: OOM or crash twice in a row, power alarm, GPU temperature over 90 C, STOP file (`runs/STOP` or `runs/<lane>.STOP`), window end, disk under 20 GB, any request leaving the lane's own bench port (8099 Workbench, 8090 R9700). Requests to 8080, 8081 or 192.168.1.240 raise before they are sent; the swap test sends no HTTP at all (it watches the service, its journal and its process list).
 - One model per machine at a time (flock on the lane lock; the R9700 uses the same lock file as the swap scripts). Workbench and R9700 lanes can run in parallel in separate terminals.
-- The production Nemotron on the R9700 is touched only by `swap` (the real swap scripts, logged, restored at the end) and by the lane stop/restore above.
+- The production Nemotron on the R9700 is touched only by `swap` (the real swap scripts, logged) and by the lane stop/restore above. `swap` stops the loop if a script fails or times out, and always ends by putting Nemotron back and checking which model is resident; if that fails the marker stays and the command exits with an error.
+- Every lane takes a lock (`safety.lock_file`; the R9700 shares the swap scripts' lock, the Workbench uses `runs/workbench.lock`), so two harness runs on one machine refuse.
 - Cloud spend needs `cloud_spend_cap_usd > 0` in the window and a key in a named environment variable; the key is never printed or written.
 
 ## Stages (all take `--lane workbench|r9700`)
@@ -53,7 +55,10 @@ Stages resume from the ledger. Global options (`--ledger-dir`, `--runs-dir`, `--
 6. Stop at any time with `touch runs/STOP`. If anything dies, run `python3 benchmarks/v2/run_lane.py restore --lane <lane>`.
 
 ## UPS alarm
-The R9700 lane queries `upsc cp1500@localhost ups.status` (CyberPower CP1500 under NUT on AIWA) every second and aborts and restores only when the status contains `OB` (on battery). `LB` and other flags are deliberately ignored: with the UPS on line they only mean the runtime is under the configured target, and `LB` can only be a real emergency while `OB` is also set. The Workbench lane has no UPS query (`power_alarm.command` null, recorded as `power_monitor: false`). Muting the beeper is not done by the harness.
+The R9700 lane queries `upsc cp1500@localhost ups.status` (CyberPower CP1500 under NUT on AIWA) every second and aborts and restores only when the status contains `OB` (on battery). `LB` and other flags are ignored: on line power they only mean the runtime is under the configured target, and a real low-battery state always comes with `OB`. A dead monitor is not silent: `preflight` fails if the query returns nothing, the ledger header records `power_monitor: true` only when the query worked, and three failed queries in a row during a run abort it. Note that restore reloads Nemotron even if the abort was caused by being on battery. The Workbench lane has no UPS query. Muting the beeper is not done by the harness.
+
+## Workbench GPU spill (Windows)
+`nvidia-smi` memory does not show WDDM spilling into system RAM, so the Workbench reads `\GPU Adapter Memory(*)\Shared Usage` with `typeperf` (every 5 s), takes a baseline with the production services stopped, and treats growth above 256 MiB as a spill. If that reading is unavailable the run aborts (`require_shared_reading`) and `preflight` says so. Also set the NVIDIA driver to "Prefer No Sysmem Fallback" before a run; that makes an overfull load fail instead of silently spilling.
 
 ## Layout
 `bench_v2/` modules (see each docstring), `candidates.json` (models, criteria, registry mapping), `lanes.json` (machines, ports, safety commands), `data/` (tool schema snapshot, guard text slice), `frozen/` (suites + hashes), `ledger/` (results, hash-chained JSONL, one file per lane), `tests/`.
@@ -65,6 +70,7 @@ HumanEval-10 comes from `benchmarks/bench-coding.py` (loaded in place). The llam
 - Hard-code reference solutions live in `tests/hard_code_references.py` so the suites carry no answers; the frozen items hold tests only.
 - Maverick (about 35 items) and Hermes (30) pools are empty until Carter supplies them; the manifest reports the shortfall instead of padding.
 - Rubric items are never auto-scored; they need a judge supplied by the caller.
+- `temp_pause_c` and `temp_resume_c` in `lanes.json` are not used: the only thermal rules are the 90 C abort and the cool-down to 65 C before each point.
 
 ## Not verified (no real machine was touched)
-llama-perplexity flag spellings and KL output format; speculative-decoding flags (`--spec-type` spelling) and per-request vs server-flag reasoning control for each model; amdgpu sysfs and nvidia-smi sampling on the real cards; UPS query output; the pm2/gsudo and systemd command strings; the swap scripts' behavior and the 8080 health URL; the Hermes bench base-URL override; real llama-server log buffer names; the MTP flag (the repo's Nemotron unit still has `--spec-type draft-mtp` although notes say MTP was slower or absent). Run `preflight` and the `smoke` stage first and read the ledger before trusting later stages.
+llama-perplexity flag spellings and KL output format; speculative-decoding flags (`--spec-type` spelling) and per-request vs server-flag reasoning control for each model; amdgpu sysfs and nvidia-smi sampling on the real cards; UPS query output; the pm2/gsudo and systemd command strings; the `typeperf` counter output on the real card; `upsc` output on AIWA; the swap scripts' behavior and whether the process list (`pgrep -af llama-server`) shows `nemotron` vs `qwen3.8` in the command line (`swap.identity_cmd`, `nemotron_regex`, `qwen_regex`); the Hermes bench base-URL override; real llama-server log buffer names; the MTP flag (the repo's Nemotron unit still has `--spec-type draft-mtp` although notes say MTP was slower or absent). Run `preflight` and the `smoke` stage first and read the ledger before trusting later stages.

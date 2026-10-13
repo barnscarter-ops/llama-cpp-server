@@ -207,19 +207,16 @@ class R9700Lane(unittest.TestCase):
         self.assertFalse(env.lane.markers.restore_pending())
         self.assertEqual({urlsplit(u).port for u, _ in env.world.requests}, {8090})
 
-    def test_swap_test_restores_and_never_leaves_8080_probe(self):
-        class Healthy(FakeBackend):
-            def http_get(self, url, timeout=5.0):
-                self.w.requests.append((url, "get"))
-                return (200, "ok") if ":8080" in url else super().http_get(url, timeout)
-
-        env = make_env("r9700", approvals={"qwen_load": True, "swap_test": True}, backend_cls=Healthy)
+    def test_swap_test_restores_nemotron_and_sends_no_request_at_all(self):
+        env = make_env("r9700", approvals={"qwen_load": True, "swap_test": True})
         out = env.lane.swap_test()
         self.assertEqual(len(out["to_qwen_s"]), 3)
         self.assertEqual(len(out["to_nemotron_s"]), 3)
+        self.assertIsNone(out["failed"])
         self.assertFalse(env.lane.markers.restore_pending())
         self.assertEqual(env.world.services, {"llama-server": True})
-        self.assertEqual({urlsplit(u).port for u, _ in env.world.requests}, {8080})
+        self.assertIn("Nemotron", env.world.resident)
+        self.assertEqual(env.world.requests, [])  # no HTTP of any kind, so nothing can reach 8080
 
     def test_swap_test_refused_without_approval(self):
         env = make_env("r9700")

@@ -61,7 +61,10 @@ def make_env(lane_name: str = "workbench", approvals: dict | None = None, window
                      server_bin="/fake/llama-server", perplexity_bin="/fake/llama-perplexity", models_dir="/fake/models",
                      frozen_dir=str(frozen_dir()), only=only or [], dry_run=True)
     backend = backend_cls(world)
-    return Env(Lane(s, backend), world, backend, root, wp)
+    lane = Lane(s, backend)
+    if lane.lane.raw["safety"].get("lock_file"):
+        lane.lane.raw["safety"]["lock_file"] = str(root / "swap.lock")  # never touch /opt from a test
+    return Env(lane, world, backend, root, wp)
 
 
 def event_kinds(lane: Lane) -> list[str]:

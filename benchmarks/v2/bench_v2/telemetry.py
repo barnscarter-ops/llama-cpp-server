@@ -5,16 +5,20 @@ from __future__ import annotations
 import threading
 import time
 
+import dataclasses
+
 from .backend import Backend, GpuSample
 from .errors import AbortRun
 
 
 class Telemetry:
     def __init__(self, backend: Backend, temp_start_c: float = 65, temp_pause_c: float = 85,
-                 temp_resume_c: float = 70, temp_abort_c: float = 90) -> None:
+                 temp_resume_c: float = 70, temp_abort_c: float = 90, require_shared: bool = False) -> None:
         self.b = backend
         self.temp_start_c, self.temp_pause_c = temp_start_c, temp_pause_c
         self.temp_resume_c, self.temp_abort_c = temp_resume_c, temp_abort_c
+        self.require_shared = require_shared
+        self.shared_baseline = 0.0
         self.reset()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -31,6 +35,16 @@ class Telemetry:
         s = self.b.gpu_sample()
         return s.used_mib if s else None
 
+    def capture_baseline(self) -> None:
+        """Shared GPU memory with everything stopped; later readings are measured above this. Fails closed when unreadable."""
+        s = self.b.gpu_sample()
+        if s is not None and s.shared_mib is None:
+            if self.require_shared:
+                raise AbortRun("shared GPU memory is not readable here, so the no-spill rule cannot be enforced "
+                               "(check the shared_mem_cmd in lanes.json)", "no_spill_reading")
+            return
+        self.shared_baseline = s.shared_mib if s is not None else 0.0
+
     def observe(self) -> GpuSample | None:
         """One sample. Raises AbortRun on over-temperature or a power alarm."""
         s = self.b.gpu_sample()
@@ -40,6 +54,12 @@ class Telemetry:
             raise AbortRun(f"power alarm: {alarm}", "power_alarm")
         if s is None:
             return None
+        if s.shared_mib is None:
+            if self.require_shared:
+                raise AbortRun("shared GPU memory reading was lost mid-run; spill cannot be ruled out", "no_spill_reading")
+            s = dataclasses.replace(s, shared_mib=0.0)
+        else:
+            s = dataclasses.replace(s, shared_mib=max(0.0, s.shared_mib - self.shared_baseline))
         self.last = s
         self.samples += 1
         self.peak_used_mib = max(self.peak_used_mib, s.used_mib)

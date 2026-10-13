@@ -54,7 +54,14 @@
           "set PM2_HOME=C:\\Users\\carte\\.pm2 && pm2 restart {name}"
         ],
         "restore_verify_log_regex": "listening|online"
-      }
+      },
+      "require_shared_reading": true,
+      "shared_mem_cmd": [
+        "typeperf",
+        "\\GPU Adapter Memory(*)\\Shared Usage",
+        "-sc",
+        "1"
+      ]
     },
     "r9700": {
       "gpu": "AMD R9700 32 GB",
@@ -128,9 +135,14 @@
         "to_nemotron": [
           "/opt/llama/swap-nemo-clerk.sh"
         ],
-        "health_url": "http://127.0.0.1:8080/health",
-        "qwen_models_url": "http://127.0.0.1:8080/v1/models",
-        "round_trips": 3
+        "round_trips": 3,
+        "identity_cmd": [
+          "pgrep",
+          "-af",
+          "llama-server"
+        ],
+        "nemotron_regex": "(?i)nemotron",
+        "qwen_regex": "(?i)qwen3\\.8"
       }
     }
   },

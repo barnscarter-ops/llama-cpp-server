@@ -73,7 +73,8 @@ class Lane:
         self.run_dir = str(Path(settings.runs_dir) / self.run_id)
         self.markers = RunMarkers(settings.runs_dir, settings.lane)
         self.telemetry = Telemetry(self.backend, self.lane.raw.get("temp_start_c", 65), self.lane.raw.get("temp_pause_c", 85),
-                                   self.lane.raw.get("temp_resume_c", 70), self.lane.raw.get("temp_abort_c", 90))
+                                   self.lane.raw.get("temp_resume_c", 70), self.lane.raw.get("temp_abort_c", 90),
+                                   require_shared=bool(self.lane.raw.get("require_shared_reading")))
         self.window: Window | None = None
         self.safety: SafetyController | None = None
         self.snap = self._load_snapshot()
@@ -204,10 +205,34 @@ class Lane:
                 notes.append(f"{c.id}: no file named yet (optional)")
             elif not self.backend.file_exists(self.model_path(c)):
                 notes.append(f"{c.id}: NOT on disk ({c['status']}); it will be skipped")
+        pa = self.lane.raw["power_alarm"]
+        if pa.get("command"):
+            ok, why = self.ups_probe()
+            (notes if ok else problems).append(f"UPS monitor: {why}")
+        else:
+            notes.append("UPS monitor: not configured (power_monitor will be false)")
+        if self.lane.raw.get("require_shared_reading"):
+            gs = self.backend.gpu_sample()
+            if gs is None or gs.shared_mib is None:
+                problems.append("shared GPU memory is not readable (shared_mem_cmd); the no-spill rule would be unenforceable. "
+                                "Also set the NVIDIA driver to 'Prefer No Sysmem Fallback'")
+            else:
+                notes.append(f"shared GPU memory readable ({gs.shared_mib:.0f} MiB now)")
         free = self.backend.free_disk_gb(self.s.runs_dir if Path(self.s.runs_dir).exists() else ".")
         if free < 20:
             problems.append(f"only {free:.0f} GB free")
         return {"ok": not problems, "problems": problems, "notes": notes}
+
+    def ups_probe(self) -> tuple[bool, str]:
+        """A dead monitor must not look like 'no alarm': the query has to return a status line now."""
+        pa = self.lane.raw["power_alarm"]
+        r = self.backend.run(pa["command"], timeout=15)
+        if r.rc != 0 or not r.stdout.strip():
+            return False, f"query failed (rc={r.rc}): {(r.stderr or 'no output').strip()[:120]}"
+        return True, f"status '{r.stdout.strip()[:60]}'"
+
+    def _power_monitor_working(self) -> bool:
+        return bool(self.lane.raw["power_alarm"]["command"]) and self.ups_probe()[0]
 
     def write_header(self, hash_models: bool = False) -> None:
         models = {}
@@ -218,7 +243,7 @@ class Lane:
         self.ledger.append("header", run_id=self.run_id, machine=self.lane.name,
                            hw={"gpu": self.lane.raw["gpu"], "vram_total_mib": s.total_mib if s else None,
                                "temp_start_c": s.temp_c if s else None, "power_w": s.power_w if s else None},
-                           power_monitor=bool(self.lane.raw["power_alarm"]["command"]), models=models,
+                           power_monitor=self._power_monitor_working(), models=models,
                            frozen=getattr(self, "_frozen_hashes", None))
 
     # -- running stages inside the safety session --
@@ -416,27 +441,52 @@ class Lane:
         return json.loads(p.read_text(encoding="utf-8")).get("hermes_bench")
 
     # -- swap timing (R9700): Nemotron -> Qwen -> Nemotron through the real scripts --
+    def _swap_ready(self, safety: SafetyController, which: str, since: float):
+        """Ready when the service is listening again since `since` and the process list shows the wanted model.
+        Looks at the service and its process only; nothing here sends a request to Guardian's port."""
+        name = safety.cfg["services"][0]["name"]
+
+        def probe() -> bool:
+            return safety.service_ready(name, since)[0] and safety.identity_is(which)[0]
+        return probe
+
     def swap_test(self) -> dict:
         self.load_window()
         self.window.require("qwen_load")
         self.window.require("swap_test")
         sw = self.lane.raw.get("swap")
-        if not sw:
-            raise WindowError(f"lane {self.lane.name} has no swap scripts configured")
-        probe_backend = GuardedBackend(self.raw_backend, {8080})
+        if not sw or not sw.get("identity_cmd"):
+            raise WindowError(f"lane {self.lane.name} has no swap scripts and identity check configured")
         safety = self.make_safety(use_mutex=False)
-        to_q, to_n = [], []
-        with safety.watch():
+        to_q, to_n, failed = [], [], None
+
+        def put_back() -> None:
+            # Whatever happened above (failed script, abort, signal), end with Nemotron resident and verified.
+            if safety.identity_is("nemotron")[0]:
+                return
+            t = ladder.time_swap(self.backend, sw["to_nemotron"], self._swap_ready(safety, "nemotron", self.backend.now()))
+            self.ledger.event("swap_put_back", seconds=t)
+
+        with safety.watch(before_restore=put_back):
             for i in range(int(sw.get("round_trips", 3))):
                 safety.check()
-                t = ladder.time_swap(probe_backend, sw["to_qwen"], lambda: probe_backend.http_get(sw["health_url"])[0] == 200)
+                t0 = self.backend.now()
+                t = ladder.time_swap(self.backend, sw["to_qwen"], self._swap_ready(safety, "qwen", t0))
+                if t is None:
+                    failed = f"to_qwen failed or timed out on round trip {i + 1}"
+                    break
                 to_q.append(t)
                 self.ledger.append("swap", run_id=self.run_id, direction="nemotron->qwen", round_trip=i + 1, seconds=t)
-                t = ladder.time_swap(probe_backend, sw["to_nemotron"], lambda: probe_backend.http_get(sw["health_url"])[0] == 200)
+                safety.check()
+                t0 = self.backend.now()
+                t = ladder.time_swap(self.backend, sw["to_nemotron"], self._swap_ready(safety, "nemotron", t0))
+                if t is None:
+                    failed = f"to_nemotron failed or timed out on round trip {i + 1}"
+                    break
                 to_n.append(t)
                 self.ledger.append("swap", run_id=self.run_id, direction="qwen->nemotron", round_trip=i + 1, seconds=t)
-        self.ledger.event("swap_done", to_qwen_s=to_q, to_nemotron_s=to_n)
-        return {"to_qwen_s": to_q, "to_nemotron_s": to_n}
+        self.ledger.event("swap_done", to_qwen_s=to_q, to_nemotron_s=to_n, failed=failed)
+        return {"to_qwen_s": to_q, "to_nemotron_s": to_n, "failed": failed}
 
     # -- restore on demand --
     def restore_now(self) -> dict:

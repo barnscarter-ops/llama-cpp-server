@@ -50,7 +50,7 @@ def _settings(args, dry: bool = False) -> LaneSettings:
 def _real_backend(args) -> SystemBackend:
     lane = load_lanes(args.lanes)[args.lane]
     pa = lane.raw["power_alarm"]
-    return SystemBackend(lane.raw["gpu_kind"], pa.get("command"), pa.get("alarm_regex"))
+    return SystemBackend(lane.raw["gpu_kind"], pa.get("command"), pa.get("alarm_regex"), lane.raw.get("shared_mem_cmd"))
 
 
 def _print(obj) -> None:

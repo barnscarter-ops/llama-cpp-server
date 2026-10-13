@@ -58,6 +58,10 @@ class FakeWorld:
     stop_fails: bool = False
     t: float = 1_800_000_000.0
     spawned: list = field(default_factory=list)
+    resident: str = "Nemotron-3.5-Lightning-Q5_K_M.gguf"   # what the production service has loaded (R9700)
+    swap_fail: set = field(default_factory=set)         # script basenames that exit non-zero
+    uptimes: dict = field(default_factory=dict)         # pm2 name -> restart time (virtual seconds)
+    status_garbage: bool = False                         # service status commands print unparseable text
     other_gpu_mib: float = 0.0
 
 
@@ -183,6 +187,16 @@ class FakeBackend:
         w = self.w
         w.cmd_log.append(list(cmd))
         joined = " ".join(cmd)
+        if w.status_garbage and (("pm2 jlist" in joined) or (cmd and cmd[0] == "systemctl" and cmd[1] == "is-active")):
+            return CmdResult(0, "[PM2] banner without any json\nwhat?\n")
+        base = cmd[0].replace("\\", "/").split("/")[-1] if cmd else ""
+        if base in ("swap-qwen-consult.sh", "swap-nemo-clerk.sh"):
+            if base in w.swap_fail:
+                return CmdResult(1, "", "swap failed")
+            w.resident = "Qwen3.8-27B-Q6_K.gguf" if "qwen" in base else "Nemotron-3.5-Lightning-Q5_K_M.gguf"
+            return CmdResult(0)
+        if cmd and cmd[0] == "pgrep":
+            return CmdResult(0, f"4242 /opt/llama/llama-server -m /opt/llama/models/{w.resident} --port 8080\n")
         if cmd and cmd[0] == "systemctl":
             action, name = cmd[1], cmd[2]
             if action == "is-active":
@@ -200,13 +214,16 @@ class FakeBackend:
             ok = w.services.get(name) and w.journal_listening
             return CmdResult(0, "main: server is listening on :8080\n" if ok else "loading...\n")
         if "pm2 jlist" in joined:
-            apps = [{"name": n, "pm2_env": {"status": "online" if a else "stopped"}} for n, a in w.services.items()]
+            apps = [{"name": n, "pm2_env": {"status": "online" if a else "stopped", "pm_uptime": w.uptimes.get(n, 0.0) * 1000.0}}
+                    for n, a in w.services.items()]
             return CmdResult(0, "noise line\n" + json.dumps(apps))
         m = re.search(r"pm2 (stop|restart) (\S+)", joined)
         if m:
             if w.stop_fails and m[1] == "stop":
                 return CmdResult(1, "", "denied")
             w.services[m[2]] = m[1] == "restart"
+            if m[1] == "restart":
+                w.uptimes[m[2]] = w.t
             return CmdResult(0)
         if "llama-perplexity" in cmd[0]:
             p = parse_launch(cmd)
