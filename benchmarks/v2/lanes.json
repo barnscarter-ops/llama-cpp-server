@@ -76,8 +76,12 @@
       "temp_resume_c": 70,
       "temp_abort_c": 90,
       "power_alarm": {
-        "command": null,
-        "alarm_regex": null
+        "command": [
+          "upsc",
+          "cp1500@localhost",
+          "ups.status"
+        ],
+        "alarm_regex": "(?:^|\\s)OB(?:\\s|$)"
       },
       "safety": {
         "kind": "systemd",

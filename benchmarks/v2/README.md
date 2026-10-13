@@ -53,7 +53,7 @@ Stages resume from the ledger. Global options (`--ledger-dir`, `--runs-dir`, `--
 6. Stop at any time with `touch runs/STOP`. If anything dies, run `python3 benchmarks/v2/run_lane.py restore --lane <lane>`.
 
 ## UPS alarm
-`lanes.json` `power_alarm` takes a command and a regex, for example with NUT: `{"command": ["upsc", "ups@localhost", "ups.status"], "alarm_regex": "\\b(OB|LB)\\b"}`. Checked every second during a run; a match aborts and restores. Unset means the run records `power_monitor: false`. The harness cannot silence the audible alarm; with NUT use `upscmd -u <user> ups beeper.mute` (or `beeper.disable`), otherwise the front-panel button or a lower GPU power cap.
+The R9700 lane queries `upsc cp1500@localhost ups.status` (CyberPower CP1500 under NUT on AIWA) every second and aborts and restores only when the status contains `OB` (on battery). `LB` and other flags are deliberately ignored: with the UPS on line they only mean the runtime is under the configured target, and `LB` can only be a real emergency while `OB` is also set. The Workbench lane has no UPS query (`power_alarm.command` null, recorded as `power_monitor: false`). Muting the beeper is not done by the harness.
 
 ## Layout
 `bench_v2/` modules (see each docstring), `candidates.json` (models, criteria, registry mapping), `lanes.json` (machines, ports, safety commands), `data/` (tool schema snapshot, guard text slice), `frozen/` (suites + hashes), `ledger/` (results, hash-chained JSONL, one file per lane), `tests/`.

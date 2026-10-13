@@ -97,6 +97,13 @@ class SseParser(unittest.TestCase):
         self.assertIsNone(b.power_alarm())
         self.assertIsNone(SystemBackend().power_alarm())
 
+    def test_r9700_default_aborts_only_on_battery(self):
+        pa = load_lanes()["r9700"].raw["power_alarm"]
+        self.assertEqual(pa["command"], ["upsc", "cp1500@localhost", "ups.status"])
+        for status, alarm in (("OL", False), ("OL LB", False), ("OL CHRG", False), ("OB DISCHRG", True), ("OB LB", True)):
+            b = SystemBackend(power_cmd=[sys.executable, "-c", f"print({status!r})"], power_alarm_regex=pa["alarm_regex"])
+            self.assertEqual(b.power_alarm() is not None, alarm, status)
+
 
 class JevTrack(unittest.TestCase):
     @classmethod
