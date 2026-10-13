@@ -142,6 +142,8 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         app.router.add_get("/__guardian/seats", m.guardian_seats)
         app.router.add_get("/__guardian/models", m.guardian_models)
         app.router.add_get("/__guardian/queues", m.guardian_queues)
+        app.router.add_post("/__guardian/tasks", m.task_submit)
+        app.router.add_get("/__guardian/tasks/{task_id}", m.task_status)
         app.router.add_get("/__guardian/approvals", m.approvals_list)
         app.router.add_post("/__guardian/approvals/{approval_id}/decide", m.approvals_decide)
         app.router.add_post("/__guardian/swap", m.guardian_swap)
@@ -159,6 +161,7 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
             "GUARDIAN_MODEL_SLOTS": "false",
             "GUARDIAN_PER_MODEL_QUEUES": "false",
             "GUARDIAN_QWEN_APPROVAL": "false",
+            "GUARDIAN_TASK_API": "false",
             **self.ENV,
         }
         self._env_backup = {k: os.environ.get(k) for k in env}

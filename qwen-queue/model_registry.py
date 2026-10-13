@@ -294,6 +294,9 @@ class ReadinessProbe:
             return Readiness(UNAVAILABLE, reason="no_slot")
         return Readiness(READY)
 
+    async def states(self, registry: ModelRegistry) -> list[tuple[ModelSpec, Readiness]]:
+        return [(spec, await self.readiness(spec)) for spec in registry]
+
     async def snapshot(self, registry: ModelRegistry) -> list[dict[str, Any]]:
         out = []
         for spec in registry:
