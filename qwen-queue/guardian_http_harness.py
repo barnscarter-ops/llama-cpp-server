@@ -19,11 +19,18 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+import aiwa_swap
 import fleet_router
+import model_slots
 from fleet_router import SERVING_IDS, OccupantCache
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 _counter = itertools.count()
+
+
+def _fresh_occupant_cache() -> None:
+    """New cache per test (its lock binds to one loop); aiwa_swap holds its own reference by name."""
+    fleet_router.occupant_cache = aiwa_swap.occupant_cache = OccupantCache()
 
 
 class FakeAiwa:
@@ -160,7 +167,8 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         self.module.LLAMA_PORT = self.llama.server.port
         self.module.guardian._client = aiohttp.ClientSession()
         self.module.guardian._llama_up = False
-        fleet_router.occupant_cache = OccupantCache()
+        _fresh_occupant_cache()
+        model_slots.reset_slots()
 
         app = web.Application()
         self.build_routes(app)
@@ -173,7 +181,8 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         await self.aiwa.close()
         await self.llama.close()
         self.module.guardian.job_store.close()
-        fleet_router.occupant_cache = OccupantCache()
+        _fresh_occupant_cache()
+        model_slots.reset_slots()
         self.temp_dir.cleanup()
         for key, value in self._env_backup.items():
             if value is None:

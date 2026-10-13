@@ -17,12 +17,15 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import aiwa_swap
 import fleet_router
+import model_slots
 from fleet_router import OccupantCache, SERVING_IDS
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
 class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
+    MODEL_SLOTS = "false"
+
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self._env_backup = {
@@ -34,8 +37,11 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
                 "AIWA_BASE",
                 "AIWA_PROXY_LOOPBACK_ONLY",
                 "GUARDIAN_QUEUE_DB",
+                "GUARDIAN_MODEL_SLOTS",
             )
         }
+        os.environ["GUARDIAN_MODEL_SLOTS"] = self.MODEL_SLOTS
+        model_slots.reset_slots()
         os.environ["GUARDIAN_QUEUE_DB"] = str(Path(self.temp_dir.name) / "guardian.sqlite3")
         os.environ["FLEET_ROUTER"] = "true"
         os.environ["AIWA_PROXY_LOOPBACK_ONLY"] = "true"
@@ -130,6 +136,9 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_perform_swap(to, client, gate=None):
             self.swap_calls.append((to, gate))
+            # A real swap changes what AIWA serves; later occupancy checks must see that.
+            self.aiwa_occupant_id = SERVING_IDS[to]
+            fleet_router.occupant_cache.invalidate()
             return web.json_response(
                 {"status": "ok", "occupant": to, "model_id": SERVING_IDS[to]}
             )
@@ -396,6 +405,12 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         # an error never counts as served
         health = await self._health()
         self.assertEqual(0, health["served_total"])
+
+
+class ServedModelHttpTestsSlotsOn(ServedModelHttpTests):
+    """Same suite with GUARDIAN_MODEL_SLOTS on, including the gate-triggered consult swap path."""
+
+    MODEL_SLOTS = "true"
 
 
 if __name__ == "__main__":
