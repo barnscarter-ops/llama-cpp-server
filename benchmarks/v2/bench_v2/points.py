@@ -109,6 +109,7 @@ class PointRunner:
         idle = self.telemetry.idle_vram_mib()
         self.telemetry.reset()
         log_path = f"{self.run_dir}/{self.cand.id}-{self.n:03d}.log"
+        self.safety.check_services(force=True)  # a pm2 start in flight when Guardian was stopped can land between points
         lr = self.server.launch(argv, log_path, on_poll=self.safety.check)
         self.version = lr.version or self.version
         point.cold_s = lr.cold_s

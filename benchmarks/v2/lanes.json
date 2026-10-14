@@ -54,6 +54,7 @@
           "set PM2_HOME={pm2_home} && pm2 restart {name}"
         ],
         "restore_verify_log_regex": "listening|online",
+        "recheck_s": 300,
         "pm2_home": "C:\\Users\\carte\\.pm2"
       },
       "require_shared_reading": true,

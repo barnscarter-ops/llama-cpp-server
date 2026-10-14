@@ -64,6 +64,11 @@ class FakeWorld:
     status_garbage: bool = False                         # service status commands print unparseable text
     other_gpu_mib: float = 0.0
 
+    def pm2_start(self, name: str) -> None:
+        """A service coming online outside the harness (Guardian's prewarm, a manual `pm2 start`); real pm2 stamps a fresh uptime."""
+        self.services[name] = True
+        self.uptimes[name] = self.t
+
 
 class FakeProc:
     _pid = 1000
@@ -220,12 +225,12 @@ class FakeBackend:
             apps = [{"name": n, "pm2_env": {"status": "online" if a else "stopped", "pm_uptime": w.uptimes.get(n, 0.0) * 1000.0}}
                     for n, a in w.services.items()]
             return CmdResult(0, "noise line\n" + json.dumps(apps))
-        m = re.search(r"pm2 (stop|restart) (\S+)", joined)
+        m = re.search(r"pm2 (stop|restart|start) (\S+)", joined)
         if m:
             if w.stop_fails and m[1] == "stop":
                 return CmdResult(1, "", "denied")
-            w.services[m[2]] = m[1] == "restart"
-            if m[1] == "restart":
+            w.services[m[2]] = m[1] != "stop"
+            if m[1] != "stop":
                 w.uptimes[m[2]] = w.t
             return CmdResult(0)
         if "llama-perplexity" in cmd[0]:

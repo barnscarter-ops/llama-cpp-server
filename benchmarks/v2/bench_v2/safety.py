@@ -53,10 +53,23 @@ class SafetyController:
         self.since_check = True
         self._pm2_uptime: dict = {}
         self._signal_abort: str | None = None
+        self._recheck_on = False   # only after enter() has stopped everything
+        self._last_recheck = 0.0
+        self._unknown_rechecks: dict[str, int] = {}   # consecutive unknown readings per service
 
     # -- service state --
     def _state(self, name: str) -> tuple[str, str]:
-        """("active" | "inactive" | "unknown", detail). Anything unparseable is unknown, never inactive."""
+        """("active" | "inactive" | "unknown", detail). Retries transient failures (pm2 jlist through gsudo times out now and then)."""
+        tries = int(self.cfg.get("status_retries", 3))
+        st, why = self._state_once(name)
+        for _ in range(max(0, tries - 1)):
+            if st != "unknown" or why.endswith("not in pm2 list"):
+                break
+            self.b.sleep(3.0)
+            st, why = self._state_once(name)
+        return st, why
+
+    def _state_once(self, name: str) -> tuple[str, str]:
         kind = self.cfg["kind"]
         r = self.b.run(_fmt(self.cfg["status_cmd"], name), timeout=60)
         if kind == "systemd":
@@ -161,12 +174,52 @@ class SafetyController:
             st, why = self._state(name)
             if st != "inactive":
                 raise AbortRun(f"{name} is {st} after stop ({why})", "stop_failed")
+        # Guardian wakes an idle-stopped seat on demand, so a service that was stopped at the snapshot can have been
+        # started again before Guardian itself went down. Stop any such latecomer; it is not restored (it was off).
+        for name in self._services():
+            if name in self.prior_active:
+                continue
+            st, why = self._state(name)
+            if st == "unknown":
+                raise AbortRun(f"cannot tell whether {name} is running ({why}); refusing to proceed", "status_unknown")
+            if st == "active":
+                r = self.b.run(_fmt(self.cfg["stop_cmd"], name), timeout=120)
+                self.ledger.event("safety.stop_late", lane=self.lane.name, service=name, rc=r.rc)
+                if r.rc != 0 or self._state(name)[0] != "inactive":
+                    raise AbortRun(f"{name} started during the stop and could not be stopped again", "stop_failed")
         if self.telemetry:
             idle = self.telemetry.idle_vram_mib()
             if idle is not None and idle > GPU_IDLE_MAX_MIB:
                 raise AbortRun(f"GPU not idle after stopping services ({idle:.0f} MiB in use)", "gpu_busy")
             self.telemetry.capture_baseline()
         self._check_disk()
+        self._last_recheck = self.b.now()
+        self._recheck_on = True
+
+    def check_services(self, force: bool = False) -> None:
+        """Public hook for the point runner: `force` re-reads the services right now (before every server launch)."""
+        self._recheck_services(force)
+
+    def _recheck_services(self, force: bool = False) -> None:
+        """Every `recheck_s`, and before each launch, make sure nothing came back (Guardian's prewarm, a `pm2 start`
+        that was in flight when Guardian was stopped): two models must never share the card."""
+        every = float(self.cfg.get("recheck_s", 0) or 0)
+        if not (self._recheck_on and every):
+            return
+        if not force and self.b.now() - self._last_recheck < every:
+            return
+        self._last_recheck = self.b.now()
+        for name in self._services():
+            st, why = self._state(name)
+            if st == "active":
+                raise AbortRun(f"{name} came back online during the window ({why}); stopping so two models never share the GPU",
+                               "service_resurrected")
+            if st == "unknown":
+                self._unknown_rechecks[name] = self._unknown_rechecks.get(name, 0) + 1
+                if self._unknown_rechecks[name] >= 3:
+                    raise AbortRun(f"cannot read {name}'s status ({why}) on three checks in a row", "status_unknown")
+            else:
+                self._unknown_rechecks[name] = 0
 
     def _journal_cmd(self, name: str, since: float | None) -> list[str]:
         base = _fmt(self.cfg["journal_cmd"], name)
@@ -267,6 +320,7 @@ class SafetyController:
         if self.guarded is not None and self.guarded.violations:
             raise AbortRun(f"bench request left its port: {self.guarded.violations[0]}", "forbidden_target")
         self._check_disk()
+        self._recheck_services()
         if self.telemetry:
             self.telemetry.observe()
 

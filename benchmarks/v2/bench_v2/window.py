@@ -37,7 +37,7 @@ WINDOW_TEMPLATE = {
         "cloud_endpoint_host": "",
         "cloud_allow_internal_items": False
     },
-    "note": "Created by Carter. The harness refuses to start without this file."
+    "note": "Created by Carter. The harness refuses to start without this file. Workbench: start the run from an elevated shell (admin) so the periodic gsudo pm2 checks do not prompt."
 }
 
 

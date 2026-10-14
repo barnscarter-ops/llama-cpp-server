@@ -722,3 +722,112 @@ class RoundFourFixes(unittest.TestCase):
         rates = jevtrack.pass_rates_from_records(recs, {"m": "reg"})
         self.assertEqual(list(rates.get("reg", {}).values()), [1.0] * len(rates.get("reg", {})))
         self.assertTrue(rates)
+
+
+class GuardianIdleControl(unittest.TestCase):
+    """Guardian (a PM2 app) idle-stops and prewarm-starts local-llm; the Workbench lane has to keep it from doing so mid-window."""
+
+    def test_guardian_is_stopped_before_the_seat_and_both_come_back(self):
+        env = make_env("workbench")
+        env.lane.run_stages(["smoke"])
+        stops = [c[-1] for c in env.world.cmd_log if "pm2 stop" in " ".join(c)]
+        self.assertEqual([s.split()[-1] for s in stops], ["llama-guardian", "local-llm"])
+        self.assertTrue(env.world.services["llama-guardian"] and env.world.services["local-llm"])
+
+    def test_seat_started_by_guardian_just_before_it_stopped_is_stopped_too(self):
+        class WakesSeat(FakeBackend):
+            def run(self, cmd, timeout=120.0, env=None):
+                r = super().run(cmd, timeout, env)
+                if "pm2 stop llama-guardian" in " ".join(cmd):
+                    self.w.services["local-llm"] = True  # Guardian's prewarm fired in the same second
+                return r
+        env = make_env("workbench", backend_cls=WakesSeat)
+        env.world.services["local-llm"] = False   # idle-stopped at the snapshot
+        env.lane.run_stages(["smoke"])
+        kinds = [r.get("kind") for r in env.lane.ledger.records()]
+        self.assertIn("safety.stop_late", kinds)
+
+    def test_idle_stopped_seat_stays_stopped_after_the_window(self):
+        env = make_env("workbench")
+        env.world.services["local-llm"] = False
+        env.lane.run_stages(["smoke"])
+        self.assertFalse(env.world.services["local-llm"])
+        self.assertTrue(env.world.services["llama-guardian"])
+
+    def test_nothing_running_aborts_unless_the_window_expects_it(self):
+        env = make_env("workbench")
+        env.world.services.update({"llama-guardian": False, "local-llm": False})
+        rep = env.lane.run_stages(["smoke"])
+        self.assertEqual(rep["aborted"]["code"], "no_production_service")
+
+    def test_service_coming_back_mid_window_aborts(self):
+        class Revives(FakeBackend):
+            n = 0
+
+            def chat(self, *a, **k):
+                Revives.n += 1
+                if Revives.n == 3:
+                    self.w.pm2_start("llama-guardian")
+                return super().chat(*a, **k)
+        env = make_env("workbench", backend_cls=Revives)
+        env.lane.lane.raw["safety"]["recheck_s"] = 0.001
+        rep = env.lane.run_stages(["smoke", "tune"])
+        self.assertEqual(rep.get("aborted", {}).get("code"), "service_resurrected")
+        # end state: marker cleared, nothing of ours left running, both production services back and verified
+        self.assertFalse(env.lane.markers.restore_pending())
+        self.assertTrue(env.world.services["llama-guardian"] and env.world.services["local-llm"])
+        self.assertEqual([p for p in env.world.spawned if getattr(p, "rc", 1) is None], [])
+
+    def test_services_are_re_read_right_before_every_launch(self):
+        class InFlightStart(FakeBackend):
+            n = 0
+
+            def gpu_sample(self):
+                InFlightStart.n += 1
+                if InFlightStart.n == 2:  # the pm2 start that was in flight lands right after the stop sequence
+                    self.w.pm2_start("llama-guardian")
+                return super().gpu_sample()
+        env = make_env("workbench", backend_cls=InFlightStart)
+        env.lane.lane.raw["safety"]["recheck_s"] = 10 ** 9   # the timer can't be what catches it
+        rep = env.lane.run_stages(["smoke"])
+        self.assertEqual(rep.get("aborted", {}).get("code"), "service_resurrected")
+        self.assertEqual(env.world.request_count, 0)
+
+    def test_unknown_status_streaks_are_counted_per_service(self):
+        from bench_v2.errors import AbortRun
+
+        class GuardianUnreadable(FakeBackend):
+            def run(self, cmd, timeout=120.0, env=None):
+                joined = " ".join(cmd)
+                if "pm2 jlist" in joined:
+                    from bench_v2.backend import CmdResult
+                    import json as _json
+                    apps = [{"name": "local-llm", "pm2_env": {"status": "stopped", "pm_uptime": 0}}]  # Guardian missing: unknown
+                    return CmdResult(0, _json.dumps(apps))
+                return super().run(cmd, timeout, env)
+        env = make_env("workbench", backend_cls=GuardianUnreadable)
+        env.lane.load_window()
+        s = env.lane.make_safety()
+        s._recheck_on = True
+        s.cfg["recheck_s"] = 1
+        s.cfg["status_retries"] = 1
+        for _ in range(2):
+            s._recheck_services(force=True)       # the seat reads inactive every time and must not reset Guardian's streak
+        with self.assertRaises(AbortRun) as cm:
+            s._recheck_services(force=True)
+        self.assertEqual(cm.exception.code, "status_unknown")
+
+    def test_a_pm2_jlist_timeout_is_retried_not_fatal(self):
+        class FlakyOnce(FakeBackend):
+            seen = 0
+
+            def run(self, cmd, timeout=120.0, env=None):
+                if "pm2 jlist" in " ".join(cmd):
+                    FlakyOnce.seen += 1
+                    if FlakyOnce.seen == 1:
+                        from bench_v2.backend import CmdResult
+                        return CmdResult(1, "", "timed out")
+                return super().run(cmd, timeout, env)
+        env = make_env("workbench", backend_cls=FlakyOnce)
+        env.lane.load_window()
+        self.assertEqual(env.lane.make_safety()._state("local-llm")[0], "active")
