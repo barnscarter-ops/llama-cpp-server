@@ -196,10 +196,17 @@ class SafetyController:
         self._last_recheck = self.b.now()
         self._recheck_on = True
 
-    def _recheck_services(self) -> None:
-        """Every `recheck_s`, make sure nothing came back (Guardian's prewarm, a manual `pm2 start`): two models must never share the card."""
+    def check_services(self, force: bool = False) -> None:
+        """Public hook for the point runner: `force` re-reads the services right now (before every server launch)."""
+        self._recheck_services(force)
+
+    def _recheck_services(self, force: bool = False) -> None:
+        """Every `recheck_s`, and before each launch, make sure nothing came back (Guardian's prewarm, a `pm2 start`
+        that was in flight when Guardian was stopped): two models must never share the card."""
         every = float(self.cfg.get("recheck_s", 0) or 0)
-        if not (self._recheck_on and every) or self.b.now() - self._last_recheck < every:
+        if not (self._recheck_on and every):
+            return
+        if not force and self.b.now() - self._last_recheck < every:
             return
         self._last_recheck = self.b.now()
         for name in self._services():

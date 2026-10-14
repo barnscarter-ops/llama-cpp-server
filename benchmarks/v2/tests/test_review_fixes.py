@@ -767,12 +767,31 @@ class GuardianIdleControl(unittest.TestCase):
             def chat(self, *a, **k):
                 Revives.n += 1
                 if Revives.n == 3:
-                    self.w.services["llama-guardian"] = True
+                    self.w.pm2_start("llama-guardian")
                 return super().chat(*a, **k)
         env = make_env("workbench", backend_cls=Revives)
         env.lane.lane.raw["safety"]["recheck_s"] = 0.001
         rep = env.lane.run_stages(["smoke", "tune"])
         self.assertEqual(rep.get("aborted", {}).get("code"), "service_resurrected")
+        # end state: marker cleared, nothing of ours left running, both production services back and verified
+        self.assertFalse(env.lane.markers.restore_pending())
+        self.assertTrue(env.world.services["llama-guardian"] and env.world.services["local-llm"])
+        self.assertEqual([p for p in env.world.spawned if getattr(p, "rc", 1) is None], [])
+
+    def test_services_are_re_read_right_before_every_launch(self):
+        class InFlightStart(FakeBackend):
+            n = 0
+
+            def gpu_sample(self):
+                InFlightStart.n += 1
+                if InFlightStart.n == 2:  # the pm2 start that was in flight lands right after the stop sequence
+                    self.w.pm2_start("llama-guardian")
+                return super().gpu_sample()
+        env = make_env("workbench", backend_cls=InFlightStart)
+        env.lane.lane.raw["safety"]["recheck_s"] = 10 ** 9   # the timer can't be what catches it
+        rep = env.lane.run_stages(["smoke"])
+        self.assertEqual(rep.get("aborted", {}).get("code"), "service_resurrected")
+        self.assertEqual(env.world.request_count, 0)
 
     def test_a_pm2_jlist_timeout_is_retried_not_fatal(self):
         class FlakyOnce(FakeBackend):
