@@ -793,6 +793,30 @@ class GuardianIdleControl(unittest.TestCase):
         self.assertEqual(rep.get("aborted", {}).get("code"), "service_resurrected")
         self.assertEqual(env.world.request_count, 0)
 
+    def test_unknown_status_streaks_are_counted_per_service(self):
+        from bench_v2.errors import AbortRun
+
+        class GuardianUnreadable(FakeBackend):
+            def run(self, cmd, timeout=120.0, env=None):
+                joined = " ".join(cmd)
+                if "pm2 jlist" in joined:
+                    from bench_v2.backend import CmdResult
+                    import json as _json
+                    apps = [{"name": "local-llm", "pm2_env": {"status": "stopped", "pm_uptime": 0}}]  # Guardian missing: unknown
+                    return CmdResult(0, _json.dumps(apps))
+                return super().run(cmd, timeout, env)
+        env = make_env("workbench", backend_cls=GuardianUnreadable)
+        env.lane.load_window()
+        s = env.lane.make_safety()
+        s._recheck_on = True
+        s.cfg["recheck_s"] = 1
+        s.cfg["status_retries"] = 1
+        for _ in range(2):
+            s._recheck_services(force=True)       # the seat reads inactive every time and must not reset Guardian's streak
+        with self.assertRaises(AbortRun) as cm:
+            s._recheck_services(force=True)
+        self.assertEqual(cm.exception.code, "status_unknown")
+
     def test_a_pm2_jlist_timeout_is_retried_not_fatal(self):
         class FlakyOnce(FakeBackend):
             seen = 0

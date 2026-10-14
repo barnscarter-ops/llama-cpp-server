@@ -55,7 +55,7 @@ class SafetyController:
         self._signal_abort: str | None = None
         self._recheck_on = False   # only after enter() has stopped everything
         self._last_recheck = 0.0
-        self._unknown_rechecks = 0
+        self._unknown_rechecks: dict[str, int] = {}   # consecutive unknown readings per service
 
     # -- service state --
     def _state(self, name: str) -> tuple[str, str]:
@@ -215,11 +215,11 @@ class SafetyController:
                 raise AbortRun(f"{name} came back online during the window ({why}); stopping so two models never share the GPU",
                                "service_resurrected")
             if st == "unknown":
-                self._unknown_rechecks += 1
-                if self._unknown_rechecks >= 3:
+                self._unknown_rechecks[name] = self._unknown_rechecks.get(name, 0) + 1
+                if self._unknown_rechecks[name] >= 3:
                     raise AbortRun(f"cannot read {name}'s status ({why}) on three checks in a row", "status_unknown")
             else:
-                self._unknown_rechecks = 0
+                self._unknown_rechecks[name] = 0
 
     def _journal_cmd(self, name: str, since: float | None) -> list[str]:
         base = _fmt(self.cfg["journal_cmd"], name)
