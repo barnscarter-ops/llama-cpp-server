@@ -6,7 +6,7 @@ Everything for the Hermes-decided local-model coding queue, consolidated 2026-07
 
 | File | Role |
 |------|------|
-| `llama-guardian.py` | Gateway on port 8080. Proxies to llama-server (8081), owns llama lifecycle, hosts the job queue API (`/__guardian/jobs`). Runs under PM2 as `llama-guardian` (path registered in `ecosystem.config.cjs` and the PM2 dump at `C:\ProgramData\pm2`). |
+| `llama-guardian.py` | Gateway on port 8080. Proxies to llama-server (8081), owns llama lifecycle, hosts the job queue API (`/__guardian/jobs`). Runs under PM2 as `llama-guardian` (path registered in `ecosystem.config.cjs` and the PM2 dump at `C:\Users\carte\.pm2`). |
 | `guardian_queue.py` | Queue logic imported by the guardian. State persists in `..\logs\guardian-queue.sqlite3` (path derived from `__file__/../../logs` — keep this folder one level below the repo root). |
 | `test_guardian_queue.py` | Queue tests (`python -m pytest test_guardian_queue.py`). |
 | `qwen-submit.ps1` | Client: submits a task (+ context files) to the queue. |

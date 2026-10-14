@@ -122,7 +122,7 @@ Live check 2026-08-28 this session (read-only): guardian `status=ok` on
 `:8080`, `llama_up=false`, no `LISTEN` on `:8081`, no `llama-server.exe`,
 AIWA seat `occupant=clerk` `reachable=true`
 `endpoint=http://192.168.1.240:8080`, workers `enabled=false`.
-`LOCAL_WORKER_ENABLED` is absent from `C:\ProgramData\pm2\dump.pm2`.
+`LOCAL_WORKER_ENABLED` is absent from `C:\Users\carte\.pm2\dump.pm2`.
 
 ### Intended front door
 
