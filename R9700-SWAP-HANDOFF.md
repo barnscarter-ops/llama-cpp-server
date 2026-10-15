@@ -190,9 +190,11 @@ CUDA on a 16GB card and are **unvalidated on Vulkan**.
   tool for PC-side commands.
 - Bash tool `cwd` is `C:\Workspace\Infrastructure`, which is **not** a git repo.
   The repo is the `llama-cpp-server` subdirectory — use `git -C`.
-- PM2's service reads `C:\ProgramData\pm2\`, **not** `C:\Users\carte\.pm2\`.
-  The user-profile dump is stale leftover (backed up as
-  `dump.pm2.bak-20260805-pre-gpu`).
+- **Updated 2026-10-14:** the Workbench has a single PM2 home, `C:\Users\carte\.pm2`
+  (`PM2_HOME` unset); `C:\ProgramData\pm2` is retired. This note originally said the
+  opposite (the service read `C:\ProgramData\pm2\`, and the user-profile dump was
+  stale leftover, backed up as `dump.pm2.bak-20260805-pre-gpu`); that was true on
+  2026-08-06 and no longer is.
 
 ## Next after the swap
 

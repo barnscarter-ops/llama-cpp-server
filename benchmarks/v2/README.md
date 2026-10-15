@@ -89,7 +89,7 @@ llama-perplexity flag spellings and KL output format; speculative-decoding flags
 
 ## PM2 home
 
-The Workbench lane runs `pm2` through gsudo with a single `safety.pm2_home` setting in `lanes.json`: `C:\Users\carte\.pm2`. That is the home the live daemon uses on the Workbench (reported from the machine on 2026-10-14, with `PM2_HOME` unset there) and matches the AIWA-System instructions. `AGENTS.md` and `R9700-SWAP-HANDOFF.md` in this repo still name `C:\ProgramData\pm2`; they are out of date on this point and need updating separately. Before the first Workbench window, confirm that `pm2 jlist` with this home lists both `llama-guardian` and `local-llm`: a wrong home fails closed (status reads `unknown`, the run aborts), and it would be the wrong daemon only if both homes held registrations. An unreadable `RESTORE_REQUIRED` marker also blocks the lane and is never deleted automatically.
+The Workbench lane runs `pm2` through gsudo with a single `safety.pm2_home` setting in `lanes.json`: `C:\Users\carte\.pm2`. That is the home the live daemon uses on the Workbench (reported from the machine on 2026-10-14, with `PM2_HOME` unset there) and matches the AIWA-System instructions. `AGENTS.md`, `R9700-SWAP-HANDOFF.md` and the qwen-queue docs now say the same (`C:\ProgramData\pm2` is retired). Before the first Workbench window, confirm that `pm2 jlist` with this home lists both `llama-guardian` and `local-llm`: a wrong home fails closed (status reads `unknown`, the run aborts), and it would be the wrong daemon only if both homes held registrations. An unreadable `RESTORE_REQUIRED` marker also blocks the lane and is never deleted automatically.
 
 ## Guardian during a Workbench window
 
