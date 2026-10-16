@@ -13,7 +13,7 @@ import model_registry as mr
 import model_slots
 from guardian_http_harness import GuardianHarnessCase
 
-CLERK_ID = "nemotron-3.5-lightning-30b-a3b"
+CLERK_ID = "ornith-1.5-35b-a3b"
 CONSULT_ID = "qwen3.8-27b"
 
 
@@ -29,46 +29,46 @@ class ModelSlotsUnitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_same_model_is_strictly_serialized(self) -> None:
         log: list[str] = []
-        await asyncio.gather(*(self.hold("nemotron-r9700", log, str(i)) for i in range(3)))
+        await asyncio.gather(*(self.hold("ornith-r9700", log, str(i)) for i in range(3)))
         self.assertEqual(["start:0", "end:0", "start:1", "end:1", "start:2", "end:2"], log)
 
     async def test_different_hosts_run_in_parallel(self) -> None:
         log: list[str] = []
         await asyncio.gather(
-            self.hold("workbench-local", log, "wb"), self.hold("nemotron-r9700", log, "r9")
+            self.hold("workbench-local", log, "wb"), self.hold("ornith-r9700", log, "r9")
         )
         self.assertEqual(["start:wb", "start:r9"], log[:2])
 
     async def test_cancellation_releases_slot(self) -> None:
         log: list[str] = []
-        task = asyncio.create_task(self.hold("nemotron-r9700", log, "a", hold_s=10))
+        task = asyncio.create_task(self.hold("ornith-r9700", log, "a", hold_s=10))
         await asyncio.sleep(0.01)
-        self.assertEqual(1, self.slots.in_flight("nemotron-r9700"))
+        self.assertEqual(1, self.slots.in_flight("ornith-r9700"))
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-        self.assertEqual(0, self.slots.in_flight("nemotron-r9700"))
-        await asyncio.wait_for(self.hold("nemotron-r9700", log, "b", hold_s=0), 1)
+        self.assertEqual(0, self.slots.in_flight("ornith-r9700"))
+        await asyncio.wait_for(self.hold("ornith-r9700", log, "b", hold_s=0), 1)
 
     async def test_cancelled_waiter_does_not_leak_a_slot(self) -> None:
         log: list[str] = []
-        first = asyncio.create_task(self.hold("nemotron-r9700", log, "a", hold_s=0.1))
+        first = asyncio.create_task(self.hold("ornith-r9700", log, "a", hold_s=0.1))
         await asyncio.sleep(0.01)
-        waiter = asyncio.create_task(self.hold("nemotron-r9700", log, "w"))
+        waiter = asyncio.create_task(self.hold("ornith-r9700", log, "w"))
         await asyncio.sleep(0.01)
         waiter.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await waiter
         await first
-        await asyncio.wait_for(self.hold("nemotron-r9700", log, "c", hold_s=0), 1)
-        self.assertEqual(0, self.slots.in_flight("nemotron-r9700"))
+        await asyncio.wait_for(self.hold("ornith-r9700", log, "c", hold_s=0), 1)
+        self.assertEqual(0, self.slots.in_flight("ornith-r9700"))
 
     async def test_exception_releases_slot(self) -> None:
         with self.assertRaises(RuntimeError):
-            async with self.slots.acquire("nemotron-r9700"):
+            async with self.slots.acquire("ornith-r9700"):
                 raise RuntimeError("boom")
-        self.assertEqual(0, self.slots.in_flight("nemotron-r9700"))
-        await asyncio.wait_for(self.hold("nemotron-r9700", [], "x", hold_s=0), 1)
+        self.assertEqual(0, self.slots.in_flight("ornith-r9700"))
+        await asyncio.wait_for(self.hold("ornith-r9700", [], "x", hold_s=0), 1)
 
     async def test_unknown_model_is_keyerror(self) -> None:
         with self.assertRaises(KeyError):
@@ -77,7 +77,7 @@ class ModelSlotsUnitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_exclusive_drains_then_blocks_both_r9700_models_but_not_workbench(self) -> None:
         log: list[str] = []
-        running = asyncio.create_task(self.hold("nemotron-r9700", log, "inflight", hold_s=0.1))
+        running = asyncio.create_task(self.hold("ornith-r9700", log, "inflight", hold_s=0.1))
         await asyncio.sleep(0.01)
 
         async def swap() -> None:
@@ -88,7 +88,7 @@ class ModelSlotsUnitTests(unittest.IsolatedAsyncioTestCase):
 
         swapper = asyncio.create_task(swap())
         await asyncio.sleep(0.01)
-        late_clerk = asyncio.create_task(self.hold("nemotron-r9700", log, "late_clerk", hold_s=0))
+        late_clerk = asyncio.create_task(self.hold("ornith-r9700", log, "late_clerk", hold_s=0))
         late_qwen = asyncio.create_task(self.hold("qwen27b-r9700", log, "late_qwen", hold_s=0))
         await self.hold("workbench-local", log, "wb", hold_s=0)
         self.assertIn("start:wb", log)
@@ -100,7 +100,7 @@ class ModelSlotsUnitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_exclusive_timeout_does_not_kill_inflight_and_unblocks_new_work(self) -> None:
         log: list[str] = []
-        running = asyncio.create_task(self.hold("nemotron-r9700", log, "inflight", hold_s=0.2))
+        running = asyncio.create_task(self.hold("ornith-r9700", log, "inflight", hold_s=0.2))
         await asyncio.sleep(0.01)
         with self.assertRaises(model_slots.DrainTimeout):
             async with self.slots.exclusive("r9700", timeout=0.05):

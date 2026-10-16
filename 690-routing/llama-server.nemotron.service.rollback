@@ -1,0 +1,13 @@
+[Unit]
+Description=llama.cpp server (Vulkan) - Nemotron 3.5 Lightning 30B-A3B Q5_K_M
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/llama/src/build/bin/llama-server   -m /opt/llama/models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_M.gguf   --host 0.0.0.0 --port 8080   -ngl 999 -c 131072 -b 2048 -ub 512   --jinja --reasoning off   --spec-type draft-mtp   --alias nemotron-3.5-lightning-30b-a3b
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

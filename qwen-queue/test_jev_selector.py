@@ -242,20 +242,20 @@ class SecretTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SelectorTests(unittest.IsolatedAsyncioTestCase):
-    CANDS = [candidate("workbench-local", egress="pc"), candidate("nemotron-r9700")]
+    CANDS = [candidate("workbench-local", egress="pc"), candidate("ornith-r9700")]
 
     def selector(self, fake, led=None, **kw) -> JevSelector:
         return JevSelector(led or ledger(), key, transport=fake, **kw)
 
     async def test_valid_pick_is_returned(self) -> None:
-        fake = FakeJev("nemotron-r9700")
+        fake = FakeJev("ornith-r9700")
         answer = await self.selector(fake).choose(task(), self.CANDS)
-        self.assertEqual((answer.model_id, answer.reason), ("nemotron-r9700", "jev_pick"))
+        self.assertEqual((answer.model_id, answer.reason), ("ornith-r9700", "jev_pick"))
 
     async def test_request_contains_only_offered_candidates_and_the_summary(self) -> None:
         fake = FakeJev("workbench-local")
         await self.selector(fake).choose(task("short summary"), self.CANDS)
-        self.assertEqual(fake.offered, ["abstain", "nemotron-r9700", "workbench-local"])
+        self.assertEqual(fake.offered, ["abstain", "ornith-r9700", "workbench-local"])
         sent = json.dumps(fake.calls[0][2])
         self.assertIn("short summary", sent)
         self.assertNotIn("PRIVATE MESSAGE BODY", sent)
@@ -329,13 +329,13 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((answer.model_id, answer.reason), (None, reason))
 
     async def test_pick_outside_offered_ids_is_rejected(self) -> None:
-        ids = ["abstain", "nemotron-r9700", "workbench-local"]
+        ids = ["abstain", "ornith-r9700", "workbench-local"]
         fake = FakeJev(raw=jev_body("deepseek-flash", ids + ["deepseek-flash"]))
         answer = await self.selector(fake).choose(task(), self.CANDS)
         self.assertEqual((answer.model_id, answer.reason), (None, "jev_invalid_response"))
 
     async def test_low_confidence_is_a_failure_when_a_threshold_is_set(self) -> None:
-        fake = FakeJev(raw=jev_body("workbench-local", ["abstain", "nemotron-r9700", "workbench-local"], confidence=0.2))
+        fake = FakeJev(raw=jev_body("workbench-local", ["abstain", "ornith-r9700", "workbench-local"], confidence=0.2))
         answer = await self.selector(fake, confidence_threshold=0.5).choose(task(), self.CANDS)
         self.assertEqual(answer.reason, "jev_low_confidence")
 
@@ -383,15 +383,15 @@ class JevTaskApiTests(TaskHttpBase):
         return fake
 
     async def test_jev_pick_is_dispatched_and_recorded_as_evidence(self) -> None:
-        fake = self.use(FakeJev("nemotron-r9700"))
+        fake = self.use(FakeJev("ornith-r9700"))
         await self.start_worker()
         response = await self.client.post("/__guardian/tasks", json=payload(clearance="lan", summary_cleared_for_jev=True))
         self.assertEqual(response.status, 202, await response.text())
         body = await self.wait_status("t1", "succeeded")
         evidence = body["evidence"]
-        self.assertEqual((evidence["selector"], evidence["chosen_model"]), ("jev", "nemotron-r9700"))
+        self.assertEqual((evidence["selector"], evidence["chosen_model"]), ("jev", "ornith-r9700"))
         self.assertEqual(evidence["selector_answer"]["reason"], "jev_pick")
-        self.assertEqual(fake.offered, ["abstain", "nemotron-r9700", "workbench-local"])
+        self.assertEqual(fake.offered, ["abstain", "ornith-r9700", "workbench-local"])
 
     async def test_pc_clearance_never_offers_the_lan_model(self) -> None:
         fake = self.use(FakeJev("workbench-local"))

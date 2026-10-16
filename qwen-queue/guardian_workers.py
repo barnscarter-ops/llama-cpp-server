@@ -33,7 +33,7 @@ def worker_root() -> Path:
 def worker_policies() -> dict[str, WorkerPolicy]:
     skill = os.environ.get("LOCAL_WORKER_EXECUTOR_SKILL", r"D:\Workspace\Active\pi-agents\qwen-executor\skills\executor")
     return {
-        "mechanical_execution": WorkerPolicy("mechanical_execution", "aiwa-clerk", "pi", "llamacpp-690/nemotron-3.5-lightning-30b-a3b", "Bounded mechanical execution on the approved AIWA clerk seat."),
+        "mechanical_execution": WorkerPolicy("mechanical_execution", "aiwa-clerk", "pi", "llamacpp-690/ornith-1.5-35b-a3b", "Bounded mechanical execution on the approved AIWA clerk seat."),
         "tool_execution": WorkerPolicy("tool_execution", "workbench-executor", "pi", "llamacpp/local-llm", "Bounded write-capable tool execution on the approved Workbench seat.", skill),
         "planning": WorkerPolicy("planning", "aiwa-consult", "aiwa", "", "Gate-aware planning through the existing AIWA consult capability.", consult=True),
         "deep_analysis": WorkerPolicy("deep_analysis", "aiwa-consult", "aiwa", "", "Gate-aware deep analysis through the existing AIWA consult capability.", consult=True),

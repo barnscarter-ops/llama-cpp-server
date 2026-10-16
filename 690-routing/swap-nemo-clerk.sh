@@ -1,6 +1,6 @@
 #!/bin/bash
-# Stop manual Qwen consult and start systemd Nemotron clerk on :8080.
-# Reasoning off is in the unit — do not launch Nemotron by hand here.
+# Stop manual Qwen consult and start the systemd clerk (Ornith since 2026-10-16) on :8080.
+# Flags live in the unit — do not launch the clerk by hand here. Script name kept: Guardian and the benchmark harness call it by this name.
 # Usage: /opt/llama/swap-nemo-clerk.sh
 set -euo pipefail
 
@@ -37,7 +37,7 @@ if pgrep -f '[l]lama-server' >/dev/null 2>&1; then
 fi
 rm -f "$PIDFILE"
 
-echo "Starting systemd llama-server (Nemotron clerk, --reasoning off)..."
+echo "Starting systemd llama-server (clerk)..."
 systemctl start llama-server
 
 ok=0
@@ -49,7 +49,7 @@ for _ in $(seq 1 180); do
   sleep 2
 done
 if [ "$ok" != 1 ]; then
-  echo "Nemotron failed to become healthy within 360s" >&2
+  echo "Clerk failed to become healthy within 360s" >&2
   systemctl status llama-server --no-pager >&2 || true
   exit 1
 fi

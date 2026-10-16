@@ -277,7 +277,7 @@ class ReadinessProbe:
             return Readiness(UNAVAILABLE, reason="aiwa_occupant_unknown")
         if occupant == spec.seat:
             return Readiness(READY)
-        # Qwen never loads without Carter; Nemotron is the resting model and reloads on its own.
+        # Qwen never loads without Carter; Ornith is the resting model and reloads on its own.
         if spec.needs_approval:
             return Readiness(NEEDS_APPROVAL, seconds=spec.wake_seconds)
         return Readiness(WAKEABLE, seconds=spec.wake_seconds)

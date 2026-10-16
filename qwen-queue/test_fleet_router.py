@@ -81,7 +81,7 @@ class SeatForModelTests(unittest.TestCase):
         self.assertEqual("glm", seat_for_model("qwen3-14b"))
         self.assertEqual("glm", seat_for_model("qwen3.6-35b"))
         self.assertEqual("clerk", seat_for_model("clerk"))
-        self.assertEqual("clerk", seat_for_model("nemotron-3.5-lightning-30b-a3b"))
+        self.assertEqual("clerk", seat_for_model("ornith-1.5-35b-a3b"))
         self.assertEqual("consult", seat_for_model("consult"))
         self.assertEqual("consult", seat_for_model("qwen3.8-27b"))
         self.assertEqual("cloud", seat_for_model("gpt-4o"))
@@ -110,10 +110,11 @@ class SeatForModelTests(unittest.TestCase):
 
     def test_occupant_parse(self) -> None:
         self.assertEqual(
-            "nemotron-3.5-lightning-30b-a3b",
-            parse_primary_model_id({"data": [{"id": "nemotron-3.5-lightning-30b-a3b"}]}),
+            "ornith-1.5-35b-a3b",
+            parse_primary_model_id({"data": [{"id": "ornith-1.5-35b-a3b"}]}),
         )
-        self.assertEqual("clerk", role_for_aiwa_model_id("nemotron-3.5-lightning-30b-a3b"))
+        self.assertEqual("clerk", role_for_aiwa_model_id("ornith-1.5-35b-a3b"))
+        self.assertEqual("clerk", role_for_aiwa_model_id("nemotron-3.5-lightning-30b-a3b"), "rollback model still reads as clerk")
         self.assertEqual("consult", role_for_aiwa_model_id("qwen3.8-27b"))
 
 
@@ -136,7 +137,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         os.environ["AIWA_PROXY_LOOPBACK_ONLY"] = "true"
 
         self.aiwa_hits: list[tuple[str, str, dict | None]] = []
-        self.aiwa_occupant_id = "nemotron-3.5-lightning-30b-a3b"
+        self.aiwa_occupant_id = "ornith-1.5-35b-a3b"
         self.aiwa_models_delay_s = 0.0
         self.aiwa_models_fail = False
 
@@ -305,7 +306,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"aiwa", "workbench"}, set(body["seats"].keys()))
         self.assertEqual("clerk", body["seats"]["aiwa"]["occupant"])
         self.assertEqual(
-            "nemotron-3.5-lightning-30b-a3b", body["seats"]["aiwa"]["model_id"]
+            "ornith-1.5-35b-a3b", body["seats"]["aiwa"]["model_id"]
         )
         self.assertTrue(body["seats"]["aiwa"]["reachable"])
 
@@ -381,7 +382,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         before_active = self.module.guardian.active_requests
         before_idle = self.module.guardian.last_request_time
 
-        for model in ("clerk", "nemotron-3.5-lightning-30b-a3b"):
+        for model in ("clerk", "ornith-1.5-35b-a3b"):
             self.aiwa_hits.clear()
             self.ensure_calls.clear()
             self.recording.calls.clear()
@@ -402,11 +403,11 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
 
             posts = [h for h in self.aiwa_hits if h[0] == "POST"]
             self.assertEqual(1, len(posts))
-            self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+            self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
     async def test_consult_while_clerk_occupant_is_served_on_clerk(self) -> None:
         self.module.guardian._llama_up = False
-        self.aiwa_occupant_id = "nemotron-3.5-lightning-30b-a3b"
+        self.aiwa_occupant_id = "ornith-1.5-35b-a3b"
         before_active = self.module.guardian.active_requests
         before_idle = self.module.guardian.last_request_time
         fleet_router.occupant_cache.invalidate()
@@ -426,7 +427,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], self._llama_target_calls())
         posts = [h for h in self.aiwa_hits if h[0] == "POST"]
         self.assertEqual(1, len(posts))
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+        self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
     async def test_consult_post_when_occupant_is_consult(self) -> None:
         self.module.guardian._llama_up = False
@@ -562,7 +563,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("swap_owner", body["aiwa"])
 
         self.assertEqual("clerk", body["aiwa"]["occupant"])
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", body["aiwa"]["model_id"])
+        self.assertEqual("ornith-1.5-35b-a3b", body["aiwa"]["model_id"])
         self.assertTrue(body["aiwa"]["reachable"])
         self.assertEqual(os.environ["AIWA_BASE"], body["aiwa"]["endpoint"])
 
@@ -686,7 +687,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
 
         posts = [h for h in self.aiwa_hits if h[0] == "POST"]
         self.assertEqual(1, len(posts))
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+        self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
     async def test_empty_model_string_defaults_clerk(self) -> None:
         self.module.guardian._llama_up = False
@@ -707,7 +708,7 @@ class FleetRouterHttpTests(unittest.IsolatedAsyncioTestCase):
 
         posts = [h for h in self.aiwa_hits if h[0] == "POST"]
         self.assertEqual(1, len(posts))
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+        self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
     async def test_empty_model_logs_defaulted_model_clerk(self) -> None:
         fleet_router.occupant_cache.invalidate()

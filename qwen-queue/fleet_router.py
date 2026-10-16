@@ -19,13 +19,14 @@ import model_slots
 
 log = logging.getLogger("guardian")
 
-CLERK_ALIASES = frozenset({"nemotron-3.5-lightning-30b-a3b", "clerk"})
+# Why: Nemotron stays accepted so clients and a rollback to it keep routing to the clerk seat.
+CLERK_ALIASES = frozenset({"ornith-1.5-35b-a3b", "nemotron-3.5-lightning-30b-a3b", "clerk"})
 CONSULT_ALIASES = frozenset({"qwen3.8-27b", "consult"})
 LEGACY_MODEL_ALIASES = frozenset({"qwen3.6-35b", "qwen3-llama"})
 GLM_ALIASES = frozenset({"local-llm", "qwen3-14b"}) | LEGACY_MODEL_ALIASES
 
 SERVING_IDS = {
-    "clerk": "nemotron-3.5-lightning-30b-a3b",
+    "clerk": "ornith-1.5-35b-a3b",
     "consult": "qwen3.8-27b",
     "glm": "local-llm",
 }
@@ -127,7 +128,7 @@ def role_for_aiwa_model_id(model_id: str | None) -> str:
     if not model_id or not str(model_id).strip():
         return "unknown"
     m = str(model_id).strip().lower()
-    if m == SERVING_IDS["clerk"] or "nemotron" in m:
+    if m == SERVING_IDS["clerk"] or "ornith" in m or "nemotron" in m:
         return "clerk"
     if m == SERVING_IDS["consult"] or "qwen" in m:
         return "consult"

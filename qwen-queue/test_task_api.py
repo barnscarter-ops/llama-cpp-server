@@ -14,7 +14,7 @@ from candidates import Candidate
 from guardian_http_harness import GuardianHarnessCase
 from test_qwen_approval import QwenCase
 
-CLERK = "nemotron-3.5-lightning-30b-a3b"
+CLERK = "ornith-1.5-35b-a3b"
 CONSULT = "qwen3.8-27b"
 
 
@@ -81,7 +81,7 @@ class TaskApiTests(TaskHttpBase):
         self.assertEqual(422, resp.status)
         self.assertEqual(("selection_failed", "no_candidates"), (body["status"], body["reason"]))
         reasons = {e["id"]: e["reason"] for e in body["evidence"]["excluded"]}
-        self.assertEqual("egress_exceeds_clearance", reasons["nemotron-r9700"])
+        self.assertEqual("egress_exceeds_clearance", reasons["ornith-r9700"])
         self.assertEqual("egress_exceeds_clearance", reasons["deepseek-flash"])
         self.assertEqual([], self.aiwa.chat_hits)
         self.assertEqual(0, self.module.guardian.job_store.summary()["queued"])
@@ -90,7 +90,7 @@ class TaskApiTests(TaskHttpBase):
         self.module.guardian._llama_up = False
         self.aiwa.occupant_id = CLERK
         body = await (await self.submit(clearance="lan")).json()
-        self.assertEqual("nemotron-r9700", body["evidence"]["chosen_model"])
+        self.assertEqual("ornith-r9700", body["evidence"]["chosen_model"])
         self.assertEqual(CLERK, self.module.guardian.job_store.get(body["job_id"]).request["model"])
 
     async def test_missing_clearance_is_treated_as_pc(self) -> None:
@@ -186,7 +186,7 @@ class FleetOffTests(TaskHttpBase):
         body = await (await self.submit(clearance="lan")).json()
         self.assertEqual("workbench-local", body["evidence"]["chosen_model"])
         reasons = {e["id"]: e["reason"] for e in body["evidence"]["excluded"]}
-        self.assertEqual("unavailable:fleet_router_off", reasons["nemotron-r9700"])
+        self.assertEqual("unavailable:fleet_router_off", reasons["ornith-r9700"])
 
 
 class QwenQuarantineTests(TaskHttpBase):
@@ -409,12 +409,12 @@ class DispatcherUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(202, outcome.http_status, outcome.body)
         ev = outcome.body["evidence"]
         self.assertTrue(ev["reselected"])
-        self.assertEqual("nemotron-r9700", ev["chosen_model"])
+        self.assertEqual("ornith-r9700", ev["chosen_model"])
         self.assertEqual(1, len(self.jobs))
 
     async def test_second_failure_is_selection_failed(self) -> None:
         down = mr.Readiness(mr.UNAVAILABLE, reason="gone")
-        probe = ScriptedProbe(self.registry, {"workbench-local": [down], "nemotron-r9700": [down], "qwen27b-r9700": [down]})
+        probe = ScriptedProbe(self.registry, {"workbench-local": [down], "ornith-r9700": [down], "qwen27b-r9700": [down]})
         outcome = await self.dispatcher(probe).submit(task(clearance="lan"))
         self.assertEqual(422, outcome.http_status)
         self.assertEqual("chosen_model_unavailable:gone", outcome.body["reason"])

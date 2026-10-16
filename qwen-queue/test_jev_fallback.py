@@ -12,7 +12,7 @@ from test_cloud_backend import FakeProvider, KEY as CLOUD_KEY
 from test_jev_selector import FakeJev, SECRET, candidate, key, ledger, task
 from test_task_api import TaskHttpBase, payload
 
-CANDS = [candidate("workbench-local", egress="pc", quality_tier=2), candidate("nemotron-r9700", quality_tier=2)]
+CANDS = [candidate("workbench-local", egress="pc", quality_tier=2), candidate("ornith-r9700", quality_tier=2)]
 
 
 class FallbackUnitTests(unittest.IsolatedAsyncioTestCase):
@@ -48,15 +48,15 @@ class FallbackUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((answer.fallback_used, answer.note), (True, "jev_reference_missing"))
 
     async def test_a_jev_pick_is_not_a_fallback(self) -> None:
-        selector, alerts = self.selector(FakeJev("nemotron-r9700"))
+        selector, alerts = self.selector(FakeJev("ornith-r9700"))
         answer = await selector.choose(task(), CANDS)
-        self.assertEqual((answer.model_id, answer.fallback_used, answer.selector), ("nemotron-r9700", False, None))
+        self.assertEqual((answer.model_id, answer.fallback_used, answer.selector), ("ornith-r9700", False, None))
         self.assertEqual(alerts, [])
 
     async def test_the_fallback_cannot_pick_outside_the_filtered_candidates(self) -> None:
-        only_lan = [candidate("nemotron-r9700")]
+        only_lan = [candidate("ornith-r9700")]
         selector, _ = self.selector(FakeJev(status=500))
-        self.assertEqual((await selector.choose(task(), only_lan)).model_id, "nemotron-r9700")
+        self.assertEqual((await selector.choose(task(), only_lan)).model_id, "ornith-r9700")
 
     async def test_rules_with_no_qualifying_candidate_is_still_a_failure(self) -> None:
         low = [candidate("workbench-local", egress="pc", quality_tier=1)]
@@ -85,7 +85,7 @@ class FallbackUnitTests(unittest.IsolatedAsyncioTestCase):
 class FallbackNotClearedUnitTests(unittest.IsolatedAsyncioTestCase):
     async def test_uncleared_task_is_routed_by_rules_with_no_alert_and_no_jev_call(self) -> None:
         alerts = []
-        fake = FakeJev("nemotron-r9700")
+        fake = FakeJev("ornith-r9700")
         primary = JevSelector(ledger(), key, transport=fake)
         selector = FallbackSelector(primary, RulesSelector(), lambda t, r: alerts.append(r))
         answer = await selector.choose(task(cleared=False), CANDS)

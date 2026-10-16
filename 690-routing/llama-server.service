@@ -1,11 +1,15 @@
 [Unit]
-Description=llama.cpp server (Vulkan) - Nemotron 3.5 Lightning 30B-A3B Q5_K_M
+Description=llama.cpp server (Vulkan) - Ornith 1.5 35B-A3B Q5_K_M
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/llama/src/build/bin/llama-server   -m /opt/llama/models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_M.gguf   --host 0.0.0.0 --port 8080   -ngl 999 -c 131072 -b 2048 -ub 512   --jinja --reasoning off   --spec-type draft-mtp   --alias nemotron-3.5-lightning-30b-a3b
+# Model rules: 131072 ctx minimum, 100% on the GPU (-ngl 999, no --cpu-moe / --n-cpu-moe). Weights 23.0 GiB + KV ~2.5 GiB at f16 fits the R9700's 32 GB.
+# No --spec-type draft-mtp: Nemotron's MTP head does not carry over; Ornith's MTP is an untested option in benchmarks/v2/candidates.json.
+# Reasoning is left at the model default, matching candidates.json (production_reasoning off, no flag). Sampler (temp 0.6, top_p 0.95, top_k 20) is per request.
+# Binary: the newer llama.cpp (b11600) approved 2026-10-13; verify the path on CT 210 against the live unit.
+ExecStart=/opt/llama-new/src/build/bin/llama-server   -m /opt/llama/models/Ornith-1.5-35B-A3B-Q5_K_M.gguf   --host 0.0.0.0 --port 8080   -ngl 999 -c 131072 -b 2048 -ub 512   --jinja --cont-batching   --alias ornith-1.5-35b-a3b
 Restart=on-failure
 RestartSec=5
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop systemd Nemotron clerk and serve Qwen 3.8 27B consult on :8080.
+# Stop systemd clerk (Ornith) and serve Qwen 3.8 27B consult on :8080.
 # Thinking ON — do not pass --reasoning off.
 # Vision ON via --mmproj (permanent 2026-08-29, Carter-approved).
 # Usage: /opt/llama/swap-qwen-consult.sh
@@ -21,7 +21,7 @@ if ! flock -n 9; then
   exit 1
 fi
 
-echo "Stopping systemd llama-server (Nemotron clerk) before any pkill..."
+echo "Stopping systemd llama-server (clerk) before any pkill..."
 systemctl stop llama-server || true
 
 # Manual leftovers only — systemd is already stopped. [l] form avoids pkill self-match.

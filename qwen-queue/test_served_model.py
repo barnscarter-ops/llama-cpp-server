@@ -49,7 +49,7 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         os.environ["AIWA_PROXY_LOOPBACK_ONLY"] = "true"
 
         self.aiwa_hits: list[tuple[str, str, dict | None]] = []
-        self.aiwa_occupant_id = "nemotron-3.5-lightning-30b-a3b"
+        self.aiwa_occupant_id = "ornith-1.5-35b-a3b"
 
         async def aiwa_models(request: web.Request):
             body = {"data": [{"id": self.aiwa_occupant_id}]}
@@ -250,7 +250,7 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(200, resp.status, await resp.text())
         self.assertEqual("clerk", resp.headers.get("X-Guardian-Seat"))
         self.assertEqual(
-            "nemotron-3.5-lightning-30b-a3b", resp.headers.get("X-Guardian-Served-Model")
+            "ornith-1.5-35b-a3b", resp.headers.get("X-Guardian-Served-Model")
         )
         rid = resp.headers.get("X-Guardian-Request-Id")
         self._assert_rid(rid)
@@ -258,13 +258,13 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("aiwa-ok", body["choices"][0]["message"]["content"])
         posts = [h for h in self.aiwa_hits if h[0] == "POST"]
         self.assertEqual(1, len(posts))
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+        self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
         self.assertTrue(await self._wait_served("clerk", 1, rid))
         health = await self._health()
         served = health["served"]["clerk"]
         self.assertEqual(1, served["count"])
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", served["last_model_id"])
+        self.assertEqual("ornith-1.5-35b-a3b", served["last_model_id"])
         self.assertEqual(rid, served["last_request_id"])
         self.assertEqual(1, health["served_total"])
 
@@ -283,7 +283,7 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(200, resp.status, await resp.text())
         self.assertEqual("clerk", resp.headers.get("X-Guardian-Seat"))
         self.assertEqual(
-            "nemotron-3.5-lightning-30b-a3b", resp.headers.get("X-Guardian-Served-Model")
+            "ornith-1.5-35b-a3b", resp.headers.get("X-Guardian-Served-Model")
         )
         rid = resp.headers.get("X-Guardian-Request-Id")
         self._assert_rid(rid)
@@ -292,7 +292,7 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         posts = [h for h in self.aiwa_hits if h[0] == "POST"]
         self.assertEqual(1, len(posts))
         self.assertTrue(posts[0][2].get("stream") is True)
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+        self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
         self.assertTrue(await self._wait_served("clerk", 1, rid))
 
@@ -344,12 +344,12 @@ class ServedModelHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(200, resp.status, await resp.text())
         self.assertEqual("clerk", resp.headers.get("X-Guardian-Seat"))
         self.assertEqual(
-            "nemotron-3.5-lightning-30b-a3b", resp.headers.get("X-Guardian-Served-Model")
+            "ornith-1.5-35b-a3b", resp.headers.get("X-Guardian-Served-Model")
         )
         self.assertEqual([], self.swap_calls)
         posts = [h for h in self.aiwa_hits if h[0] == "POST"]
         self.assertEqual(1, len(posts))
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", posts[0][2]["model"])
+        self.assertEqual("ornith-1.5-35b-a3b", posts[0][2]["model"])
 
     async def test_consult_invalid_gate_downgrades_to_clerk(self) -> None:
         fleet_router.occupant_cache.invalidate()

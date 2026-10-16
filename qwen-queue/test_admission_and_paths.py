@@ -12,9 +12,9 @@ from test_task_api import TaskHttpBase, payload
 
 REQ = {"messages": [{"role": "user", "content": "hi"}]}
 WB = "workbench-local"
-CLERK = "nemotron-r9700"
+CLERK = "ornith-r9700"
 # What callers put in request.model, mapped to the registry model that must serve it.
-ALIAS_TO_MODEL = {"local-llm": WB, "nemotron-3.5-lightning-30b-a3b": CLERK}
+ALIAS_TO_MODEL = {"local-llm": WB, "ornith-1.5-35b-a3b": CLERK}
 
 
 class StaticDecider:

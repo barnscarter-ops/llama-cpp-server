@@ -1777,7 +1777,7 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
 
 
 async def _run_aiwa_job_with_approval(job: QueueJob, seat: str, client) -> None:
-    """GUARDIAN_QWEN_APPROVAL on: Nemotron jobs wait for the slot then check; Qwen jobs run as an approved session."""
+    """GUARDIAN_QWEN_APPROVAL on: Resting-model jobs wait for the slot then check; Qwen jobs run as an approved session."""
     payload = dict(job.request)
     payload["model"] = fleet_router.SERVING_IDS[seat]
     payload["stream"] = False
@@ -2363,7 +2363,7 @@ async def consult_idle_restorer(app: web.Application) -> None:
         while True:
             await asyncio.sleep(IDLE_POLL_S)
             if ttl <= 0 or qwen_approval_enabled():
-                continue  # with approvals on, the session reloads Nemotron itself
+                continue  # with approvals on, the session reloads the resting model itself
             client = getattr(guardian, "_client", None)
             if client is None:
                 continue
