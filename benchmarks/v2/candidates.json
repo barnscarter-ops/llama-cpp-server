@@ -99,6 +99,7 @@
       "sampler_source": "Nemotron card; coding agents also need force_nonempty_content",
       "extra_body": {"chat_template_kwargs": {"force_nonempty_content": true}},
       "spec_options": {"off": [], "mtp": ["--spec-type", "draft-mtp"]},
+      "retired": "2026-10-16: Carter replaced Nemotron with Ornith as the R9700 resting model; the registry id below no longer exists in models.json, do not publish it",
       "registry": {"id": "nemotron-r9700", "seat": "clerk", "host": "r9700", "egress": "lan", "needs_approval": false}
     },
     {

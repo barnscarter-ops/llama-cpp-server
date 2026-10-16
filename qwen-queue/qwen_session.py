@@ -84,7 +84,7 @@ def _reload_ok() -> None:
 async def _finish_even_if_cancelled(awaitable: Awaitable[T]) -> T:
     """Wait for awaitable to finish however many times we are cancelled, then re-raise the cancel.
 
-    The R9700 lock must outlive the reload: releasing it mid-reload would let a the resting model request land on a half-loaded model.
+    The R9700 lock must outlive the reload: releasing it mid-reload would let a resting-model request land on a half-loaded model.
     """
     task = asyncio.ensure_future(awaitable)
     cancelled = False

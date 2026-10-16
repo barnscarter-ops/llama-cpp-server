@@ -17,3 +17,14 @@ One model at a time on the R9700 (`http://192.168.1.240:8080`). Boot default is 
 - Clerk (`nemotron-3.5-lightning-30b-a3b`, max_tokens 256): content `Paris`, `reasoning_content` empty. 2 predicted tokens @ 49 t/s — too short to compare to the ~150 t/s bench.
 - Consult (`qwen3.8-27b`, max_tokens 2048): thinking 3894 chars then a 549-char answer, `finish_reason=stop`, ~43.9 t/s tg (matches 41–48). JSON under `smokes/`.
 - Walk-away: `:8080` is the clerk; systemd `llama-server` active.
+
+## Manual rollback to Nemotron (Ornith -> Nemotron)
+
+Only with Carter's go. On CT 210 (`lxc-attach -n 210`):
+
+1. `systemctl stop llama-server`
+2. `cp /etc/systemd/system/llama-server.service /etc/systemd/system/llama-server.ornith.bak`
+3. Install `llama-server.nemotron.service.rollback` from this directory as `/etc/systemd/system/llama-server.service`, then `systemctl daemon-reload && systemctl start llama-server`
+4. Check `curl -s localhost:8080/health` and that `/v1/models` lists `nemotron-3.5-lightning-30b-a3b`.
+
+In this repo, revert the Ornith PR. Guardian still maps the Nemotron id to the clerk seat, but its swap check polls for `SERVING_IDS["clerk"]`, so restore that constant too or a Qwen-session reload will time out.
