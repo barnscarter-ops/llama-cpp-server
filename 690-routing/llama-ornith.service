@@ -1,0 +1,17 @@
+[Unit]
+Description=llama.cpp server (Vulkan) - Ornith 1.5 35B-A3B Q5_K_M (R9700 resting model)
+After=network-online.target
+Wants=network-online.target
+# Why: one model per machine; starting this unit stops the Nemotron unit (llama-server.service, disabled, kept for rollback).
+Conflicts=llama-server.service
+
+[Service]
+Type=simple
+# Captured live on CT 210, 2026-10-17. 131072 ctx, -ngl 999 and no MoE offload flags = fully on the GPU. -np 1: one slot gets the whole context.
+# No --spec-type: Nemotron's draft-mtp does not apply to Ornith. Binary is the newer llama.cpp (b11600); /opt/llama is the production build.
+ExecStart=/opt/llama-new/src/build/bin/llama-server   -m /opt/llama/models/Ornith-1.5-35B-Q5_K_M.gguf   --host 0.0.0.0 --port 8080   -ngl 999 -c 131072 -b 2048 -ub 512   --flash-attn on -np 1   --jinja --cont-batching --reasoning off   --alias ornith-1.5-35b-a3b
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

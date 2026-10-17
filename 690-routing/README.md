@@ -4,7 +4,7 @@ One model at a time on the R9700 (`http://192.168.1.240:8080`). Boot default is 
 
 - **Swap to consult:** `lxc-attach -n 210 -- /opt/llama/swap-qwen-consult.sh` (alias `qwen3.8-27b`, 262k, no `--reasoning off`, **vision ON via `--mmproj` mmproj-Qwen3.8-27B-F16.gguf** — permanent 2026-08-29).
 - **Vision test:** send `image_url` content to `/v1/chat/completions`; the mmproj lives in `/opt/llama/models/`. If the mmproj file is missing (CT rebuild), the swap script fails — re-fetch `mmproj-F16.gguf` from `unsloth/Qwen3.8-27B-GGUF`.
-- **Swap back to clerk:** `lxc-attach -n 210 -- /opt/llama/swap-nemo-clerk.sh` (starts systemd; alias `ornith-1.5-35b-a3b`; Nemotron unit kept as `llama-server.nemotron.service.rollback`).
+- **Swap back to clerk:** `lxc-attach -n 210 -- /opt/llama/swap-nemo-clerk.sh` (starts `llama-ornith.service`; alias `ornith-1.5-35b-a3b`).
 - **Which is up:** `curl -sS --max-time 5 http://192.168.1.240:8080/v1/models` — walk away only when the id is the clerk.
 - **pkill trap:** `pkill -f llama-server` self-kills. Use `pkill -f '[l]lama-server'` and only after `systemctl stop` if the clerk unit is running.
 - **Announce** any llama restart on `C:\Workspace\Active\brain\WORKBOARD.md` first.
@@ -20,11 +20,9 @@ One model at a time on the R9700 (`http://192.168.1.240:8080`). Boot default is 
 
 ## Manual rollback to Nemotron (Ornith -> Nemotron)
 
-Only with Carter's go. On CT 210 (`lxc-attach -n 210`):
+Ornith runs as `llama-ornith.service` (`Conflicts=llama-server.service`). Nemotron's `llama-server.service` is disabled and untouched on CT 210. Only with Carter's go, on CT 210 (`lxc-attach -n 210`):
 
-1. `systemctl stop llama-server`
-2. `cp /etc/systemd/system/llama-server.service /etc/systemd/system/llama-server.ornith.bak`
-3. Install `llama-server.nemotron.service.rollback` from this directory as `/etc/systemd/system/llama-server.service`, then `systemctl daemon-reload && systemctl start llama-server`
-4. Check `curl -s localhost:8080/health` and that `/v1/models` lists `nemotron-3.5-lightning-30b-a3b`.
-
-In this repo, revert the Ornith PR. Guardian still maps the Nemotron id to the clerk seat, but its swap check polls for `SERVING_IDS["clerk"]`, so restore that constant too or a Qwen-session reload will time out.
+1. `systemctl disable --now llama-ornith && systemctl enable --now llama-server`
+2. `curl -s localhost:8080/health`, and check `/v1/models` lists `nemotron-3.5-lightning-30b-a3b`.
+3. Restore the old swap scripts on CT 210 (the ones in this repo before the Ornith PR) or `swap-nemo-clerk.sh` would start Ornith again.
+4. In this repo, revert the Ornith PR. Guardian still maps the Nemotron id to the clerk seat, but its swap check polls for `SERVING_IDS["clerk"]`, so restore that constant too or a Qwen-session reload will time out.

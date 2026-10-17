@@ -56,7 +56,7 @@
     },
     {
       "id": "ornith-1.5-35b-a3b-q5km", "role": "fast_executor", "lane": "r9700", "status": "to_download",
-      "file": "Ornith-1.5-35B-A3B-Q5_K_M.gguf", "arch": "qwen35moe", "moe": true,
+      "file": "Ornith-1.5-35B-Q5_K_M.gguf", "arch": "qwen35moe", "moe": true,
       "weights_gib": 23.0, "kv_kib_per_token_f16": 20, "kv_estimate": "assumed same as Qwen3.6; verify at load",
       "state_gib": 0.06, "compute_gib": 1.0, "provisional": true, "tuned": true,
       "kv_policy": "tested",

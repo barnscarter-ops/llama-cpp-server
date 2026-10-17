@@ -21,8 +21,8 @@ if ! flock -n 9; then
   exit 1
 fi
 
-echo "Stopping systemd llama-server (clerk) before any pkill..."
-systemctl stop llama-server || true
+echo "Stopping systemd clerk units (llama-ornith, plus the retired Nemotron llama-server) before any pkill..."
+systemctl stop llama-ornith llama-server || true
 
 # Manual leftovers only — systemd is already stopped. [l] form avoids pkill self-match.
 pkill -f '[l]lama-server' || true

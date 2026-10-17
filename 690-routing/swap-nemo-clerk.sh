@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop manual Qwen consult and start the systemd clerk (Ornith since 2026-10-16) on :8080.
+# Stop manual Qwen consult and start the systemd clerk (llama-ornith.service since 2026-10-17) on :8080.
 # Flags live in the unit — do not launch the clerk by hand here. Script name kept: Guardian and the benchmark harness call it by this name.
 # Usage: /opt/llama/swap-nemo-clerk.sh
 set -euo pipefail
@@ -16,8 +16,8 @@ if ! flock -n 9; then
   exit 1
 fi
 
-if systemctl is-active --quiet llama-server; then
-  echo "systemd llama-server already active; not pkill'ing the clerk"
+if systemctl is-active --quiet llama-ornith; then
+  echo "systemd llama-ornith already active; not pkill'ing the clerk"
   echo "GET /v1/models"
   curl -sS --max-time 10 "$MODELS"
   echo
@@ -37,8 +37,8 @@ if pgrep -f '[l]lama-server' >/dev/null 2>&1; then
 fi
 rm -f "$PIDFILE"
 
-echo "Starting systemd llama-server (clerk)..."
-systemctl start llama-server
+echo "Starting systemd llama-ornith (clerk)..."
+systemctl start llama-ornith
 
 ok=0
 for _ in $(seq 1 180); do
@@ -50,7 +50,7 @@ for _ in $(seq 1 180); do
 done
 if [ "$ok" != 1 ]; then
   echo "Clerk failed to become healthy within 360s" >&2
-  systemctl status llama-server --no-pager >&2 || true
+  systemctl status llama-ornith --no-pager >&2 || true
   exit 1
 fi
 

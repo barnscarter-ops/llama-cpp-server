@@ -37,9 +37,9 @@
       "needs_approval": false,
       "wake_seconds": 60,
       "sources": {
-        "context_tokens": "690-routing/llama-server.service: -c 131072 (Ornith unit, 2026-10-16)",
+        "context_tokens": "690-routing/llama-ornith.service: -c 131072 -np 1 (captured live on CT 210, 2026-10-17)",
         "quality_tier": "Carter confirmed 2026-10-13 for Nemotron; carried to Ornith (same fast-executor role) until real-world use says otherwise",
-        "max_concurrent": "Guardian rule: one task per local model, although the server exposes 4 slots"
+        "max_concurrent": "Guardian rule: one task per local model"
       },
       "unmeasured": ["wake_seconds"]
     },
