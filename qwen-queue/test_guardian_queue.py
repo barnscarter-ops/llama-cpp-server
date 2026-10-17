@@ -35,7 +35,7 @@ class StaticDecider:
 
 
 class StubOccupantCache:
-    def __init__(self, occupant="clerk", model_id="nemotron-3.5-lightning-30b-a3b", reachable=True):
+    def __init__(self, occupant="clerk", model_id="ornith-1.5-35b-a3b", reachable=True):
         self.occupant = occupant
         self.model_id = model_id
         self.reachable = reachable
@@ -241,7 +241,7 @@ class GuardianQueueHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(202, response.status)
         job = self.module.guardian.job_store.get_by_idempotency_key("consult-downgrade")
         self.assertIsNotNone(job)
-        self.assertEqual("nemotron-3.5-lightning-30b-a3b", job.request.get("model"))
+        self.assertEqual("ornith-1.5-35b-a3b", job.request.get("model"))
 
     async def test_fleet_on_consult_unreachable_503(self) -> None:
         os.environ["FLEET_ROUTER"] = "true"

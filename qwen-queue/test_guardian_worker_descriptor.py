@@ -16,7 +16,7 @@ from guardian_workers import worker_policies
 
 def build(work_class="mechanical_execution", **changes):
     args = dict(observed_at=1000, enabled=False, workbench_up=True,
-                aiwa_cache={"fetchedAt": 0.9, "reachable": True, "modelId": "nemotron-3.5-lightning-30b-a3b"})
+                aiwa_cache={"fetchedAt": 0.9, "reachable": True, "modelId": "ornith-1.5-35b-a3b"})
     args.update(changes)
     return descriptor.build_worker_descriptor(work_class, **args)
 
@@ -127,7 +127,7 @@ class HandlerTests(unittest.TestCase):
         source = Path(__file__).with_name("llama-guardian.py").read_text(encoding="utf-8")
         self.tree = ast.parse(source)
         functions = [n for n in self.tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name in {"worker_descriptor_v1", "worker_profiles"}]
-        cache = SimpleNamespace(_fetched_at=0.9, reachable=True, model_id="nemotron-3.5-lightning-30b-a3b", get=Mock(side_effect=AssertionError("cache refresh forbidden")))
+        cache = SimpleNamespace(_fetched_at=0.9, reachable=True, model_id="ornith-1.5-35b-a3b", get=Mock(side_effect=AssertionError("cache refresh forbidden")))
         self.guardian = SimpleNamespace(_llama_up=True)
         self.auth = Mock(return_value=True)
         self.ns = {"web": SimpleNamespace(Request=object, Response=object, json_response=lambda body, status=200: (body, status)),

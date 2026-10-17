@@ -30,13 +30,13 @@ class TableTests(unittest.TestCase):
         result = build_candidates(state(), "pc", 10.0)
         self.assertEqual(["workbench-local"], ids(result))
         reasons = dict(result.excluded)
-        self.assertEqual("egress_exceeds_clearance", reasons["nemotron-r9700"])
+        self.assertEqual("egress_exceeds_clearance", reasons["ornith-r9700"])
         self.assertEqual("egress_exceeds_clearance", reasons["qwen27b-r9700"])
         self.assertEqual("egress_exceeds_clearance", reasons["deepseek-flash"])
 
     def test_lan_job_sees_workbench_and_r9700_never_cloud(self) -> None:
         result = build_candidates(state(), "lan", 10.0)
-        self.assertEqual(["workbench-local", "nemotron-r9700", "qwen27b-r9700"], ids(result))
+        self.assertEqual(["workbench-local", "ornith-r9700", "qwen27b-r9700"], ids(result))
 
     def test_internet_job_sees_everything_affordable(self) -> None:
         result = build_candidates(state(), "internet", 10.0)
@@ -51,8 +51,8 @@ class TableTests(unittest.TestCase):
 
     def test_unavailable_models_are_dropped(self) -> None:
         gone = mr.Readiness(mr.UNAVAILABLE, reason="aiwa_unreachable")
-        result = build_candidates(state(nemotron_r9700=gone), "lan", 10.0)
-        self.assertNotIn("nemotron-r9700", ids(result))
+        result = build_candidates(state(ornith_r9700=gone), "lan", 10.0)
+        self.assertNotIn("ornith-r9700", ids(result))
 
     def test_needs_approval_model_is_included_and_flagged(self) -> None:
         needs = mr.Readiness(mr.NEEDS_APPROVAL, seconds=60)
@@ -69,7 +69,7 @@ class TableTests(unittest.TestCase):
 
     def test_context_too_small_excluded(self) -> None:
         result = build_candidates(state(), "internet", 10.0, TaskLimits(input_tokens=100_000))
-        self.assertEqual({"workbench-local", "nemotron-r9700", "qwen27b-r9700"}, set(ids(result)))
+        self.assertEqual({"workbench-local", "ornith-r9700", "qwen27b-r9700"}, set(ids(result)))
         self.assertEqual("context_too_small", dict(result.excluded)["deepseek-flash"])
 
     def test_cost_ceiling_excludes_paid_models(self) -> None:

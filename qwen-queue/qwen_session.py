@@ -1,9 +1,9 @@
 """Approved-Qwen session: the one place Qwen may load on the R9700.
 
-One state machine under the R9700 exclusive lock: stop admitting Nemotron work,
+One state machine under the R9700 exclusive lock: stop admitting resting-model work,
 drain what is running (never kill it), consume the approval, load Qwen, run the
-approved task, then reload Nemotron on success, failure or cancel, and only then
-let the Nemotron queue resume. Leaves CONSULT_IDLE_RESTORE_S alone.
+approved task, then reload the resting model on success, failure or cancel, and only then
+let the resting-model queue resume. Leaves CONSULT_IDLE_RESTORE_S alone.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def reset_state() -> None:
 
 
 async def restore_resting_model(client) -> bool:
-    """Put Nemotron back. Caller holds the R9700 exclusively. Retries a few times, then flags the failure."""
+    """Put the resting model back. Caller holds the R9700 exclusively. Retries a few times, then flags the failure."""
     for attempt in range(RELOAD_ATTEMPTS):
         fleet_router.occupant_cache.invalidate()
         occupant, _model_id, reachable = await fleet_router.occupant_cache.get(client)
@@ -67,12 +67,12 @@ async def restore_resting_model(client) -> bool:
         if resp.status == 200:
             _reload_ok()
             return True
-        log.error("nemotron reload attempt %d failed (HTTP %s)", attempt + 1, resp.status)
+        log.error("resting-model reload attempt %d failed (HTTP %s)", attempt + 1, resp.status)
         if attempt + 1 < RELOAD_ATTEMPTS:
             await asyncio.sleep(RELOAD_RETRY_S)
     state.reload_failed = True
     state.reload_failed_at = state.reload_failed_at or time.time()
-    log.error("nemotron reload FAILED; the R9700 is not on its resting model")
+    log.error("resting-model reload FAILED; the R9700 is not on its resting model")
     return False
 
 
@@ -84,7 +84,7 @@ def _reload_ok() -> None:
 async def _finish_even_if_cancelled(awaitable: Awaitable[T]) -> T:
     """Wait for awaitable to finish however many times we are cancelled, then re-raise the cancel.
 
-    The R9700 lock must outlive the reload: releasing it mid-reload would let a Nemotron request land on a half-loaded model.
+    The R9700 lock must outlive the reload: releasing it mid-reload would let a resting-model request land on a half-loaded model.
     """
     task = asyncio.ensure_future(awaitable)
     cancelled = False
@@ -103,7 +103,7 @@ async def _finish_even_if_cancelled(awaitable: Awaitable[T]) -> T:
 
 
 async def retry_failed_reload(client) -> bool:
-    """One retry pass for a failed Nemotron reload; no-op unless one is outstanding and no session runs."""
+    """One retry pass for a failed the resting model reload; no-op unless one is outstanding and no session runs."""
     if not state.reload_failed or state.session_active or client is None:
         return False
     state.reload_retries += 1
@@ -111,12 +111,12 @@ async def retry_failed_reload(client) -> bool:
         async with model_slots.get_slots().exclusive("r9700", timeout=aiwa_swap.SWAP_DRAIN_TIMEOUT_S):
             return await _finish_even_if_cancelled(restore_resting_model(client))
     except model_slots.DrainTimeout:
-        log.error("nemotron reload retry skipped: R9700 work did not drain")
+        log.error("resting-model reload retry skipped: R9700 work did not drain")
         return False
 
 
 async def reload_retrier(get_client: Callable[[], object], interval_s: float | None = None) -> None:
-    """Keep trying until Nemotron is back; a failed reload must not be permanent."""
+    """Keep trying until the resting model is back; a failed reload must not be permanent."""
     while True:
         await asyncio.sleep(RELOAD_RETRY_LOOP_S if interval_s is None else interval_s)
         try:
@@ -124,12 +124,13 @@ async def reload_retrier(get_client: Callable[[], object], interval_s: float | N
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("nemotron reload retry crashed")
+            log.exception("resting-model reload retry crashed")
 
 
 def health() -> dict:
     return {
         "qwen_session_active": state.session_active,
+        # Why: key names predate the Ornith swap; kept so existing health consumers do not break.
         "nemotron_reload_failed": state.reload_failed,
         "nemotron_reload_failed_since": state.reload_failed_at,
         "nemotron_reload_retries": state.reload_retries,
@@ -168,18 +169,18 @@ async def run_approved_qwen(
 
 
 async def recover_resting_model(client) -> bool:
-    """Startup safety: Qwen is only legitimate inside a session, so a fresh process finding it reloads Nemotron."""
+    """Startup safety: Qwen is only legitimate inside a session, so a fresh process finding it reloads the resting model."""
     if not qwen_approval_enabled() or client is None or state.session_active:
         return False
     occupant, _mid, reachable = await fleet_router.occupant_cache.get(client)
     if not (reachable and occupant == "consult"):
         return False
-    log.warning("R9700 is on Qwen with no approved session running; reloading Nemotron")
+    log.warning("R9700 is on Qwen with no approved session running; reloading the resting model")
     try:
         async with model_slots.get_slots().exclusive("r9700", timeout=aiwa_swap.SWAP_DRAIN_TIMEOUT_S):
             return await restore_resting_model(client)
     except model_slots.DrainTimeout:
-        log.error("startup Nemotron reload skipped: R9700 work did not drain")
+        log.error("startup the resting model reload skipped: R9700 work did not drain")
         return False
 
 
@@ -239,7 +240,7 @@ async def handle_completion(
         resp.headers.update(seat_hdrs)
         return resp
 
-    # Nemotron: take the slot first so a request arriving during a Qwen session waits, then check.
+    # Resting model: take the slot first so a request arriving during a Qwen session waits, then check.
     async with fleet_router.seat_slot(seat):
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
         if not reachable or occupant in {None, "", "unknown"}:

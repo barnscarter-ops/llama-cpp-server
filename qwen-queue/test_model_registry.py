@@ -23,19 +23,20 @@ class RegistryLoadTests(unittest.TestCase):
     def test_default_registry_loads_with_seed_models(self) -> None:
         reg = mr.load_registry()
         self.assertEqual(
-            ["workbench-local", "nemotron-r9700", "qwen27b-r9700", "deepseek-flash"], reg.ids()
+            ["workbench-local", "ornith-r9700", "qwen27b-r9700", "deepseek-flash"], reg.ids()
         )
         self.assertTrue(reg.get("qwen27b-r9700").needs_approval)
         self.assertEqual("pc", reg.get("workbench-local").egress)
-        self.assertEqual("lan", reg.get("nemotron-r9700").egress)
+        self.assertEqual("lan", reg.get("ornith-r9700").egress)
         self.assertEqual("internet", reg.get("deepseek-flash").egress)
 
     def test_seats_map_to_the_models_fleet_router_already_resolves(self) -> None:
         reg = mr.load_registry()
         for alias, expected in (
             ("local-llm", "workbench-local"),
-            ("clerk", "nemotron-r9700"),
-            ("nemotron-3.5-lightning-30b-a3b", "nemotron-r9700"),
+            ("clerk", "ornith-r9700"),
+            ("ornith-1.5-35b-a3b", "ornith-r9700"),
+            ("nemotron-3.5-lightning-30b-a3b", "ornith-r9700"),
             ("consult", "qwen27b-r9700"),
             ("qwen3.8-27b", "qwen27b-r9700"),
         ):
@@ -138,13 +139,13 @@ class ReadinessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("gpu_placement", gpu.reason)
 
     async def test_r9700_states(self) -> None:
-        self.assertEqual(mr.READY, (await self.state("nemotron-r9700", aiwa=("clerk", "n", True))).state)
+        self.assertEqual(mr.READY, (await self.state("ornith-r9700", aiwa=("clerk", "n", True))).state)
         self.assertEqual(mr.READY, (await self.state("qwen27b-r9700", aiwa=("consult", "q", True))).state)
         qwen = await self.state("qwen27b-r9700", aiwa=("clerk", "n", True))
         self.assertEqual((mr.NEEDS_APPROVAL, 60.0), (qwen.state, qwen.seconds))
-        nemo = await self.state("nemotron-r9700", aiwa=("consult", "q", True))
+        nemo = await self.state("ornith-r9700", aiwa=("consult", "q", True))
         self.assertEqual((mr.WAKEABLE, 60.0), (nemo.state, nemo.seconds))
-        for model in ("nemotron-r9700", "qwen27b-r9700"):
+        for model in ("ornith-r9700", "qwen27b-r9700"):
             down = await self.state(model, aiwa=("unknown", None, False))
             self.assertEqual((mr.UNAVAILABLE, "aiwa_unreachable"), (down.state, down.reason))
             odd = await self.state(model, aiwa=("unknown", "mystery", True))
@@ -184,14 +185,14 @@ class ReadinessTests(unittest.IsolatedAsyncioTestCase):
 
 class ModelsEndpointTests(GuardianHarnessCase):
     async def test_endpoint_returns_registry_and_never_touches_llama(self) -> None:
-        self.aiwa.occupant_id = "nemotron-3.5-lightning-30b-a3b"
+        self.aiwa.occupant_id = "ornith-1.5-35b-a3b"
         resp = await self.client.get("/__guardian/models")
         self.assertEqual(200, resp.status, await resp.text())
         body = await resp.json()
         by_id = {m["id"]: m for m in body["models"]}
-        self.assertEqual(["workbench-local", "nemotron-r9700", "qwen27b-r9700", "deepseek-flash"], list(by_id))
+        self.assertEqual(["workbench-local", "ornith-r9700", "qwen27b-r9700", "deepseek-flash"], list(by_id))
         self.assertEqual("wakeable", by_id["workbench-local"]["readiness"]["state"])
-        self.assertEqual("ready", by_id["nemotron-r9700"]["readiness"]["state"])
+        self.assertEqual("ready", by_id["ornith-r9700"]["readiness"]["state"])
         self.assertEqual("needs_approval", by_id["qwen27b-r9700"]["readiness"]["state"])
         self.assertEqual("cloud_disabled", by_id["deepseek-flash"]["readiness"]["reason"])
         self.assertEqual([], self.llama.hits, "Workbench readiness must not call llama-server (it wakes it)")

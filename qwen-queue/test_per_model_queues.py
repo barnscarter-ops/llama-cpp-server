@@ -14,7 +14,7 @@ from pathlib import Path
 from guardian_queue import JobStore
 from guardian_http_harness import GuardianHarnessCase
 
-CLERK = "nemotron-r9700"
+CLERK = "ornith-r9700"
 WB = "workbench-local"
 REQ = {"messages": [{"role": "user", "content": "hi"}]}
 
@@ -226,7 +226,7 @@ class PerModelQueueHttpTests(QueueHttpBase):
         body = await (await self.client.get("/__guardian/queues")).json()
         self.assertTrue(body["per_model_queues"])
         self.assertEqual(
-            ["workbench-local", "nemotron-r9700", "qwen27b-r9700", "deepseek-flash"], list(body["queues"])
+            ["workbench-local", "ornith-r9700", "qwen27b-r9700", "deepseek-flash"], list(body["queues"])
         )
         clerk = body["queues"][CLERK]
         self.assertEqual((1, 1), (clerk["queued"], clerk["running"]))
