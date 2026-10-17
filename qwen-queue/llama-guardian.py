@@ -55,6 +55,8 @@ from aiohttp import ClientError, ClientTimeout, web
 from guardian_queue import CANONICAL_LOCAL_ROUTE, HermesDecider, HermesDecisionError, JobStore, QueueJob, admission_only
 import aiwa_swap
 import cloud_backend
+import cloud_gate
+import guardian_env
 import dispatch_paths
 import fleet_router
 import guardian_alerts
@@ -175,6 +177,8 @@ MIN_FREE_RAM_GB = float(os.environ.get("GUARDIAN_MIN_FREE_RAM_GB", "8"))
 GIB = 1024 ** 3
 
 PM2_APP = "local-llm"              # PM2 process name for llama-server (R9700 Vulkan build)
+
+guardian_env.load()  # secrets file must be read before the constants below
 
 # Hermes-decided durable job queue.  It is intentionally loopback-only by
 # default because the guardian also listens on Tailscale-facing interfaces.
@@ -937,6 +941,15 @@ async def queue_submit(request: web.Request) -> web.Response:
     if existing:
         return web.json_response({"idempotent": True, **existing.as_api()})
 
+    # Gate the model the caller named: with FLEET_ROUTER off validation rewrites it to the local alias (so no cloud run),
+    # but a refusal should not depend on that rewrite.
+    raw = await request.json()
+    named_cloud = _registry_cloud_spec((raw.get("request") or {}).get("model"))
+    if named_cloud is not None:
+        gated = cloud_gate_response(request, named_cloud)
+        if gated is not None:
+            return gated
+
     approval_id = None
     if fleet_router_enabled():
         # The code table owns the seat. Hermes (if enabled at all) only gets
@@ -1222,8 +1235,17 @@ def cloud_refusal_response(exc: "cloud_backend.CloudRefused") -> web.Response:
     return guardian_error(exc.message, exc.code, exc.status)
 
 
+def cloud_gate_response(request: web.Request, spec) -> web.Response | None:
+    """Direct cloud naming skips the task API's clearance check, so it gets its own."""
+    refused = cloud_gate.refusal(spec, _queue_authorized(request), request.headers.get(cloud_gate.CLEARANCE_HEADER))
+    return guardian_error(refused[1], refused[0], refused[2]) if refused else None
+
+
 async def handle_cloud_completion(request: web.Request, body: bytes, spec) -> web.Response:
     """Direct (non-queued) cloud call. Streaming is not offered; a busy model answers 429 instead of waiting."""
+    gated = cloud_gate_response(request, spec)
+    if gated is not None:
+        return gated
     try:
         payload = json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -2450,6 +2472,7 @@ async def guardian_health(request: web.Request) -> web.Response:
             ),
             "served": served["served"],
             "served_total": served["served_total"],
+            "turn_on_gaps": guardian_env.turn_on_gaps(),
             **qwen_session.health(),
         }
     )
