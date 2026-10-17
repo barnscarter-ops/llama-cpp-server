@@ -304,6 +304,14 @@ class CloudHttpTests(CloudHttpBase):
         self.assertEqual((response.status, (await response.json())["error"]["code"]), (403, "clearance_required"))
         self.assertEqual(self.provider.calls, [])
 
+    async def test_queued_cloud_job_is_gated_even_with_fleet_router_off(self) -> None:
+        os.environ["FLEET_ROUTER"] = "false"
+        response = await self.client.post("/__guardian/jobs", json={
+            "idempotency_key": "cloud-job-3", "source": "t", "decision_context": {"summary": "s"},
+            "request": {"model": "deepseek-flash", **MSG}})
+        self.assertEqual((response.status, (await response.json())["error"]["code"]), (403, "clearance_required"))
+        self.assertEqual(self.provider.calls, [])
+
     async def test_remote_caller_without_the_bearer_token_cannot_spend_cloud(self) -> None:
         self.module._queue_authorized = lambda request: False
         response = await self.chat()

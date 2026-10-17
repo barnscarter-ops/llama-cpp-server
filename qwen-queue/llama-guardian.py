@@ -941,17 +941,21 @@ async def queue_submit(request: web.Request) -> web.Response:
     if existing:
         return web.json_response({"idempotent": True, **existing.as_api()})
 
+    # Gate the model the caller named: with FLEET_ROUTER off validation rewrites it to the local alias (so no cloud run),
+    # but a refusal should not depend on that rewrite.
+    raw = await request.json()
+    named_cloud = _registry_cloud_spec((raw.get("request") or {}).get("model"))
+    if named_cloud is not None:
+        gated = cloud_gate_response(request, named_cloud)
+        if gated is not None:
+            return gated
+
     approval_id = None
     if fleet_router_enabled():
         # The code table owns the seat. Hermes (if enabled at all) only gets
         # wait-vs-reject for capacity.
         seat = seat_for_model(completion.get("model"))
-        queued_cloud = cloud_spec_for(completion.get("model")) if seat == "cloud" else None
-        if queued_cloud is not None:
-            gated = cloud_gate_response(request, queued_cloud)
-            if gated is not None:
-                return gated
-        if seat == "cloud" and queued_cloud is None:
+        if seat == "cloud" and cloud_spec_for(completion.get("model")) is None:
             return guardian_error(
                 f"Model '{completion.get('model')}' is not a local fleet seat; use cloud.",
                 "route_cloud",

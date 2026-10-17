@@ -52,4 +52,6 @@ def turn_on_gaps(env: Mapping[str, str] = os.environ) -> list[str]:
         gaps.append("GUARDIAN_QUEUE_TOKEN unset: remote callers are refused")
     if on("GUARDIAN_CLOUD") and not on("GUARDIAN_TASK_API"):
         gaps.append("GUARDIAN_CLOUD on without GUARDIAN_TASK_API: only clearance-header calls can reach cloud")
+    if on("GUARDIAN_CLOUD") and not on("FLEET_ROUTER"):
+        gaps.append("GUARDIAN_CLOUD on with FLEET_ROUTER off: direct cloud calls are not routed (jobs are still gated)")
     return gaps

@@ -23,5 +23,5 @@ class GuardianEnvTests(unittest.TestCase):
     def test_gaps_name_missing_tokens_only_for_enabled_features(self) -> None:
         self.assertEqual(ge.turn_on_gaps({}), [])
         gaps = ge.turn_on_gaps({"GUARDIAN_QWEN_APPROVAL": "true", "GUARDIAN_CLOUD": "true"})
-        self.assertEqual(len(gaps), 2)
+        self.assertEqual(len(gaps), 3)
         self.assertEqual(ge.turn_on_gaps({"GUARDIAN_QWEN_APPROVAL": "true", "GUARDIAN_QWEN_APPROVAL_TOKEN": "t"}), [])

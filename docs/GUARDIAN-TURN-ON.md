@@ -9,7 +9,7 @@ What the code now guarantees, and the exact steps. Flags are all off today; noth
 
 ## Steps (each needs Carter's go; restarts are Carter's)
 1. Create `.guardian.env` next to `ecosystem.config.cjs` on the Workbench: `GUARDIAN_QWEN_APPROVAL_TOKEN=<random 32+ chars>`. Put the same value in Chief's env as `CHIEF_GUARDIAN_APPROVAL_TOKEN`.
-2. Add flags to the same file, in this order: `GUARDIAN_MODEL_SLOTS=true`, `GUARDIAN_PER_MODEL_QUEUES=true`, `GUARDIAN_QWEN_APPROVAL=true`, `GUARDIAN_TASK_API=true`. Keep `GUARDIAN_SELECTOR=rules`. Cloud (`GUARDIAN_CLOUD=true`) last, and only with the Jev/DeepSeek key available.
+2. Add flags to the same file, in this order: `GUARDIAN_MODEL_SLOTS=true`, `GUARDIAN_PER_MODEL_QUEUES=true`, `GUARDIAN_QWEN_APPROVAL=true`, `GUARDIAN_TASK_API=true`. Keep `GUARDIAN_SELECTOR=rules`. `FLEET_ROUTER=true` must be on (it is in ecosystem.config.cjs). Cloud (`GUARDIAN_CLOUD=true`) last, and only with the Jev/DeepSeek key available.
 3. `pm2 restart llama-guardian` (admin PowerShell, `PM2_HOME=C:\Users\carte\.pm2`), then `pm2 save`.
 4. Check `GET /__guardian/health`: `status ok`, `turn_on_gaps: []`. Health is the only request to send; do not send inference requests to the live Guardian.
 5. Chief: set `CHIEF_USE_GUARDIAN_TASKS=1`, `CHIEF_GUARDIAN_URL`, the clearance and cost envs, restart the bridge.
