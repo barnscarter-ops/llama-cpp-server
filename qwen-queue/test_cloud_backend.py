@@ -263,8 +263,9 @@ class CloudHttpBase(TaskHttpBase):
         self.module.ram_snapshot = lambda: {"cold_start_allowed": False}
         self.aiwa.models_status = 503
 
-    async def chat(self, **over):
-        return await self.client.post("/v1/chat/completions", json={"model": "deepseek-flash", **MSG, **over})
+    async def chat(self, clearance: str | None = "internet", **over):
+        headers = {"X-Guardian-Clearance": clearance} if clearance else {}
+        return await self.client.post("/v1/chat/completions", headers=headers, json={"model": "deepseek-flash", **MSG, **over})
 
 
 class CloudHttpTests(CloudHttpBase):
@@ -287,6 +288,27 @@ class CloudHttpTests(CloudHttpBase):
         self.assertEqual((busy.status, (await busy.json())["error"]["code"]), (429, "cloud_busy"))
         self.provider.gate.set()
         await asyncio.gather(*held)
+
+    async def test_direct_cloud_call_needs_a_clearance_that_covers_internet(self) -> None:
+        for clearance, code in ((None, "clearance_required"), ("pc", "clearance_too_narrow"),
+                                ("none", "clearance_too_narrow"), ("lan", "clearance_too_narrow"),
+                                ("bogus", "clearance_too_narrow")):
+            response = await self.chat(clearance=clearance)
+            self.assertEqual((response.status, (await response.json())["error"]["code"]), (403, code), clearance)
+        self.assertEqual(self.provider.calls, [])
+
+    async def test_queued_cloud_job_without_clearance_is_refused(self) -> None:
+        response = await self.client.post("/__guardian/jobs", json={
+            "idempotency_key": "cloud-job-2", "source": "t", "decision_context": {"summary": "s"},
+            "request": {"model": "deepseek-flash", **MSG}})
+        self.assertEqual((response.status, (await response.json())["error"]["code"]), (403, "clearance_required"))
+        self.assertEqual(self.provider.calls, [])
+
+    async def test_remote_caller_without_the_bearer_token_cannot_spend_cloud(self) -> None:
+        self.module._queue_authorized = lambda request: False
+        response = await self.chat()
+        self.assertEqual((response.status, (await response.json())["error"]["code"]), (403, "cloud_forbidden"))
+        self.assertEqual(self.provider.calls, [])
 
     async def test_flag_off_keeps_the_409_refusal(self) -> None:
         os.environ["GUARDIAN_CLOUD"] = "false"
@@ -330,7 +352,7 @@ class CloudHttpTests(CloudHttpBase):
 
     async def test_queued_cloud_job_runs_on_the_cloud_provider_not_the_local_model(self) -> None:
         await self.start_worker()
-        response = await self.client.post("/__guardian/jobs", json={
+        response = await self.client.post("/__guardian/jobs", headers={"X-Guardian-Clearance": "internet"}, json={
             "idempotency_key": "cloud-job-1", "source": "t", "decision_context": {"summary": "s"},
             "request": {"model": "deepseek-flash", **MSG}})
         self.assertEqual(response.status, 202, await response.text())

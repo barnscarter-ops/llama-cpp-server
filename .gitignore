@@ -52,3 +52,4 @@ start-hermes-worker-bridge.ps1
 start-qwen36-hermes64.ps1
 start-qwen36-hermes64-TEST.ps1
 hermes64-test.log
+.guardian.env
