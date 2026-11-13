@@ -60,6 +60,7 @@ import guardian_env
 import dispatch_paths
 import fleet_router
 import guardian_alerts
+import interactive
 import jev_selector
 import model_registry
 import model_slots
@@ -1783,7 +1784,8 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
         timeout = ClientTimeout(
             total=QUEUE_JOB_TIMEOUT_S + 15, sock_connect=10, sock_read=QUEUE_JOB_TIMEOUT_S
         )
-        async with fleet_router.seat_slot(seat):
+        holder = _job_holder(job, seat)
+        async with fleet_router.seat_slot(seat, holder=holder):
             if model_slots.slots_active():
                 # A swap may have finished between the first check and getting the slot.
                 occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
@@ -1792,7 +1794,7 @@ async def _run_aiwa_queued_job(job: QueueJob, seat: str) -> None:
                         job.job_id, f"AIWA occupant is {occupant} ({model_id}); {seat} job requires an operator swap."
                     )
                     return
-            await _post_aiwa_job(job, client, payload, seat, timeout)
+            await _post_aiwa_job(job, client, payload, seat, timeout, holder=holder)
     except Exception as exc:
         guardian.job_store.fail(job.job_id, f"AIWA queue job failed: {exc}")
         log.exception(f"queue worker crashed while running {job.job_id} on AIWA")
@@ -1816,21 +1818,42 @@ async def _run_aiwa_job_with_approval(job: QueueJob, seat: str, client) -> None:
         except qwen_session.SessionError as exc:
             guardian.job_store.fail(job.job_id, f"{exc.code}: {exc.message}")
         return
-    async with fleet_router.seat_slot(seat):
+    holder = _job_holder(job, seat)
+    async with fleet_router.seat_slot(seat, holder=holder):
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
         if not reachable or occupant != seat:
             guardian.job_store.fail(
                 job.job_id, f"AIWA occupant is {occupant} ({model_id}); {seat} job cannot run there now."
             )
             return
-        await _post_aiwa_job(job, client, payload, seat, timeout)
+        await _post_aiwa_job(job, client, payload, seat, timeout, holder=holder)
 
 
-async def _post_aiwa_job(job: QueueJob, client, payload: dict, seat: str, timeout: ClientTimeout) -> None:
-    """Send one AIWA job. The caller holds the seat slot."""
+def _job_holder(job: QueueJob, seat: str) -> model_slots.Holder | None:
+    """Makes a clerk job preemptible by interactive chat. Consult-seat work and slots-off jobs never are."""
+    if not model_slots.slots_active():
+        return None
+    return model_slots.Holder("job", job.job_id, seat, preemptible=seat != "consult")
+
+
+async def _post_aiwa_job(
+    job: QueueJob, client, payload: dict, seat: str, timeout: ClientTimeout, holder: model_slots.Holder | None = None
+) -> None:
+    """Send one AIWA job. The caller holds the seat slot.
+
+    If interactive chat takes the slot over (holder.preempted), the upstream call is cancelled and the job
+    goes back to queued without costing an attempt; the worker loop runs it again.
+    """
     guardian.last_aiwa_activity = time.time()
     if seat == "consult":
         guardian.last_aiwa_consult_activity = time.time()
+    _, preempted = await model_slots.run_preemptible(_post_aiwa_job_upstream(job, client, payload, seat, timeout), holder)
+    if preempted:
+        guardian.job_store.requeue(job.job_id)
+        log.info(f"queue requeued {job.job_id} (aiwa {seat}): preempted by interactive chat")
+
+
+async def _post_aiwa_job_upstream(job: QueueJob, client, payload: dict, seat: str, timeout: ClientTimeout) -> None:
     async with client.post(
         f"{fleet_router.aiwa_base()}/v1/chat/completions", json=payload, timeout=timeout
     ) as upstream_resp:
@@ -2473,6 +2496,7 @@ async def guardian_health(request: web.Request) -> web.Response:
             "served": served["served"],
             "served_total": served["served_total"],
             "turn_on_gaps": guardian_env.turn_on_gaps(),
+            "interactive": interactive.health(),
             **qwen_session.health(),
         }
     )

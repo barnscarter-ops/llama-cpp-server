@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 from typing import Mapping, MutableMapping
 
+import interactive
+
 DEFAULT_ENV_FILE = Path(__file__).resolve().parent.parent / ".guardian.env"
 TRUE = {"true", "1", "yes"}
 
@@ -54,4 +56,13 @@ def turn_on_gaps(env: Mapping[str, str] = os.environ) -> list[str]:
         gaps.append("GUARDIAN_CLOUD on without GUARDIAN_TASK_API: only clearance-header calls can reach cloud")
     if on("GUARDIAN_CLOUD") and not on("FLEET_ROUTER"):
         gaps.append("GUARDIAN_CLOUD on with FLEET_ROUTER off: direct cloud calls are not routed (jobs are still gated)")
+    token = env.get("GUARDIAN_INTERACTIVE_TOKEN", "").strip()
+    token_ok = len(token) >= interactive.MIN_TOKEN_LEN
+    if token and not token_ok:
+        gaps.append(f"GUARDIAN_INTERACTIVE_TOKEN shorter than {interactive.MIN_TOKEN_LEN} chars: ignored, interactive chat is off")
+    slots_on = on("GUARDIAN_MODEL_SLOTS") or on("GUARDIAN_QWEN_APPROVAL")
+    if token_ok and not slots_on:
+        gaps.append("GUARDIAN_INTERACTIVE_TOKEN set without GUARDIAN_MODEL_SLOTS: interactive callers get access but no priority")
+    if on("GUARDIAN_INTERACTIVE_PREEMPT") and not token_ok:
+        gaps.append("GUARDIAN_INTERACTIVE_PREEMPT on without a valid GUARDIAN_INTERACTIVE_TOKEN: nothing can take over")
     return gaps
