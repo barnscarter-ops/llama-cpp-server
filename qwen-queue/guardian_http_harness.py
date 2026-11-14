@@ -7,9 +7,11 @@ module's LLAMA_PORT and AIWA_BASE are pointed at servers bound to random ports.
 from __future__ import annotations
 
 import asyncio
+import gc
 import importlib.util
 import itertools
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -190,6 +192,15 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         _fresh_occupant_cache()
         model_slots.reset_slots()
 
+        # The Board console probe connects to closed loopback ports 17890/17891; on Windows each refused
+        # connect takes ~2 s, which delays every swap by ~4 s and lets short fake requests finish first.
+        async def _console_port_closed(port: int) -> bool:
+            return False
+
+        _orig_console_probe = aiwa_swap.console_port_open
+        aiwa_swap.console_port_open = _console_port_closed
+        self.addCleanup(setattr, aiwa_swap, "console_port_open", _orig_console_probe)
+
         app = web.Application()
         self.build_routes(app)
         self.client = TestClient(TestServer(app, host="127.0.0.1"))
@@ -201,6 +212,18 @@ class GuardianHarnessCase(unittest.IsolatedAsyncioTestCase):
         await self.aiwa.close()
         await self.llama.close()
         self.module.guardian.job_store.close()
+        # The spend ledgers (and any other store) keep their own SQLite connection to the queue DB for the
+        # process lifetime; Windows will not delete the file while one is open, so close every connection
+        # that points into this test's temp dir before removing it.
+        temp_root = os.path.normcase(os.path.realpath(self.temp_dir.name))
+        for obj in gc.get_objects():
+            if isinstance(obj, sqlite3.Connection):
+                try:
+                    files = [row[2] for row in obj.execute("PRAGMA database_list").fetchall()]
+                except sqlite3.ProgrammingError:  # already closed
+                    continue
+                if any(f and os.path.normcase(os.path.realpath(f)).startswith(temp_root) for f in files):
+                    obj.close()
         _fresh_occupant_cache()
         model_slots.reset_slots()
         self.temp_dir.cleanup()

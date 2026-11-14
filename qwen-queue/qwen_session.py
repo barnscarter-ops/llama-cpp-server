@@ -243,7 +243,9 @@ async def handle_completion(
 
     # Resting model: take the slot first so a request arriving during a Qwen session waits, then check.
     # An interactive caller is always routed to the clerk by handle_aiwa_completion, so it never reaches the consult branch.
-    holder = model_slots.Holder("request", _rid, seat) if model_slots.slots_active() else None
+    holder = (
+        model_slots.Holder("request", _rid, seat, preemptible=seat != "consult") if model_slots.slots_active() else None
+    )
     priority = interactive.PRIORITY_INTERACTIVE if interactive_caller else interactive.PRIORITY_DEFAULT
     async with fleet_router.seat_slot(seat, priority=priority, holder=holder):
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)

@@ -134,6 +134,14 @@ class HttpSlotTests(GuardianHarnessCase):
         await resp.read()
         return resp
 
+    async def wait_until(self, cond, what: str, timeout: float = 5.0) -> None:
+        """Wait for a state instead of sleeping a guessed time; fail fast with a clear message."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not cond():
+            if asyncio.get_running_loop().time() > deadline:
+                self.fail(f"timed out after {timeout}s waiting for {what}")
+            await asyncio.sleep(0.005)
+
     async def test_two_simultaneous_r9700_requests_do_not_overlap(self) -> None:
         self.aiwa.delay_s = 0.1
         a, b = await asyncio.gather(self.post(CLERK_ID), self.post(CLERK_ID))
@@ -187,11 +195,13 @@ class HttpSlotTests(GuardianHarnessCase):
                 mock.patch.object(aiwa_swap, "SWAP_POLL_S", 0.01), \
                 mock.patch("fleet_router.OCCUPANT_TTL_S", 0.01):
             inflight = asyncio.create_task(self.post(CLERK_ID))
-            await asyncio.sleep(0.03)
+            await self.wait_until(lambda: self.aiwa.in_flight == 1, "the in-flight request to reach AIWA")
             swap = asyncio.create_task(
                 aiwa_swap.perform_swap("consult", self.module.guardian._client, gate="operator")
             )
-            await asyncio.sleep(0.03)
+            await self.wait_until(
+                lambda: model_slots.get_slots()._hosts["r9700"].waiting_exclusive, "the swap to wait on the R9700"
+            )
             late = asyncio.create_task(self.post(CLERK_ID))
             swap_resp = await swap
             first = await inflight
@@ -207,10 +217,14 @@ class HttpSlotTests(GuardianHarnessCase):
         self.aiwa.delay_s = 0.3
         wb = Path(self.temp_dir.name) / "WORKBOARD.md"
         wb.write_text("# board\n", encoding="utf-8")
+        async def ssh_must_not_run(to: str):
+            raise AssertionError("the swap must time out draining before it reaches SSH")
+
         env = {"FLEET_SWAP_OWNER": "true", "WORKBOARD_PATH": str(wb)}
-        with mock.patch.dict(os.environ, env), mock.patch.object(aiwa_swap, "SWAP_DRAIN_TIMEOUT_S", 0.05):
+        with mock.patch.dict(os.environ, env), mock.patch.object(aiwa_swap, "SWAP_DRAIN_TIMEOUT_S", 0.05), \
+                mock.patch.object(aiwa_swap, "run_swap_ssh", ssh_must_not_run):
             inflight = asyncio.create_task(self.post(CLERK_ID))
-            await asyncio.sleep(0.03)
+            await self.wait_until(lambda: self.aiwa.in_flight == 1, "the in-flight request to reach AIWA")
             swap_resp = await aiwa_swap.perform_swap("consult", self.module.guardian._client, gate="operator")
             first = await inflight
         self.assertEqual(409, swap_resp.status)
