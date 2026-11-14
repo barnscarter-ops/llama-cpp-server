@@ -15,6 +15,7 @@ from typing import Any
 
 from aiohttp import ClientError, ClientTimeout, web
 
+import interactive
 import model_slots
 
 log = logging.getLogger("guardian")
@@ -33,6 +34,9 @@ SERVING_IDS = {
 
 OCCUPANT_TTL_S = 2.0
 OCCUPANT_TIMEOUT_S = 2.0
+# A leading blank line closes any SSE event the cut interrupted.
+SSE_PREEMPT_PREFIX = b"\n\ndata: "
+SSE_EVENT_END = b"\n\n"
 LOOPBACK_REMOTES = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 
 HOP_BY_HOP = frozenset(
@@ -251,21 +255,40 @@ def is_glm_metadata_get(request: web.Request) -> bool:
     return request.method == "GET" and request.path in GLM_METADATA_GET_PATHS
 
 
-def prepare_forward(request: web.Request, body: bytes, seat: str) -> tuple[bytes, dict]:
-    """Body rewritten to the seat's serving id, plus the headers safe to pass upstream."""
+def prepare_forward(request: web.Request, body: bytes, seat: str, *, interactive_caller: bool = False) -> tuple[bytes, dict]:
+    """Body rewritten to the seat's serving id, plus the headers safe to pass upstream.
+
+    An interactive caller's bearer token is a guardian credential and never goes to AIWA.
+    """
+    drop = {"content-length", "authorization"} if interactive_caller else {"content-length"}
     fwd_headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in HOP_BY_HOP and k.lower() != "content-length"
+        if k.lower() not in HOP_BY_HOP and k.lower() not in drop
     }
     return rewrite_model_in_body(body, SERVING_IDS[seat]), fwd_headers
 
 
-def seat_slot(seat: str):
-    """Async context manager serializing work on one seat's model; a no-op with the flag off."""
+def seat_slot(seat: str, *, priority: int = interactive.PRIORITY_DEFAULT, holder: model_slots.Holder | None = None):
+    """Async context manager serializing work on one seat's model; a no-op with the flag off.
+
+    priority and holder only matter with slots active: interactive work goes first, and a holder lets
+    interactive work take the slot over (GUARDIAN_INTERACTIVE_PREEMPT).
+    """
     if not model_slots.slots_active():
         return model_slots.no_slot()
     slots = model_slots.get_slots()
-    return slots.acquire(slots.model_id_for_seat(seat))
+    return slots.acquire(slots.model_id_for_seat(seat), priority=priority, holder=holder)
+
+
+def preempted_response(seat: str) -> web.Response:
+    resp = guardian_error(
+        "This request was interrupted so an interactive chat could use the model. Retry shortly.",
+        "preempted_by_interactive",
+        503,
+    )
+    resp.headers["Retry-After"] = "5"
+    resp.headers.update(served_headers(seat, None)[0])
+    return resp
 
 
 class OccupantCache:
@@ -338,8 +361,13 @@ async def forward_aiwa(
     client,
     guardian,
     seat: str,
+    holder: model_slots.Holder | None = None,
 ) -> web.StreamResponse:
-    """Stream proxy to AIWA without GLM idle/lock/length-retry side effects."""
+    """Stream proxy to AIWA without GLM idle/lock/length-retry side effects.
+
+    With a holder, an interactive take-over cancels the upstream call and this returns 503
+    preempted_by_interactive (before headers) or ends the stream (after).
+    """
     upstream_url = f"{aiwa_base()}{request.path_qs}"
     timeout = ClientTimeout(total=None, sock_connect=10, sock_read=600)
     now = time.time()
@@ -348,7 +376,9 @@ async def forward_aiwa(
         guardian.last_aiwa_consult_activity = now
     serving_id = SERVING_IDS[seat]
     served_hdrs, request_id = served_headers(seat, serving_id)
-    try:
+    box: dict[str, Any] = {"resp": None, "sse": False}
+
+    async def proxy() -> web.StreamResponse:
         async with client.request(
             request.method, upstream_url, headers=fwd_headers, data=body, timeout=timeout
         ) as upstream_resp:
@@ -360,6 +390,8 @@ async def forward_aiwa(
                 if k.lower() not in HOP_BY_HOP:
                     resp.headers[k] = v
             resp.headers.update(served_hdrs)
+            box["resp"] = resp
+            box["sse"] = upstream_resp.headers.get("Content-Type", "").lower().startswith("text/event-stream")
             await resp.prepare(request)
             async for chunk in upstream_resp.content.iter_any():
                 await resp.write(chunk)
@@ -367,8 +399,19 @@ async def forward_aiwa(
             if upstream_resp.status < 400:
                 guardian.served.record(seat, serving_id, request_id)
             return resp
+
+    try:
+        resp, preempted = await model_slots.run_preemptible(proxy(), holder)
     except (ClientError, asyncio.TimeoutError) as e:
         log.warning(f"AIWA upstream error: {e}")
+        started = box["resp"]
+        if started is not None and started.prepared:
+            # Headers are already sent: a second response is impossible, so just end this one.
+            try:
+                await started.write_eof()
+            except Exception:  # noqa: BLE001 - client already gone
+                pass
+            return started
         resp = guardian_error(
             f"AIWA upstream error: {e}",
             "aiwa_unreachable",
@@ -377,6 +420,19 @@ async def forward_aiwa(
         err_hdrs, _ = served_headers(seat, None)
         resp.headers.update(err_hdrs)
         return resp
+    if not preempted:
+        return resp
+    started = box["resp"]
+    if started is None or not started.prepared:
+        return preempted_response(seat)
+    try:
+        if box["sse"]:
+            event = {"error": {"message": "Interrupted for an interactive chat; retry shortly.", "type": "preempted_by_interactive", "code": "preempted_by_interactive"}}
+            await started.write(SSE_PREEMPT_PREFIX + json.dumps(event).encode() + SSE_EVENT_END)
+        await started.write_eof()
+    except Exception:  # noqa: BLE001 - client already gone
+        pass
+    return started
 
 
 async def handle_aiwa_completion(
@@ -389,7 +445,13 @@ async def handle_aiwa_completion(
 ) -> web.StreamResponse:
     """Occupant check + optional rewrite + forward_aiwa for clerk/consult."""
     seat_hdrs, request_id = served_headers(seat, None)
-    if aiwa_proxy_loopback_only() and not is_loopback_remote(request.remote):
+    # The interactive bearer token is the only way past the loopback guard, and it is clerk-only.
+    interactive_caller = interactive.is_interactive(request)
+    priority = interactive.PRIORITY_INTERACTIVE if interactive_caller else interactive.PRIORITY_DEFAULT
+    if interactive_caller and seat == "consult":
+        log.info("interactive caller asked for consult; served as clerk")
+        seat = "clerk"
+    if aiwa_proxy_loopback_only() and not is_loopback_remote(request.remote) and not interactive_caller:
         resp = guardian_error(
             "AIWA reverse-proxy is loopback-only until Phase 3.",
             "aiwa_proxy_loopback_only",
@@ -404,7 +466,7 @@ async def handle_aiwa_completion(
         import qwen_session  # local: qwen_session imports this module at load time
 
         return await qwen_session.handle_completion(
-            request, body=body, seat=seat, client=client, guardian=guardian
+            request, body=body, seat=seat, client=client, guardian=guardian, interactive_caller=interactive_caller
         )
 
     occupant, model_id, reachable = await occupant_cache.get(client)
@@ -453,7 +515,14 @@ async def handle_aiwa_completion(
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }
     fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "content-length"}
-    async with seat_slot(effective_seat):
+    if interactive_caller:
+        fwd_headers = {k: v for k, v in fwd_headers.items() if k.lower() != "authorization"}
+    holder = (
+        model_slots.Holder("request", request_id, effective_seat, preemptible=effective_seat != "consult")
+        if model_slots.slots_active()
+        else None
+    )
+    async with seat_slot(effective_seat, priority=priority, holder=holder):
         if model_slots.slots_active():
             # A swap may have finished between the first check and getting the slot.
             occupant, model_id, reachable = await occupant_cache.get(client)
@@ -468,4 +537,5 @@ async def handle_aiwa_completion(
             client=client,
             guardian=guardian,
             seat=effective_seat,
+            holder=holder,
         )

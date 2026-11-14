@@ -305,6 +305,20 @@ class JobStore:
         self._conn.commit()
         return self.get(job_id)  # type: ignore[return-value]
 
+    def requeue(self, job_id: str) -> QueueJob | None:
+        """Put a running job back in line because interactive work took its model. Not a failed attempt."""
+        self._conn.execute(
+            """
+            UPDATE guardian_jobs
+            SET status = 'queued', started_at = NULL, worker_pid = NULL,
+                attempts = MAX(attempts - 1, 0)
+            WHERE job_id = ? AND status = 'running'
+            """,
+            (job_id,),
+        )
+        self._conn.commit()
+        return self.get(job_id)
+
     def cancel(self, job_id: str) -> QueueJob | None:
         self._conn.execute(
             """

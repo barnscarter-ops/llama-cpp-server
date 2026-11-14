@@ -19,6 +19,7 @@ from aiohttp import web
 
 import aiwa_swap
 import fleet_router
+import interactive
 import model_slots
 from qwen_approvals import ApprovalError, ApprovalStore, qwen_approval_enabled
 
@@ -206,7 +207,7 @@ def session_error_response(exc: SessionError) -> web.Response:
 
 
 async def handle_completion(
-    request: web.Request, *, body: bytes, seat: str, client, guardian
+    request: web.Request, *, body: bytes, seat: str, client, guardian, interactive_caller: bool = False
 ) -> web.StreamResponse:
     """Direct R9700 completion with GUARDIAN_QWEN_APPROVAL on. No string gate, no silent downgrade."""
     seat_hdrs, _rid = fleet_router.served_headers(seat, None)
@@ -241,16 +242,24 @@ async def handle_completion(
         return resp
 
     # Resting model: take the slot first so a request arriving during a Qwen session waits, then check.
-    async with fleet_router.seat_slot(seat):
+    # An interactive caller is always routed to the clerk by handle_aiwa_completion, so it never reaches the consult branch.
+    holder = (
+        model_slots.Holder("request", _rid, seat, preemptible=seat != "consult") if model_slots.slots_active() else None
+    )
+    priority = interactive.PRIORITY_INTERACTIVE if interactive_caller else interactive.PRIORITY_DEFAULT
+    async with fleet_router.seat_slot(seat, priority=priority, holder=holder):
         occupant, model_id, reachable = await fleet_router.occupant_cache.get(client)
         if not reachable or occupant in {None, "", "unknown"}:
             resp = fleet_router.guardian_error("AIWA is unreachable or occupant is unknown.", "aiwa_unreachable", 503)
         elif occupant != seat:
             resp = fleet_router.aiwa_wrong_occupant_response(occupant, model_id, seat)
         else:
-            fwd_body, fwd_headers = fleet_router.prepare_forward(request, body, seat)
+            fwd_body, fwd_headers = fleet_router.prepare_forward(
+                request, body, seat, interactive_caller=interactive_caller
+            )
             return await fleet_router.forward_aiwa(
-                request, body=fwd_body, fwd_headers=fwd_headers, client=client, guardian=guardian, seat=seat
+                request, body=fwd_body, fwd_headers=fwd_headers, client=client, guardian=guardian, seat=seat,
+                holder=holder,
             )
         resp.headers.update(seat_hdrs)
         return resp

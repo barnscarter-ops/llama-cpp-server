@@ -183,9 +183,15 @@ class SpendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "jev.sqlite3")
             first = jsp.JevSpendLedger.open(path, cap_microusd=8_000)
-            self.assertTrue(first.reserve(5.0) and first.reserve(5.0))
-            second = jsp.JevSpendLedger.open(path, cap_microusd=8_000)  # a restarted Guardian
-            self.assertFalse(second.reserve(5.0))
+            second = None
+            try:
+                self.assertTrue(first.reserve(5.0) and first.reserve(5.0))
+                second = jsp.JevSpendLedger.open(path, cap_microusd=8_000)  # a restarted Guardian
+                self.assertFalse(second.reserve(5.0))
+            finally:  # Windows cannot delete the DB while a connection is open
+                first._conn.close()
+                if second is not None:
+                    second._conn.close()
 
     def test_env_cap_falls_back_on_bad_values(self) -> None:
         for raw, want in (("0.5", 500_000), ("abc", 2_000_000), ("0", 2_000_000), ("-3", 2_000_000), ("inf", 2_000_000), ("nan", 2_000_000)):

@@ -10,10 +10,12 @@ never leave a slot held.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import interactive
 from model_registry import ModelRegistry, load_registry
 
 
@@ -67,10 +69,59 @@ class _Host:
                 self.waiters.remove(fut)
 
 
+class Holder:
+    """One piece of work holding a model slot, so an interactive request can ask it to give the slot up.
+
+    `kind` is "request" (direct completion) or "job" (durable queue job). The holder's owner watches
+    `preempted` (see run_preemptible), closes its upstream connection and returns; the slot is released
+    when its `acquire` context exits, which hands it to the interactive waiter.
+    """
+
+    def __init__(self, kind: str, ident: str, seat: str, *, preemptible: bool = True) -> None:
+        self.kind, self.ident, self.seat = kind, ident, seat
+        self.preemptible = preemptible
+        self.priority = interactive.PRIORITY_DEFAULT
+        self.preempted = asyncio.Event()
+
+    def can_preempt(self) -> bool:
+        if not self.preemptible or self.preempted.is_set() or self.priority >= interactive.PRIORITY_INTERACTIVE:
+            return False
+        return self.kind != "job" or interactive.job_preemptible(self.ident)
+
+
+class _Waiter:
+    def __init__(self, priority: int, seq: int, fut: asyncio.Future) -> None:
+        self.priority, self.seq, self.fut = priority, seq, fut
+
+
+class _Model:
+    """Priority-ordered permits for one model. All changes are synchronous so cancellation cannot leak a permit."""
+
+    def __init__(self, capacity: int) -> None:
+        self.capacity = capacity
+        self.held = 0
+        self.waiters: list[_Waiter] = []
+        self.holders: set[Holder] = set()
+        self.seq = itertools.count()
+
+    def grant(self) -> None:
+        """Hand free permits to the highest-priority, oldest waiters."""
+        self.waiters = [w for w in self.waiters if not w.fut.done()]
+        while self.held < self.capacity and self.waiters:
+            best = min(self.waiters, key=lambda w: (-w.priority, w.seq))
+            self.waiters.remove(best)
+            self.held += 1
+            best.fut.set_result(None)
+
+    def release(self) -> None:
+        self.held -= 1
+        self.grant()
+
+
 class ModelSlots:
     def __init__(self, registry: ModelRegistry) -> None:
         self._registry = registry
-        self._sems = {s.id: asyncio.Semaphore(s.max_concurrent) for s in registry}
+        self._models = {s.id: _Model(s.max_concurrent) for s in registry}
         self._hosts = {s.host: _Host() for s in registry}
         self._in_flight = {s.id: 0 for s in registry}
 
@@ -84,13 +135,46 @@ class ModelSlots:
     def exclusive_held(self, host: str) -> bool:
         return self._hosts[host].exclusive
 
+    def _preempt(self, model_id: str) -> None:
+        """Ask enough lower-priority holders to give up the model for the interactive waiters in line.
+
+        Never touches a swap (exclusive holds are not holders) and never acts while a swap holds or awaits the host.
+        """
+        if not interactive.preempt_enabled():
+            return
+        model = self._models[model_id]
+        host = self._hosts[self._registry.get(model_id).host]
+        if host.exclusive or host.waiting_exclusive:
+            return
+        waiting = sum(
+            1 for w in model.waiters if not w.fut.done() and w.priority >= interactive.PRIORITY_INTERACTIVE
+        )
+        already = sum(1 for h in model.holders if h.preempted.is_set())
+        need = waiting - already
+        for holder in [h for h in model.holders if h.can_preempt()][: max(0, need)]:
+            holder.preempted.set()
+            interactive.record_preemption(holder.seat, holder.kind, holder.ident)
+
     @asynccontextmanager
-    async def acquire(self, model_id: str) -> AsyncIterator[None]:
+    async def acquire(
+        self, model_id: str, *, priority: int = interactive.PRIORITY_DEFAULT, holder: Holder | None = None
+    ) -> AsyncIterator[None]:
+        """Take the model's slot. Higher priority first, FIFO within a priority. `holder` makes the work preemptible."""
         spec = self._registry.get(model_id)
         if spec is None:
             raise KeyError(f"unknown model {model_id!r}")
-        sem, host = self._sems[model_id], self._hosts[spec.host]
-        await sem.acquire()
+        model, host = self._models[model_id], self._hosts[spec.host]
+        fut = asyncio.get_running_loop().create_future()
+        model.waiters.append(_Waiter(priority, next(model.seq), fut))
+        model.grant()
+        if not fut.done() and priority >= interactive.PRIORITY_INTERACTIVE:
+            self._preempt(model_id)
+        try:
+            await fut
+        except BaseException:
+            if fut.done() and not fut.cancelled():
+                model.release()  # granted just as we were cancelled
+            raise
         try:
             # A waiting swap also blocks new work, or a busy queue could starve it forever.
             while host.exclusive or host.waiting_exclusive:
@@ -98,15 +182,22 @@ class ModelSlots:
             host.active += 1
             self._in_flight[model_id] += 1
         except BaseException:
-            sem.release()
+            model.release()
             raise
+        if holder is not None:
+            holder.priority = priority
+            model.holders.add(holder)
+            if priority < interactive.PRIORITY_INTERACTIVE:
+                self._preempt(model_id)  # an interactive request may already be waiting on us
         try:
             yield
         finally:
+            if holder is not None:
+                model.holders.discard(holder)
             host.active -= 1
             self._in_flight[model_id] -= 1
             host.wake()
-            sem.release()
+            model.release()
 
     async def wait_available(self, model_id: str) -> None:
         """Block while a swap holds or awaits the model's host; lets queue workers leave jobs queued meanwhile."""
@@ -157,3 +248,26 @@ def reset_slots() -> None:
     """Tests and registry reloads drop the singleton."""
     global _slots
     _slots = None
+
+
+async def run_preemptible(aw, holder: Holder | None):
+    """Await `aw`; if the holder is preempted first, cancel it (closing its upstream) and say so.
+
+    Returns (result, preempted). Exceptions from `aw` propagate. Without a holder this is a plain await.
+    """
+    if holder is None:
+        return await aw, False
+    task = asyncio.ensure_future(aw)
+    signal = asyncio.ensure_future(holder.preempted.wait())
+    try:
+        await asyncio.wait({task, signal}, return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        task.cancel()
+        signal.cancel()
+        raise
+    signal.cancel()
+    if task.done():
+        return task.result(), False
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)  # an outer cancel still propagates from here
+    return None, True
